@@ -400,28 +400,32 @@ fn extract_onenote_text(path: &str) -> Result<String, String> {
 /// fails. Used in particular for files written by OneNote for Mac,
 /// which onenote_parser 1.1 doesn't fully understand.
 ///
-/// We run two independent scans against the raw bytes:
-///
-///   1. **ASCII scan** — byte-by-byte runs of 0x20–0x7E (printable
-///      ASCII + tab). Catches plain-text English passages and code
-///      that Mac OneNote stores without UTF-16 padding.
-///
-///   2. **UTF-16-LE CJK scan** — 2-byte-aligned, but only emits a run
-///      that contains at least one real CJK character. This avoids the
-///      well-known artifact where ASCII bytes interpreted as UTF-16-LE
-///      decode into Chinese Extension-B glyphs (e.g. "Mailbox" →
-///      `慍汩潢卸`). When a run is genuinely Chinese/Japanese, those
-///      CJK codepoints are present and we keep it.
-///
-/// Each run is then filtered for plausibility: must contain a 4-letter
-/// English word OR a space OR ≥ 2 CJK characters. This kills the short
-/// alphanumeric junk that survives an ASCII scan of binary headers.
+/// Strategy:
+///   1. **ASCII scan** — runs of 0x20–0x7E (catches plain text Mac
+///      OneNote stores without UTF-16 padding).
+///   2. **UTF-16-LE scan** — only emits runs containing real CJK
+///      codepoints (avoids the well-known artifact where ASCII bytes
+///      interpreted as UTF-16-LE decode into Chinese Extension-B
+///      glyphs: "Mailbox" → "慍汩潢卸").
+///   3. **Plausibility filter** — must contain ≥2 consecutive CJK
+///      chars, OR (space AND a 4+ letter English word). Drops short
+///      alphanumeric junk like "UUUU?UUU" that haunt OneNote binary
+///      headers.
+///   4. **base64 filter** — runs that look like embedded image data
+///      (long, no spaces, ≥95% alphanumeric+/=) are dropped.
+///   5. **Length sort + cap** — sort runs by length descending and
+///      keep at most MAX_RUNS, so big .one files (lots of embedded
+///      images) don't produce 300k-line previews. Real prose tends
+///      to be long; the cap surfaces the substantive content first.
 fn extract_onenote_strings(path: &str) -> Result<String, String> {
     let bytes = fs::read(path).map_err(|e| format!("read failed: {e}"))?;
     const MIN_ASCII_RUN: usize = 6;
     const MIN_UTF16_RUN: usize = 4;
+    /// Cap on emitted runs after filtering. A user-facing preview of a
+    /// failed-parse .one file is meant to be browsable; tens of
+    /// thousands of lines is not useful and slows the editor.
+    const MAX_RUNS: usize = 3000;
 
-    // --- 1. ASCII scan ---
     let mut ascii_runs: Vec<String> = Vec::new();
     let mut cur = String::new();
     for &byte in &bytes {
@@ -439,7 +443,6 @@ fn extract_onenote_strings(path: &str) -> Result<String, String> {
         ascii_runs.push(std::mem::take(&mut cur));
     }
 
-    // --- 2. UTF-16-LE scan, keep only runs containing real CJK ---
     let mut utf16_runs: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut has_cjk = false;
@@ -467,17 +470,29 @@ fn extract_onenote_strings(path: &str) -> Result<String, String> {
         utf16_runs.push(cur);
     }
 
-    // Merge, de-dup (preserve order). OneNote often repeats text in
-    // both display + revision blobs, and the two scans can also find
-    // the same content (rare but possible).
     let mut seen = std::collections::HashSet::new();
-    let mut out: Vec<String> = Vec::new();
+    let mut all: Vec<String> = Vec::new();
     for r in ascii_runs.into_iter().chain(utf16_runs.into_iter()) {
         if seen.insert(r.clone()) {
-            out.push(r);
+            all.push(r);
         }
     }
-    Ok(out.join("\n"))
+
+    let total = all.len();
+    // Sort by length descending so the longest (most likely real prose
+    // or commands) is surfaced first.
+    all.sort_by(|a, b| b.chars().count().cmp(&a.chars().count()));
+    let truncated = all.len() > MAX_RUNS;
+    all.truncate(MAX_RUNS);
+
+    let mut out = all.join("\n");
+    if truncated {
+        out.push_str(&format!(
+            "\n\n— truncated: {} more runs not shown. The file is large with many embedded images; for a cleaner extraction use OneNote → File → Export → Word (.docx).",
+            total - MAX_RUNS
+        ));
+    }
+    Ok(out)
 }
 
 fn is_real_cjk(cp: u32) -> bool {
@@ -487,12 +502,10 @@ fn is_real_cjk(cp: u32) -> bool {
         || (0xFF00..=0xFFEF).contains(&cp)
 }
 
-/// Reject obvious schema URIs, GUIDs, and short alphanumeric junk that
-/// happens to fall in the printable-ASCII range inside binary headers.
-/// A "real" text run has at least one of:
-///   - a space (real prose tends to have spaces)
-///   - a 4-letter English word (typical of code / commands)
-///   - 2 consecutive CJK characters
+/// Reject schema URIs, GUIDs, base64-looking blobs, and short
+/// alphanumeric junk that survives raw scanning of binary headers.
+/// A "real" text run must contain either ≥2 consecutive CJK chars
+/// OR (a space AND a 4+ letter alphabetic word).
 fn is_plausible_text(s: &str) -> bool {
     let t = s.trim();
     if t.is_empty() {
@@ -501,7 +514,6 @@ fn is_plausible_text(s: &str) -> bool {
     if t.starts_with("http://") || t.starts_with("https://") || t.starts_with("urn:") {
         return false;
     }
-    // GUID-shaped (with or without braces)
     let stripped = t.trim_matches(|c| c == '{' || c == '}');
     if stripped.len() == 36
         && stripped.chars().enumerate().all(|(i, c)| {
@@ -517,32 +529,43 @@ fn is_plausible_text(s: &str) -> bool {
     if !t.chars().any(|c| c.is_alphanumeric()) {
         return false;
     }
-    if t.contains(' ') {
-        return true;
-    }
-    // 4 consecutive ASCII letters
-    let mut run = 0;
-    for c in t.chars() {
-        if c.is_ascii_alphabetic() {
-            run += 1;
-            if run >= 4 {
-                return true;
-            }
-        } else {
-            run = 0;
+
+    // base64-looking: no spaces, >=30 chars, >=95% [A-Za-z0-9+/=]
+    if !t.contains(' ') && t.len() >= 30 {
+        let b64_chars = t
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '+' || *c == '/' || *c == '=')
+            .count();
+        if b64_chars * 100 >= t.len() * 95 {
+            return false;
         }
     }
-    // 2 consecutive CJK chars
+
+    // 2+ consecutive CJK → real Chinese / Japanese
     let mut cjk_run = 0;
     for c in t.chars() {
-        let cp = c as u32;
-        if is_real_cjk(cp) {
+        if is_real_cjk(c as u32) {
             cjk_run += 1;
             if cjk_run >= 2 {
                 return true;
             }
         } else {
             cjk_run = 0;
+        }
+    }
+
+    // Space-containing with a 4+ letter alphabetic word → real prose
+    if t.contains(' ') {
+        let mut run = 0;
+        for c in t.chars() {
+            if c.is_ascii_alphabetic() {
+                run += 1;
+                if run >= 4 {
+                    return true;
+                }
+            } else {
+                run = 0;
+            }
         }
     }
     false
