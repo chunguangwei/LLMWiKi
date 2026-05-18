@@ -28,13 +28,12 @@
   <img src="assets/overview.jpg" width="100%" alt="概要">
 </p>
 
-> 📦 **これは LLMWiKi fork です** — nashsu/llm_wiki に 5 つの機能を追加：
+> 📦 **これは LLMWiKi fork です** — nashsu/llm_wiki に 4 つの機能を追加：
 > **`.llmwiki` ワンクリック import / export**、**ページ単位の定期 Web リフレッシュ**、
 > **クラウド共有 / チーム配備に対応したローカル状態分離**、
-> **Microsoft OneNote `.one` ファイル読み取り**、
 > **中国語 i18n 完全化 + ワンクリック言語切替**。
 > 詳細は外側の [`UPSTREAM.md`](../UPSTREAM.md) と [`docs/features.md`](../docs/features.md) を参照。
-> 新機能のドキュメントは英語版 [`README.md`](README.md) の §19/20/21/22/23 にあります。
+> 新機能のドキュメントは英語版 [`README.md`](README.md) の §19/20/21/22 にあります。
 
 ## 主な機能
 

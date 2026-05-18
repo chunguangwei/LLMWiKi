@@ -49,9 +49,6 @@ export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "xml",
   "yaml",
   "yml",
-  // OneNote .one section files — text extracted in
-  // src-tauri/src/commands/fs.rs via the onenote_parser crate.
-  "one",
 ])
 
 export interface DeleteSourceResult {

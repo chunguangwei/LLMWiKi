@@ -48,8 +48,6 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
       return <CodePreview filePath={filePath} content={textContent} />
     case "text":
       return <TextPreview filePath={filePath} content={textContent} label="Text" />
-    case "onenote":
-      return <TextPreview filePath={filePath} content={textContent} label="OneNote (extracted text)" />
     case "document":
       return <BinaryPlaceholder filePath={filePath} fileName={fileName} category={category} />
     default:

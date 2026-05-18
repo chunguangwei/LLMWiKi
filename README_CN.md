@@ -28,11 +28,11 @@
   <img src="assets/overview.jpg" width="100%" alt="概览">
 </p>
 
-> 📦 **这是 LLMWiKi fork** —— 在 nashsu/llm_wiki 之上新增了五项能力：
+> 📦 **这是 LLMWiKi fork** —— 在 nashsu/llm_wiki 之上新增了四项能力：
 > **`.llmwiki` 一键导入/导出**、**页面级定时联网刷新**、**云盘 + 团队部署友好的本地状态分离**、
-> **Microsoft OneNote `.one` 文件读取**、**中文 i18n 补全 + 一键切换语言**。
-> 详见外层 [`UPSTREAM.md`](../UPSTREAM.md) 与 [`docs/features.md`](../docs/features.md)，日常使用看 [`docs/user-manual.md`](../docs/user-manual.md)。
-> 此 README 大部分内容来自 upstream；新增功能见下方第 19/20/21/22/23 节。
+> **中文 i18n 补全 + 一键切换语言**。
+> 详见外层 [`UPSTREAM.md`](../UPSTREAM.md) 与 [`docs/features.md`](../docs/features.md)，日常使用看 [`docs/user-manual.md`](../docs/user-manual.md)，自定义分类/规则看 [`docs/user-rules.md`](../docs/user-rules.md)。
+> 此 README 大部分内容来自 upstream；新增功能见下方第 19/20/21/22 节。
 
 ## 功能亮点
 
@@ -398,18 +398,7 @@ refresh-queries:                  # 可选；不填则 LLM 自动生成
 
 API Key 一直在 OS 应用数据目录，从不在项目目录里。
 
-### 22. Microsoft OneNote `.one` 文件读取
-
-直接把 OneNote 的 `.one` 段文件当作普通源文档摄入 wiki，**不依赖 OneNote 应用本身**，Mac / Win / Linux 全平台。
-
-- 库：[`onenote_parser`](https://crates.io/crates/onenote_parser) v1.1（msiemens/onenote.rs，纯 Rust，MPL-2.0）
-- 提取策略：段名 → H1；page 标题 → H2；正文按顺序拼接；图片 / 表格 / 嵌入 / 手写 → 占位符（让 LLM 知道有这些但不解析二进制）
-- 接入：`app/src-tauri/src/commands/fs.rs` 的 `extract_onenote_text`，与 PDF / Office 在 `read_file` 平行分发
-- 限制：不支持密码段；不支持 `.onetoc2` 整本笔记本索引；复杂富内容只留占位
-
-适合：把多年的 OneNote 笔记一次性灌入 LLMWiki 做检索 / 综合。详见 [`../docs/features.md §4`](../docs/features.md#4-onenote-one-文件读取)。
-
-### 23. 中文 i18n 补全 + 一键切换语言
+### 22. 中文 i18n 补全 + 一键切换语言
 
 - **补全**：fork 新增的三个 UI 段（`importExport`、`scheduledRefresh`、`editor.refresh`）原本只走英文 `defaultValue`。现在 `app/src/i18n/{en,zh}.json` 完全对齐，中文用户在新功能区域看到的全是中文
 - **一键切换**：上游切语言要先选再点 Save。本 fork 在 *设置 → 界面* 点击「中文 / English」按钮**立刻 `i18n.changeLanguage()` + 持久化**，所有 `useTranslation()` 组件即刻重渲染，免去保存动作

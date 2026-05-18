@@ -7,12 +7,6 @@ export type FileCategory =
   | "audio"
   | "pdf"
   | "document"
-  // Microsoft OneNote .one sections. Distinct from "document" because we
-  // ship a Rust-side extractor (`extract_onenote_text` in
-  // src-tauri/src/commands/fs.rs) that produces clean readable prose, so
-  // we can show the extracted content like .pdf instead of a generic
-  // "no preview" placeholder.
-  | "onenote"
   | "data"
   | "unknown"
 
@@ -116,8 +110,6 @@ const EXT_MAP: Record<string, FileCategory> = {
   numbers: "document",
   key: "document",
   epub: "document",
-  // .one has its own category — see comment on FileCategory union.
-  one: "onenote",
 
   // Data
   json: "data",
