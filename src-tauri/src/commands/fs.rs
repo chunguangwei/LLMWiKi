@@ -348,7 +348,7 @@ fn extract_onenote_text(path: &str) -> Result<String, String> {
     let parser = Parser::new();
     let section = parser
         .parse_section(Path::new(path))
-        .map_err(|e| format!("OneNote parse failed for '{path}': {e}"))?;
+        .map_err(|e| explain_onenote_parse_failure(path, &e.to_string()))?;
 
     let mut out = String::new();
     out.push_str(&format!("# {}\n\n", section.display_name()));
@@ -372,6 +372,57 @@ fn extract_onenote_text(path: &str) -> Result<String, String> {
     }
 
     Ok(out)
+}
+
+/// Turn the cryptic library error into something a user can act on.
+///
+/// `onenote_parser` returns errors like
+///   "Malformed FSSHTTPB data: unexpected object header type for 32 bit header: 0x0"
+/// which is meaningless to anyone who isn't a OneNote format implementer.
+/// We recognise common failure shapes (corrupted / non-section file,
+/// pre-2010 ONESTORE format, OneDrive conflict backup filenames) and
+/// emit a Chinese + English actionable hint.
+fn explain_onenote_parse_failure(path: &str, raw_error: &str) -> String {
+    let file_name = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string());
+
+    // OneDrive backup files often look like `Name.one (于 2025-10-24).one`
+    // (Chinese locale) or `Name.one (on 2025-10-24).one` (English) —
+    // double extension is a strong signal it's a sync conflict backup,
+    // not a section the parser is expected to handle.
+    let looks_like_backup = file_name.matches(".one").count() > 1
+        || file_name.contains("(于 ")
+        || file_name.contains("(on ")
+        || file_name.contains("conflict");
+
+    let category = if raw_error.contains("Malformed FSSHTTPB")
+        || raw_error.contains("unexpected object header")
+        || raw_error.contains("0x0")
+    {
+        "binary format unrecognised (file may be corrupted, a sync backup, or from a OneNote variant this parser does not support)"
+    } else if raw_error.contains("legacy") || raw_error.contains("MS-ONE") || raw_error.contains("ONESTORE") {
+        "pre-2010 OneNote (.one) files are not supported"
+    } else {
+        "OneNote parse failed"
+    };
+
+    let mut msg = format!(
+        "OneNote parse failed for '{file_name}': {category}.\n\nLibrary detail: {raw_error}"
+    );
+
+    if looks_like_backup {
+        msg.push_str(
+            "\n\nThe filename looks like a OneDrive sync conflict backup (note the date suffix or double `.one` extension). Try the original section file instead, or open this file in OneNote first.",
+        );
+    }
+
+    msg.push_str(
+        "\n\nWorkarounds:\n  1. Open the page in OneNote and File → Export → Word (.docx) or PDF, then drop the exported file into raw/sources/ — those formats are fully supported.\n  2. Check that the file is a real .one section (not .onetoc2, not password-protected, not zero bytes).\n  3. If multiple .one files in the same folder fail with the same error, your OneNote install may be using a newer format than this parser knows about — please report it.",
+    );
+
+    msg
 }
 
 fn walk_page_content(
