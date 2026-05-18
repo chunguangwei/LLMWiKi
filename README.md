@@ -28,11 +28,13 @@
   <img src="assets/overview.jpg" width="100%" alt="Overview">
 </p>
 
-> 📦 **This is the LLMWiKi fork** — three additions on top of nashsu/llm_wiki:
+> 📦 **This is the LLMWiKi fork** — five additions on top of nashsu/llm_wiki:
 > **`.llmwiki` one-click import/export**, **per-page scheduled web refresh**,
-> and **cloud-share-friendly local state split**.
-> See the outer [`UPSTREAM.md`](../UPSTREAM.md) and [`docs/features.md`](../docs/features.md).
-> Most of this README comes from upstream; the new features are in sections 19/20/21 below.
+> **cloud-share-friendly local state split**, **Microsoft OneNote `.one` reading**,
+> and **complete Chinese i18n with one-click language switching**.
+> See the outer [`UPSTREAM.md`](../UPSTREAM.md) and [`docs/features.md`](../docs/features.md);
+> for day-to-day usage check [`docs/user-manual.md`](../docs/user-manual.md).
+> Most of this README comes from upstream; the new features are in sections 19/20/21/22/23 below.
 
 ## Features
 
@@ -397,6 +399,23 @@ Originally `.llm-wiki/` mixed project-shared metadata with private chats — bad
 Existing users auto-migrate on first launch. Deployment guide in [`../docs/cloud-sharing.md`](../docs/cloud-sharing.md) (covers iCloud / OneDrive / Dropbox / Git rules for excluding `.llm-wiki-local/`).
 
 API keys have always lived in the OS app-data dir, never inside the project dir.
+
+### 22. Microsoft OneNote `.one` File Reading
+
+Drop a OneNote `.one` section file into `raw/sources/` and ingest it like any other document — **no OneNote application required**, cross-platform on Mac / Win / Linux.
+
+- Library: [`onenote_parser`](https://crates.io/crates/onenote_parser) v1.1 (msiemens/onenote.rs, pure Rust, MPL-2.0)
+- Extraction strategy: section name → H1; page title → H2; rich text concatenated in order; images / tables / embedded files / ink → placeholders (the LLM knows they were there but doesn't parse the binaries)
+- Wired into `app/src-tauri/src/commands/fs.rs::extract_onenote_text`, dispatched alongside PDF / Office in `read_file`
+- Limitations: no password-protected sections; no `.onetoc2` notebook indices; complex rich content reduced to placeholders
+
+Great for ingesting years of OneNote notes into LLMWiki for retrieval / synthesis. See [`../docs/features.md §4`](../docs/features.md#4-onenote-one-文件读取).
+
+### 23. Chinese i18n Completion + One-Click Language Switch
+
+- **Completion**: the three new UI sections (`importExport`, `scheduledRefresh`, `editor.refresh`) previously fell back to English `defaultValue`s. Now `app/src/i18n/{en,zh}.json` are fully aligned and Chinese users see Chinese strings everywhere.
+- **One-click switch**: upstream's flow required selecting a language then clicking Save. In this fork, clicking *Settings → Interface → 中文 / English* **immediately calls `i18n.changeLanguage()` + persists** — every `useTranslation()` component re-renders instantly without a Save step.
+- Adding a language: copy `en.json` → translate → register in `i18n/index.ts` and `interface-section.tsx::UI_LANGUAGES`; the `i18n-parity` test enforces key alignment.
 
 ## Tech Stack
 
