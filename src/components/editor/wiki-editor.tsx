@@ -12,6 +12,7 @@ import "katex/dist/katex.min.css"
 import { Pencil, Eye } from "lucide-react"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { FrontmatterPanel } from "@/components/editor/frontmatter-panel"
+import { RefreshControls } from "@/components/editor/refresh-controls"
 import { WikiReader } from "@/components/editor/wiki-reader"
 
 interface WikiEditorInnerProps {
@@ -112,12 +113,14 @@ export function WikiEditor({ content, onSave }: WikiEditorProps) {
 
       {mode === "read" ? (
         <div className="px-6 py-6">
+          {frontmatter && <RefreshControls frontmatter={frontmatter} />}
           {frontmatter && <FrontmatterPanel data={frontmatter} />}
           <WikiReader body={body} />
         </div>
       ) : (
         <MilkdownProvider>
           <div className="prose prose-invert min-w-0 max-w-none overflow-hidden p-6">
+            {frontmatter && <RefreshControls frontmatter={frontmatter} />}
             {frontmatter && <FrontmatterPanel data={frontmatter} />}
             <WikiEditorInner content={processedBody} onSave={handleSave} />
           </div>

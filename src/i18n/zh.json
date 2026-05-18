@@ -184,6 +184,8 @@
       "network": "网络",
       "sourceWatch": "资料文件夹监控",
       "scheduledImport": "定时导入",
+      "scheduledRefresh": "定时联网刷新",
+      "importExport": "导入 / 导出",
       "output": "输出偏好",
       "interface": "界面",
       "maintenance": "维护",

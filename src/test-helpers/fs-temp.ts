@@ -75,6 +75,14 @@ export const realFs = {
   createDirectory: async (p: string): Promise<void> => {
     await fs.mkdir(p, { recursive: true })
   },
+  fileExists: async (p: string): Promise<boolean> => {
+    try {
+      await fs.access(p)
+      return true
+    } catch {
+      return false
+    }
+  },
   createProject: async () => {
     throw new Error("createProject not supported in tests")
   },

@@ -8,7 +8,8 @@ import { useChatStore, chatMessagesToLLM } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
 import { executeIngestWrites } from "@/lib/ingest"
-import { listDirectory, readFile, deleteFile } from "@/commands/fs"
+import { listDirectory, readFile } from "@/commands/fs"
+import { deleteChatConversation } from "@/lib/persist"
 import { searchWiki } from "@/lib/search"
 import { buildRetrievalGraph, getRelatedNodes } from "@/lib/graph-relevance"
 import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
@@ -91,10 +92,9 @@ function ConversationSidebar() {
                       onClick={(e) => {
                         e.stopPropagation()
                         deleteConversation(conv.id)
-                        // Delete persisted chat file
                         const proj = useWikiStore.getState().project
                         if (proj) {
-                          deleteFile(`${proj.path}/.llm-wiki/chats/${conv.id}.json`).catch(() => {})
+                          deleteChatConversation(proj.path, conv.id).catch(() => {})
                         }
                       }}
                     >

@@ -21,6 +21,10 @@ src-tauri/gen/
 .env.local
 .env.*.local
 
+# Per-user private state for any wiki project living inside the repo
+# for local testing — chats and conversations must never be committed.
+.llm-wiki-local/
+
 # Internal docs (not shipped)
 docs/
 AGENTS.md

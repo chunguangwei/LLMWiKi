@@ -184,6 +184,8 @@
       "network": "Network",
       "sourceWatch": "Source Watch",
       "scheduledImport": "Scheduled Import",
+      "scheduledRefresh": "Scheduled Web Refresh",
+      "importExport": "Import / Export",
       "output": "Output",
       "interface": "Interface",
       "maintenance": "Maintenance",

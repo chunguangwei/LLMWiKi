@@ -12,6 +12,8 @@ import {
   Wrench,
   Clock,
   FolderSync,
+  Package,
+  RefreshCw,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -35,6 +37,8 @@ import { SourceWatchSection } from "./sections/source-watch-section"
 import { ChangelogSection } from "./sections/changelog-section"
 import { MaintenanceSection } from "./sections/maintenance-section"
 import { AboutSection } from "./sections/about-section"
+import { ImportExportSection } from "./sections/import-export-section"
+import { ScheduledRefreshSection } from "./sections/scheduled-refresh-section"
 
 type CategoryId =
   | "llm"
@@ -44,6 +48,8 @@ type CategoryId =
   | "network"
   | "source-watch"
   | "scheduled-import"
+  | "scheduled-refresh"
+  | "import-export"
   | "output"
   | "interface"
   | "maintenance"
@@ -67,6 +73,8 @@ const CATEGORIES: Category[] = [
   { id: "network", labelKey: "settings.categories.network", icon: Network },
   { id: "source-watch", labelKey: "settings.categories.sourceWatch", icon: FolderSync },
   { id: "scheduled-import", labelKey: "settings.categories.scheduledImport", icon: Clock },
+  { id: "scheduled-refresh", labelKey: "settings.categories.scheduledRefresh", icon: RefreshCw },
+  { id: "import-export", labelKey: "settings.categories.importExport", icon: Package },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
   { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
@@ -388,6 +396,10 @@ export function SettingsView() {
         return <SourceWatchSection draft={draft} setDraft={setDraft} projectReady={!!project} />
       case "scheduled-import":
         return <ScheduledImportSection draft={draft} setDraft={setDraft} />
+      case "scheduled-refresh":
+        return <ScheduledRefreshSection />
+      case "import-export":
+        return <ImportExportSection />
       case "output":
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "interface":

@@ -121,9 +121,9 @@ describe("chat persistence — round-trip (new format)", () => {
         makeMsg("m3", "c2", "other"),
       ],
     )
-    expect(await fileExists(`${tmp.path}/.llm-wiki/conversations.json`)).toBe(true)
-    expect(await fileExists(`${tmp.path}/.llm-wiki/chats/c1.json`)).toBe(true)
-    expect(await fileExists(`${tmp.path}/.llm-wiki/chats/c2.json`)).toBe(true)
+    expect(await fileExists(`${tmp.path}/.llm-wiki-local/conversations.json`)).toBe(true)
+    expect(await fileExists(`${tmp.path}/.llm-wiki-local/chats/c1.json`)).toBe(true)
+    expect(await fileExists(`${tmp.path}/.llm-wiki-local/chats/c2.json`)).toBe(true)
   })
 
   it("round-trips conversations + messages", async () => {
