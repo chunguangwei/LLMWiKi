@@ -346,32 +346,138 @@ fn extract_onenote_text(path: &str) -> Result<String, String> {
     use onenote_parser::Parser;
 
     let parser = Parser::new();
-    let section = parser
-        .parse_section(Path::new(path))
-        .map_err(|e| explain_onenote_parse_failure(path, &e.to_string()))?;
+    match parser.parse_section(Path::new(path)) {
+        Ok(section) => {
+            let mut out = String::new();
+            out.push_str(&format!("# {}\n\n", section.display_name()));
 
-    let mut out = String::new();
-    out.push_str(&format!("# {}\n\n", section.display_name()));
-
-    let mut untitled_idx = 0u32;
-    for series in section.page_series() {
-        for page in series.pages() {
-            let title = match page.title_text() {
-                Some(t) if !t.trim().is_empty() => t.to_string(),
-                _ => {
-                    untitled_idx += 1;
-                    format!("Untitled Page {untitled_idx}")
+            let mut untitled_idx = 0u32;
+            for series in section.page_series() {
+                for page in series.pages() {
+                    let title = match page.title_text() {
+                        Some(t) if !t.trim().is_empty() => t.to_string(),
+                        _ => {
+                            untitled_idx += 1;
+                            format!("Untitled Page {untitled_idx}")
+                        }
+                    };
+                    out.push_str(&format!("## {title}\n\n"));
+                    for pc in page.contents() {
+                        walk_page_content(pc, &mut out);
+                    }
+                    out.push('\n');
                 }
-            };
-            out.push_str(&format!("## {title}\n\n"));
-            for pc in page.contents() {
-                walk_page_content(pc, &mut out);
             }
-            out.push('\n');
+            Ok(out)
+        }
+        Err(parse_err) => {
+            // Structured parse failed. Try a brute-force strings
+            // extraction so the user still gets *something* from
+            // their file — OneNote stores text in UTF-16-LE, so we
+            // can pull out readable runs even when the binary
+            // schema is unrecognized. The fallback is clearly
+            // labeled so the user knows the structure isn't
+            // preserved.
+            let parse_err_msg = parse_err.to_string();
+            match extract_onenote_strings(path) {
+                Ok(fallback) if !fallback.trim().is_empty() => {
+                    let header = format!(
+                        "# OneNote section (fallback strings extraction)\n\n\
+                         > The structured parser could not decode this file's binary schema,\n\
+                         > so this preview is a best-effort scan of readable text runs.\n\
+                         > Page boundaries, headings, lists, and tables are lost.\n\
+                         > Original parser error: {parse_err_msg}\n\n"
+                    );
+                    Ok(format!("{header}{fallback}"))
+                }
+                _ => Err(explain_onenote_parse_failure(path, &parse_err_msg)),
+            }
         }
     }
+}
 
-    Ok(out)
+/// Scan a binary file for UTF-16-LE text runs and return them
+/// concatenated with newlines. Used as a fallback when the structured
+/// OneNote parser fails. We accept printable ASCII, CJK ranges (used
+/// widely in Chinese/Japanese OneNote), and Latin-1 supplement, then
+/// filter out runs that look like schema URIs / GUIDs / pure
+/// whitespace-punctuation — those are OneNote's internal metadata.
+fn extract_onenote_strings(path: &str) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|e| format!("read failed: {e}"))?;
+
+    let mut runs: Vec<String> = Vec::new();
+    let mut current = String::new();
+    const MIN_RUN_LEN: usize = 4;
+
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        let cp = (bytes[i] as u32) | ((bytes[i + 1] as u32) << 8);
+        let ch = if is_human_text_codepoint(cp) {
+            char::from_u32(cp)
+        } else {
+            None
+        };
+        match ch {
+            Some(c) => current.push(c),
+            None => {
+                if current.chars().count() >= MIN_RUN_LEN && !looks_like_metadata(&current) {
+                    runs.push(std::mem::take(&mut current));
+                } else {
+                    current.clear();
+                }
+            }
+        }
+        i += 2;
+    }
+    if current.chars().count() >= MIN_RUN_LEN && !looks_like_metadata(&current) {
+        runs.push(current);
+    }
+
+    // De-dup adjacent identical lines (OneNote often repeats text in
+    // both display + revision blobs).
+    runs.dedup();
+    Ok(runs.join("\n"))
+}
+
+fn is_human_text_codepoint(cp: u32) -> bool {
+    // Printable ASCII (excluding control chars except tab)
+    (0x20..=0x7E).contains(&cp)
+        || cp == 0x09
+        // Latin-1 supplement (accented letters)
+        || (0xA1..=0xFF).contains(&cp)
+        // CJK symbols + punctuation, kana, CJK unified ideographs,
+        // halfwidth/fullwidth forms. Covers most Chinese/Japanese
+        // content in OneNote.
+        || (0x3000..=0x303F).contains(&cp)
+        || (0x3040..=0x30FF).contains(&cp)
+        || (0x4E00..=0x9FFF).contains(&cp)
+        || (0xFF00..=0xFFEF).contains(&cp)
+}
+
+fn looks_like_metadata(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    // URIs / namespaces (e.g. http://schemas.microsoft.com/...)
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("urn:") {
+        return true;
+    }
+    // GUID-shaped: 8-4-4-4-12 with optional braces
+    let stripped = trimmed.trim_matches(|c| c == '{' || c == '}');
+    if stripped.len() == 36
+        && stripped
+            .chars()
+            .enumerate()
+            .all(|(i, c)| if [8, 13, 18, 23].contains(&i) { c == '-' } else { c.is_ascii_hexdigit() })
+    {
+        return true;
+    }
+    // All ASCII punctuation / whitespace → metadata
+    if trimmed.chars().all(|c| !c.is_alphanumeric()) {
+        return true;
+    }
+    false
 }
 
 /// Turn the cryptic library error into something a user can act on.
@@ -380,18 +486,15 @@ fn extract_onenote_text(path: &str) -> Result<String, String> {
 ///   "Malformed FSSHTTPB data: unexpected object header type for 32 bit header: 0x0"
 /// which is meaningless to anyone who isn't a OneNote format implementer.
 /// We recognise common failure shapes (corrupted / non-section file,
-/// pre-2010 ONESTORE format, OneDrive conflict backup filenames) and
-/// emit a Chinese + English actionable hint.
+/// pre-2010 ONESTORE format, OneDrive conflict backup filenames),
+/// fingerprint the file by its first 16 bytes against known OneNote
+/// GUIDs, and emit an actionable hint.
 fn explain_onenote_parse_failure(path: &str, raw_error: &str) -> String {
     let file_name = Path::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string());
 
-    // OneDrive backup files often look like `Name.one (于 2025-10-24).one`
-    // (Chinese locale) or `Name.one (on 2025-10-24).one` (English) —
-    // double extension is a strong signal it's a sync conflict backup,
-    // not a section the parser is expected to handle.
     let looks_like_backup = file_name.matches(".one").count() > 1
         || file_name.contains("(于 ")
         || file_name.contains("(on ")
@@ -412,6 +515,11 @@ fn explain_onenote_parse_failure(path: &str, raw_error: &str) -> String {
         "OneNote parse failed for '{file_name}': {category}.\n\nLibrary detail: {raw_error}"
     );
 
+    if let Some(fp) = fingerprint_one_file(path) {
+        msg.push_str("\n\nFile fingerprint: ");
+        msg.push_str(&fp);
+    }
+
     if looks_like_backup {
         msg.push_str(
             "\n\nThe filename looks like a OneDrive sync conflict backup (note the date suffix or double `.one` extension). Try the original section file instead, or open this file in OneNote first.",
@@ -423,6 +531,65 @@ fn explain_onenote_parse_failure(path: &str, raw_error: &str) -> String {
     );
 
     msg
+}
+
+/// Inspect the first 16 bytes of a file and identify whether it matches
+/// a known OneNote header GUID (per [MS-ONESTORE] §2.3.1). Returns a
+/// short human-readable verdict, or None if we can't read the file.
+///
+/// OneNote stores GUIDs with the first three fields in little-endian
+/// byte order (Windows convention), so the on-disk bytes for
+/// `7B5C52E4-D88C-4DA7-AEB1-5378D02996D3` are the byte sequence below.
+fn fingerprint_one_file(path: &str) -> Option<String> {
+    use std::io::Read;
+    let meta = fs::metadata(path).ok()?;
+    let size = meta.len();
+    if size == 0 {
+        return Some("file is 0 bytes — empty.".to_string());
+    }
+    if size < 16 {
+        return Some(format!("file is only {size} bytes — too small to contain a header."));
+    }
+
+    let mut file = fs::File::open(path).ok()?;
+    let mut buf = [0u8; 16];
+    file.read_exact(&mut buf).ok()?;
+
+    // GUID 7B5C52E4-D88C-4DA7-AEB1-5378D02996D3, little-endian in
+    // .one section headers ("One.SectionContainer" file type).
+    const ONE_SECTION_LE: [u8; 16] = [
+        0xE4, 0x52, 0x5C, 0x7B, 0x8C, 0xD8, 0xA7, 0x4D, 0xAE, 0xB1, 0x53, 0x78, 0xD0, 0x29, 0x96,
+        0xD3,
+    ];
+    // GUID 43FF2FA1-EFD9-4C76-9EE2-10EA5722765F, little-endian, used
+    // for .onetoc2 notebook index files. If the user fed us a
+    // .onetoc2 renamed to .one this catches it.
+    const ONETOC2_LE: [u8; 16] = [
+        0xA1, 0x2F, 0xFF, 0x43, 0xD9, 0xEF, 0x76, 0x4C, 0x9E, 0xE2, 0x10, 0xEA, 0x57, 0x22, 0x76,
+        0x5F,
+    ];
+
+    if buf == ONE_SECTION_LE {
+        Some(format!(
+            "header GUID = One.SectionContainer ({} bytes). This IS a valid OneNote .one section — the parse failure means the section uses a newer OneNote revision than the bundled onenote_parser 1.1 understands. Best path: export this page from OneNote to .docx or .pdf.",
+            size
+        ))
+    } else if buf == ONETOC2_LE {
+        Some(format!(
+            "header GUID = .onetoc2 notebook index ({} bytes). This file is a NOTEBOOK INDEX, not a section. Open one of the .one section files in the same notebook directory instead.",
+            size
+        ))
+    } else {
+        let hex = buf
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(format!(
+            "first 16 bytes = {hex} ({} bytes total). This does NOT match any known OneNote header GUID — the file is probably not a real .one binary (e.g. a renamed text file, corrupt download, or sync placeholder).",
+            size
+        ))
+    }
 }
 
 fn walk_page_content(
