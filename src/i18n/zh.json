@@ -359,6 +359,52 @@
         "lastScan": "上次扫描：{{time}}",
         "never": "从未"
       },
+      "scheduledRefresh": {
+        "title": "定时联网刷新",
+        "description": "定期让 LLM 检测 frontmatter 标记了 `refresh-enabled: true` 的 wiki 页面是否已过时，过时则在审核队列中生成建议。",
+        "needSearch": "请先在 设置 → 网页搜索 中配置搜索 provider。",
+        "enable": "启用后台调度器",
+        "scanInterval": "扫描间隔（分钟）",
+        "scanIntervalHint": "调度器多久扫一次 wiki 找到期页面。单页刷新周期由该页面 frontmatter 的 `refresh-interval-days` 决定。",
+        "runNowHeader": "立即运行",
+        "runNowHint": "跳过调度器，立刻把所有到期页面刷新一遍。",
+        "runNow": "刷新到期页面",
+        "running": "扫描中…",
+        "runResult": "已刷新 {{ran}} 个页面，跳过 {{skipped}} 个（未到期），{{errored}} 个失败。",
+        "frontmatterHowTo": "如何给页面打刷新标记"
+      },
+      "importExport": {
+        "title": "导入 / 导出",
+        "description": "把当前项目打包成可移植的 .llmwiki 文件，跨设备或团队迁移用。聊天记录会被刻意排除以保护隐私。",
+        "exportTitle": "导出 wiki 包",
+        "exportHeader": "导出",
+        "exportedBy": "你的名字（可选）",
+        "exportedByPlaceholder": "会写入包 manifest，便于团队溯源",
+        "includePageHistory": "包含页面历史（包体积更大）",
+        "exportNow": "导出包…",
+        "exporting": "打包中…",
+        "exportSuccess": "已导出 {{count}} 个文件到 {{path}}",
+        "exportFailed": "导出失败",
+        "openProjectFirst": "请先打开一个项目。",
+        "inspectHeader": "查看包信息",
+        "inspectTitle": "查看 wiki 包",
+        "inspectNow": "选择 .llmwiki…",
+        "inspecting": "读取 manifest…",
+        "inspectFailed": "读取失败",
+        "appVersion": "应用版本",
+        "exportedAt": "导出时间",
+        "fileCount": "文件数",
+        "importHeader": "导入",
+        "selectPackage": "选择要导入的包",
+        "selectTargetDir": "选择导入到哪个目录",
+        "conflictStrategy": "目标已存在同名文件时",
+        "skipExisting": "跳过已存在文件（安全）",
+        "overwriteAll": "全部覆盖",
+        "importNow": "导入 .llmwiki…",
+        "importing": "导入中…",
+        "importSuccess": "已导入 {{written}} 个文件（跳过 {{skipped}}，校验不一致 {{mismatches}}）到 {{path}}",
+        "importFailed": "导入失败"
+      },
       "output": {
         "title": "输出偏好",
         "description": "影响生成内容的语言、对话历史长度等参数。",
@@ -493,5 +539,18 @@
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
     "daysAgo": "{{count}} 天前"
+  },
+  "editor": {
+    "refresh": {
+      "title": "联网刷新",
+      "intervalLabel": "每 {{n}} 天",
+      "never": "从未刷新",
+      "result": {
+        "ok": "完成 — 页面已更新",
+        "no-change": "未检测到变化",
+        "pending-review": "已入审核队列",
+        "error": "刷新失败"
+      }
+    }
   }
 }

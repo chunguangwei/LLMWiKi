@@ -1,5 +1,7 @@
 import { useTranslation } from "react-i18next"
+import i18n from "@/i18n"
 import { Label } from "@/components/ui/label"
+import { saveLanguage } from "@/lib/project-store"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 
 interface Props {
@@ -14,6 +16,20 @@ const UI_LANGUAGES = [
 
 export function InterfaceSection({ draft, setDraft }: Props) {
   const { t } = useTranslation()
+
+  // One-click language switch: take effect immediately AND persist,
+  // without forcing the user to click Save afterwards. The draft
+  // assignment still happens so the global Save bar (which collects
+  // other unsaved fields) doesn't roll the language back.
+  const pickLanguage = async (value: string) => {
+    setDraft("uiLanguage", value)
+    if (i18n.language === value) return
+    await i18n.changeLanguage(value)
+    await saveLanguage(value).catch((err) =>
+      console.warn("[interface] could not persist language:", err),
+    )
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -32,7 +48,7 @@ export function InterfaceSection({ draft, setDraft }: Props) {
               <button
                 key={l.value}
                 type="button"
-                onClick={() => setDraft("uiLanguage", l.value)}
+                onClick={() => void pickLanguage(l.value)}
                 className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
                   active
                     ? "border-primary bg-primary text-primary-foreground"

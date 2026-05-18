@@ -110,6 +110,7 @@ const EXT_MAP: Record<string, FileCategory> = {
   numbers: "document",
   key: "document",
   epub: "document",
+  one: "document",
 
   // Data
   json: "data",

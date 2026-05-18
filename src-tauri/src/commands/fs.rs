@@ -12,6 +12,7 @@ use crate::types::wiki::FileNode;
 
 /// Known binary formats that need special extraction
 const OFFICE_EXTS: &[&str] = &["docx", "pptx", "xlsx", "odt", "ods", "odp"];
+const ONENOTE_EXTS: &[&str] = &["one"];
 const IMAGE_EXTS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif", "avif", "heic", "heif", "svg",
 ];
@@ -48,6 +49,7 @@ pub async fn read_file(path: String) -> Result<String, String> {
             match ext.as_str() {
                 "pdf" => extract_pdf_text(&path),
                 e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e),
+                e if ONENOTE_EXTS.contains(&e) => extract_onenote_text(&path),
                 e if IMAGE_EXTS.contains(&e) => {
                     let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                     Ok(format!("[Image: {} ({:.1} KB)]", p.file_name().unwrap_or_default().to_string_lossy(), size as f64 / 1024.0))
@@ -99,6 +101,7 @@ pub async fn preprocess_file(path: String) -> Result<String, String> {
             let text = match ext.as_str() {
                 "pdf" => extract_pdf_text(&path)?,
                 e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e)?,
+                e if ONENOTE_EXTS.contains(&e) => extract_onenote_text(&path)?,
                 _ => return Ok("no preprocessing needed".to_string()),
             };
 
@@ -325,6 +328,115 @@ pub(crate) fn pdfium() -> Result<&'static pdfium_render::prelude::Pdfium, String
 /// `convertFileSrc` without anyone having to know which directory
 /// they're rendering from.
 ///
+/// Read a Microsoft OneNote `.one` section file and return a plain-
+/// text approximation suitable for LLM ingest. We don't preserve
+/// formatting, images, or table layout; the goal is "give the LLM
+/// readable prose to summarize," not "round-trip to OneNote."
+///
+/// The section structure we walk:
+///   Section → page_series() → pages() → contents() →
+///     PageContent::Outline → items() →
+///       OutlineItem::{Element(OutlineElement), Group} →
+///         OutlineElement::contents() → Content::RichText.text()
+///
+/// Non-text contents (Image, EmbeddedFile, Table, Ink) become
+/// `[Image]` / `[Table]` placeholders so the LLM at least knows
+/// they were present.
+fn extract_onenote_text(path: &str) -> Result<String, String> {
+    use onenote_parser::Parser;
+
+    let parser = Parser::new();
+    let section = parser
+        .parse_section(Path::new(path))
+        .map_err(|e| format!("OneNote parse failed for '{path}': {e}"))?;
+
+    let mut out = String::new();
+    out.push_str(&format!("# {}\n\n", section.display_name()));
+
+    let mut untitled_idx = 0u32;
+    for series in section.page_series() {
+        for page in series.pages() {
+            let title = match page.title_text() {
+                Some(t) if !t.trim().is_empty() => t.to_string(),
+                _ => {
+                    untitled_idx += 1;
+                    format!("Untitled Page {untitled_idx}")
+                }
+            };
+            out.push_str(&format!("## {title}\n\n"));
+            for pc in page.contents() {
+                walk_page_content(pc, &mut out);
+            }
+            out.push('\n');
+        }
+    }
+
+    Ok(out)
+}
+
+fn walk_page_content(
+    pc: &onenote_parser::page::PageContent,
+    out: &mut String,
+) {
+    use onenote_parser::page::PageContent;
+    match pc {
+        PageContent::Outline(outline) => {
+            for item in outline.items() {
+                walk_outline_item(item, out);
+            }
+        }
+        PageContent::Image(_) => out.push_str("[Image]\n"),
+        PageContent::EmbeddedFile(_) => out.push_str("[Embedded file]\n"),
+        PageContent::Ink(_) => out.push_str("[Ink drawing]\n"),
+        // Best-effort: any future variants get an opaque placeholder
+        // rather than silently dropping content.
+        _ => out.push_str("[non-text content]\n"),
+    }
+}
+
+fn walk_outline_item(
+    item: &onenote_parser::contents::OutlineItem,
+    out: &mut String,
+) {
+    use onenote_parser::contents::OutlineItem;
+    match item {
+        OutlineItem::Element(elem) => {
+            for content in elem.contents() {
+                walk_outline_content(content, out);
+            }
+            for child in elem.children() {
+                walk_outline_item(child, out);
+            }
+        }
+        OutlineItem::Group(group) => {
+            for inner in group.outlines() {
+                walk_outline_item(inner, out);
+            }
+        }
+    }
+}
+
+fn walk_outline_content(
+    content: &onenote_parser::contents::Content,
+    out: &mut String,
+) {
+    use onenote_parser::contents::Content;
+    match content {
+        Content::RichText(rt) => {
+            let text = rt.text();
+            if !text.trim().is_empty() {
+                out.push_str(text);
+                out.push('\n');
+            }
+        }
+        Content::Image(_) => out.push_str("[Image]\n"),
+        Content::EmbeddedFile(_) => out.push_str("[Embedded file]\n"),
+        Content::Table(_) => out.push_str("[Table]\n"),
+        Content::Ink(_) => out.push_str("[Ink drawing]\n"),
+        _ => {}
+    }
+}
+
 /// Lock: delegates to `extract_pdf_markdown`, which acquires the
 /// pdfium lock internally. We must NOT take it here too —
 /// `std::sync::Mutex` is non-reentrant.

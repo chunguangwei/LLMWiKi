@@ -359,6 +359,52 @@
         "lastScan": "Last scan: {{time}}",
         "never": "Never"
       },
+      "scheduledRefresh": {
+        "title": "Scheduled Web Refresh",
+        "description": "Periodically asks the LLM whether wiki pages flagged with `refresh-enabled: true` in their frontmatter are stale. Stale pages produce a suggestion in the Review queue.",
+        "needSearch": "Configure a web search provider under Settings → Web Search first.",
+        "enable": "Enable background scheduler",
+        "scanInterval": "Check interval (minutes)",
+        "scanIntervalHint": "How often to scan the wiki for due pages. Per-page interval is set in each page's frontmatter via `refresh-interval-days`.",
+        "runNowHeader": "Run now",
+        "runNowHint": "Bypasses the scheduler and immediately refreshes every page that is currently due.",
+        "runNow": "Refresh due pages",
+        "running": "Scanning…",
+        "runResult": "Refreshed {{ran}} pages, skipped {{skipped}} (not due yet), {{errored}} errors.",
+        "frontmatterHowTo": "How to mark a page for refresh"
+      },
+      "importExport": {
+        "title": "Import / Export",
+        "description": "Bundle the current project into a portable .llmwiki package for cross-device or team transfer. Chat history is intentionally excluded.",
+        "exportTitle": "Export wiki package",
+        "exportHeader": "Export",
+        "exportedBy": "Your name (optional)",
+        "exportedByPlaceholder": "Recorded in the package manifest",
+        "includePageHistory": "Include page history (larger package)",
+        "exportNow": "Export package…",
+        "exporting": "Packing…",
+        "exportSuccess": "Exported {{count}} files to {{path}}",
+        "exportFailed": "Export failed",
+        "openProjectFirst": "Open a project first.",
+        "inspectHeader": "Inspect package",
+        "inspectTitle": "Inspect wiki package",
+        "inspectNow": "Choose .llmwiki…",
+        "inspecting": "Reading manifest…",
+        "inspectFailed": "Inspect failed",
+        "appVersion": "App version",
+        "exportedAt": "Exported",
+        "fileCount": "Files",
+        "importHeader": "Import",
+        "selectPackage": "Select package to import",
+        "selectTargetDir": "Choose target directory for the imported project",
+        "conflictStrategy": "If target files already exist",
+        "skipExisting": "Skip existing files (safe)",
+        "overwriteAll": "Overwrite everything",
+        "importNow": "Import .llmwiki…",
+        "importing": "Importing…",
+        "importSuccess": "Imported {{written}} files (skipped {{skipped}}, mismatches {{mismatches}}) into {{path}}",
+        "importFailed": "Import failed"
+      },
       "output": {
         "title": "Output Preferences",
         "description": "Controls for generated content — language, conversation history length.",
@@ -493,5 +539,18 @@
     "minutesAgo": "{{count}} min ago",
     "hoursAgo": "{{count}} h ago",
     "daysAgo": "{{count}} d ago"
+  },
+  "editor": {
+    "refresh": {
+      "title": "Web refresh",
+      "intervalLabel": "every {{n}}d",
+      "never": "Never refreshed",
+      "result": {
+        "ok": "Done — page updated",
+        "no-change": "No change detected",
+        "pending-review": "Pending review",
+        "error": "Refresh failed"
+      }
+    }
   }
 }

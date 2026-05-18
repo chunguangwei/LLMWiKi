@@ -59,6 +59,9 @@ sha2 = "0.10"
 md-5 = "0.10"
 notify = "8"
 walkdir = "2"
+# OneNote .one section parser (msiemens/onenote.rs). Pure-Rust, no
+# OneNote app dependency. Used by extract_onenote_text in commands/fs.rs.
+onenote_parser = "1.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
