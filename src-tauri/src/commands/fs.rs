@@ -396,86 +396,154 @@ fn extract_onenote_text(path: &str) -> Result<String, String> {
     }
 }
 
-/// Scan a binary file for UTF-16-LE text runs and return them
-/// concatenated with newlines. Used as a fallback when the structured
-/// OneNote parser fails. We accept printable ASCII, CJK ranges (used
-/// widely in Chinese/Japanese OneNote), and Latin-1 supplement, then
-/// filter out runs that look like schema URIs / GUIDs / pure
-/// whitespace-punctuation — those are OneNote's internal metadata.
+/// Strings-extraction fallback for when the structured OneNote parser
+/// fails. Used in particular for files written by OneNote for Mac,
+/// which onenote_parser 1.1 doesn't fully understand.
+///
+/// We run two independent scans against the raw bytes:
+///
+///   1. **ASCII scan** — byte-by-byte runs of 0x20–0x7E (printable
+///      ASCII + tab). Catches plain-text English passages and code
+///      that Mac OneNote stores without UTF-16 padding.
+///
+///   2. **UTF-16-LE CJK scan** — 2-byte-aligned, but only emits a run
+///      that contains at least one real CJK character. This avoids the
+///      well-known artifact where ASCII bytes interpreted as UTF-16-LE
+///      decode into Chinese Extension-B glyphs (e.g. "Mailbox" →
+///      `慍汩潢卸`). When a run is genuinely Chinese/Japanese, those
+///      CJK codepoints are present and we keep it.
+///
+/// Each run is then filtered for plausibility: must contain a 4-letter
+/// English word OR a space OR ≥ 2 CJK characters. This kills the short
+/// alphanumeric junk that survives an ASCII scan of binary headers.
 fn extract_onenote_strings(path: &str) -> Result<String, String> {
     let bytes = fs::read(path).map_err(|e| format!("read failed: {e}"))?;
+    const MIN_ASCII_RUN: usize = 6;
+    const MIN_UTF16_RUN: usize = 4;
 
-    let mut runs: Vec<String> = Vec::new();
-    let mut current = String::new();
-    const MIN_RUN_LEN: usize = 4;
+    // --- 1. ASCII scan ---
+    let mut ascii_runs: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for &byte in &bytes {
+        if (0x20..=0x7E).contains(&byte) || byte == 0x09 {
+            cur.push(byte as char);
+        } else {
+            if cur.chars().count() >= MIN_ASCII_RUN && is_plausible_text(&cur) {
+                ascii_runs.push(std::mem::take(&mut cur));
+            } else {
+                cur.clear();
+            }
+        }
+    }
+    if cur.chars().count() >= MIN_ASCII_RUN && is_plausible_text(&cur) {
+        ascii_runs.push(std::mem::take(&mut cur));
+    }
 
+    // --- 2. UTF-16-LE scan, keep only runs containing real CJK ---
+    let mut utf16_runs: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut has_cjk = false;
     let mut i = 0;
     while i + 1 < bytes.len() {
         let cp = (bytes[i] as u32) | ((bytes[i + 1] as u32) << 8);
-        let ch = if is_human_text_codepoint(cp) {
-            char::from_u32(cp)
-        } else {
-            None
-        };
-        match ch {
-            Some(c) => current.push(c),
-            None => {
-                if current.chars().count() >= MIN_RUN_LEN && !looks_like_metadata(&current) {
-                    runs.push(std::mem::take(&mut current));
-                } else {
-                    current.clear();
+        if is_real_cjk(cp) || (0x20..=0x7E).contains(&cp) {
+            if let Some(c) = char::from_u32(cp) {
+                cur.push(c);
+                if is_real_cjk(cp) {
+                    has_cjk = true;
                 }
             }
+        } else {
+            if cur.chars().count() >= MIN_UTF16_RUN && has_cjk && is_plausible_text(&cur) {
+                utf16_runs.push(std::mem::take(&mut cur));
+            } else {
+                cur.clear();
+            }
+            has_cjk = false;
         }
         i += 2;
     }
-    if current.chars().count() >= MIN_RUN_LEN && !looks_like_metadata(&current) {
-        runs.push(current);
+    if cur.chars().count() >= MIN_UTF16_RUN && has_cjk && is_plausible_text(&cur) {
+        utf16_runs.push(cur);
     }
 
-    // De-dup adjacent identical lines (OneNote often repeats text in
-    // both display + revision blobs).
-    runs.dedup();
-    Ok(runs.join("\n"))
+    // Merge, de-dup (preserve order). OneNote often repeats text in
+    // both display + revision blobs, and the two scans can also find
+    // the same content (rare but possible).
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for r in ascii_runs.into_iter().chain(utf16_runs.into_iter()) {
+        if seen.insert(r.clone()) {
+            out.push(r);
+        }
+    }
+    Ok(out.join("\n"))
 }
 
-fn is_human_text_codepoint(cp: u32) -> bool {
-    // Printable ASCII (excluding control chars except tab)
-    (0x20..=0x7E).contains(&cp)
-        || cp == 0x09
-        // Latin-1 supplement (accented letters)
-        || (0xA1..=0xFF).contains(&cp)
-        // CJK symbols + punctuation, kana, CJK unified ideographs,
-        // halfwidth/fullwidth forms. Covers most Chinese/Japanese
-        // content in OneNote.
-        || (0x3000..=0x303F).contains(&cp)
+fn is_real_cjk(cp: u32) -> bool {
+    (0x3000..=0x303F).contains(&cp)
         || (0x3040..=0x30FF).contains(&cp)
         || (0x4E00..=0x9FFF).contains(&cp)
         || (0xFF00..=0xFFEF).contains(&cp)
 }
 
-fn looks_like_metadata(s: &str) -> bool {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return true;
+/// Reject obvious schema URIs, GUIDs, and short alphanumeric junk that
+/// happens to fall in the printable-ASCII range inside binary headers.
+/// A "real" text run has at least one of:
+///   - a space (real prose tends to have spaces)
+///   - a 4-letter English word (typical of code / commands)
+///   - 2 consecutive CJK characters
+fn is_plausible_text(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() {
+        return false;
     }
-    // URIs / namespaces (e.g. http://schemas.microsoft.com/...)
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("urn:") {
-        return true;
+    if t.starts_with("http://") || t.starts_with("https://") || t.starts_with("urn:") {
+        return false;
     }
-    // GUID-shaped: 8-4-4-4-12 with optional braces
-    let stripped = trimmed.trim_matches(|c| c == '{' || c == '}');
+    // GUID-shaped (with or without braces)
+    let stripped = t.trim_matches(|c| c == '{' || c == '}');
     if stripped.len() == 36
-        && stripped
-            .chars()
-            .enumerate()
-            .all(|(i, c)| if [8, 13, 18, 23].contains(&i) { c == '-' } else { c.is_ascii_hexdigit() })
+        && stripped.chars().enumerate().all(|(i, c)| {
+            if [8, 13, 18, 23].contains(&i) {
+                c == '-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        })
     {
+        return false;
+    }
+    if !t.chars().any(|c| c.is_alphanumeric()) {
+        return false;
+    }
+    if t.contains(' ') {
         return true;
     }
-    // All ASCII punctuation / whitespace → metadata
-    if trimmed.chars().all(|c| !c.is_alphanumeric()) {
-        return true;
+    // 4 consecutive ASCII letters
+    let mut run = 0;
+    for c in t.chars() {
+        if c.is_ascii_alphabetic() {
+            run += 1;
+            if run >= 4 {
+                return true;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    // 2 consecutive CJK chars
+    let mut cjk_run = 0;
+    for c in t.chars() {
+        let cp = c as u32;
+        if is_real_cjk(cp) {
+            cjk_run += 1;
+            if cjk_run >= 2 {
+                return true;
+            }
+        } else {
+            cjk_run = 0;
+        }
     }
     false
 }
