@@ -28,6 +28,11 @@
   <img src="assets/overview.jpg" width="100%" alt="概览">
 </p>
 
+> 📦 **这是 LLMWiKi fork** —— 在 nashsu/llm_wiki 之上新增了三项能力：
+> **`.llmwiki` 一键导入/导出**、**页面级定时联网刷新**、**云盘 + 团队部署友好的本地状态分离**。
+> 详见外层 [`UPSTREAM.md`](../UPSTREAM.md) 与 [`docs/features.md`](../docs/features.md)。
+> 此 README 大部分内容来自 upstream；新增功能见下方第 19/20/21 节。
+
 ## 功能亮点
 
 - **两步思维链摄入** — LLM 先分析再生成 Wiki 页面，来源可追溯，支持增量缓存
@@ -348,6 +353,49 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 - **多 LLM 提供商** —— OpenAI、Anthropic、Google、Ollama、自定义 —— 各有特定的流式传输和请求头
 - **15 分钟超时** —— 长时间摄入操作不会过早失败
 - **dataVersion 信号** —— 图谱和 UI 在 Wiki 内容变更时自动刷新
+
+---
+
+> 以下是 **LLMWiKi fork** 在 nashsu/llm_wiki 之上的新增功能。完整使用文档见 [`../docs/features.md`](../docs/features.md)。
+
+### 19. `.llmwiki` 一键导入/导出
+
+将整个项目（`raw/` + `wiki/` + `.llm-wiki/` 共享元数据）打成单个 zip 格式的 `.llmwiki` 包，跨设备 / 团队迁移一气呵成：
+
+- **导出**：设置 → 导入/导出 → *Export package*，附 SHA256 manifest、应用版本号、可选导出者名
+- **导入**：选择「跳过已存在」或「覆盖全部」策略，导入前可 *Inspect* 预览
+- **校验**：每个文件 SHA256 在导入时自动校验，发现损坏即列出
+- **不打包**：聊天记录（私密）、API Key（不在项目目录）、向量索引（重新生成）
+
+适合：多端同步、团队首次分发、定期备份归档。
+
+### 20. 页面级定时联网刷新
+
+为特定 wiki 页面（项目动态、技术进展、人物状态等容易过时的内容）打上定时刷新标记，后台调度器自动用 LLM + 网络搜索检测陈旧，结果进入审核队列：
+
+在页面 frontmatter 加：
+```yaml
+refresh-enabled: true
+refresh-interval-days: 7
+refresh-queries:                  # 可选；不填则 LLM 自动生成
+  - "mixture of experts 2026"
+```
+
+- **调度器**：设置 → 定时联网刷新（全局开关 + 扫描频率）
+- **执行**：到期页面 → 多 provider 搜索 → LLM 判定 STATUS=fresh|stale → 陈旧时入 Review 队列
+- **状态**：`refresh-last-result: ok / no-change / pending-review / error` 自动写回 frontmatter
+- **页面级一键刷新**：编辑器内 frontmatter 上方显示 *Web refresh* 按钮，立即跑一次
+
+### 21. 本地 / 共享配置分离（云盘友好）
+
+原有 `.llm-wiki/` 既存项目共享元数据又存私密聊天，云盘共享易冲突。现在拆为：
+
+- `.llm-wiki/` —— **项目共享**：ingest 缓存、审核队列、page history、project.json
+- `.llm-wiki-local/` —— **个人私密**：聊天对话、conversations 列表
+
+旧用户首次启动自动迁移。云盘部署详见 [`../docs/cloud-sharing.md`](../docs/cloud-sharing.md)（含 iCloud / OneDrive / Dropbox / Git 各自如何排除 `.llm-wiki-local/`）。
+
+API Key 一直在 OS 应用数据目录，从不在项目目录里。
 
 ## 技术栈
 

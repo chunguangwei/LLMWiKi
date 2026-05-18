@@ -28,6 +28,12 @@
   <img src="assets/overview.jpg" width="100%" alt="Overview">
 </p>
 
+> 📦 **This is the LLMWiKi fork** — three additions on top of nashsu/llm_wiki:
+> **`.llmwiki` one-click import/export**, **per-page scheduled web refresh**,
+> and **cloud-share-friendly local state split**.
+> See the outer [`UPSTREAM.md`](../UPSTREAM.md) and [`docs/features.md`](../docs/features.md).
+> Most of this README comes from upstream; the new features are in sections 19/20/21 below.
+
 ## Features
 
 - **Two-Step Chain-of-Thought Ingest** — LLM analyzes first, then generates wiki pages with source traceability and incremental cache
@@ -348,6 +354,49 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 - **Multi-provider LLM support** — OpenAI, Anthropic, Google, Ollama, Custom — each with provider-specific streaming and headers
 - **15-minute timeout** — long ingest operations won't fail prematurely
 - **dataVersion signaling** — graph and UI automatically refresh when wiki content changes
+
+---
+
+> The sections below are **LLMWiKi fork** additions on top of nashsu/llm_wiki. Full user docs in [`../docs/features.md`](../docs/features.md).
+
+### 19. `.llmwiki` One-Click Import / Export
+
+Bundle an entire project (`raw/` + `wiki/` + `.llm-wiki/` shared metadata) into a single `.llmwiki` zip for cross-device or team transfer:
+
+- **Export** — Settings → Import / Export → *Export package*; includes SHA256 manifest, app version, optional exporter name
+- **Import** — choose *Skip existing files* or *Overwrite everything*; *Inspect* a package before importing
+- **Verification** — every file's SHA256 is checked against the manifest at import time
+- **Excluded by design** — chat history (private), API keys (not in project dir), vector DB (rebuilt)
+
+Use cases: multi-device sync, team-wide first-time distribution, periodic snapshots.
+
+### 20. Per-Page Scheduled Web Refresh
+
+Mark wiki pages that drift (project status, tech progress, people roles) with a refresh policy. A background scheduler uses LLM + web search to detect staleness; suggestions land in the Review queue:
+
+Add to a page's frontmatter:
+```yaml
+refresh-enabled: true
+refresh-interval-days: 7
+refresh-queries:                  # optional; LLM auto-generates if omitted
+  - "mixture of experts 2026"
+```
+
+- **Scheduler** — Settings → Scheduled Web Refresh (global toggle + scan frequency)
+- **Runner** — due page → multi-provider search → LLM verdict (STATUS=fresh|stale) → stale pages enqueue a *Suggestion* in Review
+- **Status** — `refresh-last-result: ok / no-change / pending-review / error` auto-written back to frontmatter
+- **One-click per-page refresh** — *Web refresh* button above the frontmatter panel in the editor
+
+### 21. Local vs Shared Config Split (cloud-share friendly)
+
+Originally `.llm-wiki/` mixed project-shared metadata with private chats — bad for cloud sync. Now split:
+
+- `.llm-wiki/` — **project-shared**: ingest cache, review queue, page history, project.json
+- `.llm-wiki-local/` — **per-user private**: chat conversations, conversations.json
+
+Existing users auto-migrate on first launch. Deployment guide in [`../docs/cloud-sharing.md`](../docs/cloud-sharing.md) (covers iCloud / OneDrive / Dropbox / Git rules for excluding `.llm-wiki-local/`).
+
+API keys have always lived in the OS app-data dir, never inside the project dir.
 
 ## Tech Stack
 
