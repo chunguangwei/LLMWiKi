@@ -152,6 +152,25 @@ fn plausible(s: &str) -> bool {
         let b64 = t.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '+' || *c == '/' || *c == '=').count();
         if b64 * 100 >= t.len() * 95 { return false; }
     }
+    // Binary-pattern check
+    let total = t.chars().count();
+    if total >= 20 {
+        let mut counts = std::collections::HashMap::new();
+        for c in t.chars() { *counts.entry(c).or_insert(0) += 1; }
+        let max = counts.values().copied().max().unwrap_or(0);
+        if max * 2 > total { return false; }
+        if counts.len() < 4 { return false; }
+        let has_div = t.chars().any(|c|
+            c.is_ascii_lowercase() || c.is_ascii_digit()
+            || (c.is_ascii_punctuation() && c != '"')
+            || real_cjk(c as u32));
+        let all_upper = t.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_whitespace());
+        if !has_div && all_upper { return false; }
+        if total >= 50 {
+            let has_lo_or_cjk = t.chars().any(|c| c.is_ascii_lowercase() || real_cjk(c as u32));
+            if !has_lo_or_cjk { return false; }
+        }
+    }
     // 2+ CJK
     let mut r = 0;
     for c in t.chars() {

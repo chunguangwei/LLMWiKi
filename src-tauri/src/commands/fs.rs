@@ -541,6 +541,65 @@ fn is_plausible_text(s: &str) -> bool {
         }
     }
 
+    // Binary-pattern check for long runs.
+    //
+    // Failure modes we've seen on real Mac OneNote files:
+    //   1. Single-character dominance ("YYYY..." 1000+ Y's)
+    //   2. Small all-uppercase alphabet cycling ("YYYY...XXX...WWW...")
+    //   3. The same RLE bytes interpreted as UTF-16-LE: 0x59 0x59
+    //      -> U+5959 (奙), so a long Y-byte run reads as "奙奙奙..."
+    //   4. Long "spelled out" RLE that uses all A-Z (passes a naive
+    //      distinct-char test) but no lowercase / digit / punctuation
+    //      and is far more skewed than real prose
+    //
+    // Defenses, all applied for length >= 20:
+    let total_chars = t.chars().count();
+    if total_chars >= 20 {
+        let mut counts: std::collections::HashMap<char, usize> =
+            std::collections::HashMap::new();
+        for c in t.chars() {
+            *counts.entry(c).or_insert(0) += 1;
+        }
+        let max = counts.values().copied().max().unwrap_or(0);
+
+        // (a) single char > 50% of any 20+ char run
+        if max * 2 > total_chars {
+            return false;
+        }
+        // (b) fewer than 4 distinct chars in any 20+ char run
+        if counts.len() < 4 {
+            return false;
+        }
+        // (c) pure-uppercase-ASCII runs (no lowercase/digit/punct/CJK)
+        let has_diversifying_char = t.chars().any(|c| {
+            c.is_ascii_lowercase()
+                || c.is_ascii_digit()
+                || (c.is_ascii_punctuation() && c != '"')
+                || is_real_cjk(c as u32)
+        });
+        let is_all_upper_ascii_or_space = t
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_whitespace());
+        if !has_diversifying_char && is_all_upper_ascii_or_space {
+            return false;
+        }
+        // (d) Real prose >= 50 chars virtually always contains at
+        //     least one lowercase letter (English) or CJK character
+        //     (Chinese/Japanese). RLE-style binary residue we've seen
+        //     in Mac OneNote uses only uppercase letters + digits +
+        //     spaces (e.g. a uniform reverse-alphabet sequence
+        //     "YYYY...XXXX...WWWW...VVVV...UUUU..."). Reject any 50+
+        //     char run with neither lowercase nor CJK — even if it
+        //     has perfect distinct-char counts and low max ratio.
+        if total_chars >= 50 {
+            let has_lowercase_or_cjk =
+                t.chars().any(|c| c.is_ascii_lowercase() || is_real_cjk(c as u32));
+            if !has_lowercase_or_cjk {
+                return false;
+            }
+        }
+    }
+
     // 2+ consecutive CJK → real Chinese / Japanese
     let mut cjk_run = 0;
     for c in t.chars() {
