@@ -48,6 +48,10 @@
     "pickLanguage": "Pick a language…"
   },
   "templates": {
+    "comprehensive": {
+      "name": "Comprehensive (recommended)",
+      "description": "Rich taxonomy for everyday docs (travel, manuals, books, recipes, contracts, code) plus research/work types"
+    },
     "research": {
       "name": "Research",
       "description": "Deep-dive research with hypothesis tracking and methodology notes"
@@ -192,6 +196,7 @@
       "storageLocation": "Storage Location",
       "maintenance": "Maintenance",
       "userManual": "User Manual",
+      "schemaUpgrade": "Schema Upgrade",
       "changelog": "Changelog",
       "about": "About"
     },
@@ -534,6 +539,26 @@
       "userManual": {
         "title": "User Manual",
         "description": "Day-to-day guide for using LLM Wiki. Same content as docs/user-manual.md, rendered inline so you don't have to leave the app."
+      },
+      "schemaUpgrade": {
+        "title": "Schema Upgrade",
+        "description": "Replace this project's schema.md with the new comprehensive taxonomy (34 categories: travel, manuals, books, recipes, code, etc.). Future imports will route to the new directories.",
+        "whatItDoes": "What this does",
+        "point1": "Backs up the current schema.md to schema.md.bak-YYYY-MM-DD",
+        "point2": "Overwrites schema.md with the comprehensive template (in your current UI language)",
+        "point3": "Pre-creates the 34 category directories under wiki/",
+        "point4": "Leaves existing wiki pages where they are — does NOT auto-classify them",
+        "warningTitle": "Existing pages are not moved",
+        "warningBody": "Pages currently under wiki/entities/, wiki/concepts/, wiki/sources/ stay where they are. Future imports use the new directories. To migrate old pages, delete the ingest cache and re-import the source documents.",
+        "currentStatus": "Current schema",
+        "loading": "Reading schema.md…",
+        "alreadyComprehensive": "Already on the comprehensive schema — no action needed.",
+        "legacy": "Legacy schema detected — upgrade available.",
+        "notFound": "schema.md not found in this project.",
+        "noProject": "Open a project first.",
+        "button": "Upgrade to comprehensive schema",
+        "upgrading": "Upgrading…",
+        "success": "Upgrade complete. Old schema.md saved as a backup; new categories ready."
       },
       "changelog": {
         "title": "Changelog",

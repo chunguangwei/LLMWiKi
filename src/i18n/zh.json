@@ -48,6 +48,10 @@
     "pickLanguage": "选择语言..."
   },
   "templates": {
+    "comprehensive": {
+      "name": "综合（推荐）",
+      "description": "覆盖日常文档（旅游、手册、书籍、食谱、合同、代码）+ 研究 / 工作类型，中文优先目录"
+    },
     "research": {
       "name": "研究",
       "description": "用于深度研究，包含假设跟踪和方法论记录"
@@ -192,6 +196,7 @@
       "storageLocation": "存储位置",
       "maintenance": "维护",
       "userManual": "用户手册",
+      "schemaUpgrade": "Schema 升级",
       "changelog": "更新日志",
       "about": "关于"
     },
@@ -534,6 +539,26 @@
       "userManual": {
         "title": "用户手册",
         "description": "LLM Wiki 的日常使用指南，与 docs/user-manual.md 同步，直接在应用内查看，无需切换窗口。"
+      },
+      "schemaUpgrade": {
+        "title": "Schema 升级",
+        "description": "把当前项目的 schema.md 换成新的「综合」分类（34 个目录：旅游、手册、书籍、食谱、代码 等）。升级后新导入的资料会按新目录路由。",
+        "whatItDoes": "升级会做什么",
+        "point1": "把当前 schema.md 备份为 schema.md.bak-YYYY-MM-DD",
+        "point2": "用「综合」模板覆盖 schema.md（按你当前的 UI 语言生成中 / 英版）",
+        "point3": "在 wiki/ 下预创建 34 个分类目录",
+        "point4": "现有 wiki 页面保持原位，不做自动重分类",
+        "warningTitle": "现有页面不会被移动",
+        "warningBody": "目前在 wiki/entities/、wiki/concepts/、wiki/sources/ 下的页面会保留在原位。新导入的资料才会路由到新目录。如果想把旧页面也迁移过去，请删除导入缓存后重新导入源文件。",
+        "currentStatus": "当前 schema 状态",
+        "loading": "读取 schema.md…",
+        "alreadyComprehensive": "已经是「综合」schema —— 无需操作。",
+        "legacy": "检测到旧版 schema —— 可升级。",
+        "notFound": "当前项目下没有找到 schema.md。",
+        "noProject": "请先打开一个项目。",
+        "button": "升级到「综合」schema",
+        "upgrading": "升级中…",
+        "success": "升级完成。旧 schema.md 已备份，新分类目录已创建。"
       },
       "changelog": {
         "title": "更新日志",

@@ -1,6 +1,6 @@
 # LLMWiki User Manual
 
-Version: 0.4.10 (LLMWiKi fork)
+Version: 0.4.12 (LLMWiKi fork)
 
 This manual is for **people already using LLMWiki**. For install / build-from-source instructions, see [`getting-started.md`](getting-started.md).
 
@@ -68,18 +68,31 @@ You can use the app without either, but turning them on noticeably upgrades the 
 ## 3. Your first project (5 min)
 
 1. Main screen → **New Project**
-2. Pick a template: General Research / Personal Notes / Team Wiki, etc.
+2. Pick a template: **default is "Comprehensive (recommended)"** — 34 directories covering everyday material (travel, manuals, books, recipes, contracts, code…) plus research / work types
+   - Chinese UI creates Chinese-named folders (`wiki/旅游方案/`, `wiki/书籍/`)
+   - English UI creates ASCII folders (`wiki/travel-plans/`, `wiki/books/`)
+   - Narrower templates are also available: Research / Reading / Personal Growth / Business / General (minimal)
 3. Name it + choose a directory (**iCloud / OneDrive / Dropbox recommended** so you get multi-device sync)
 4. Once created, the project root auto-generates:
    ```
    my-wiki/
    ├── purpose.md       # project purpose (worth filling out with a few sentences first)
-   ├── schema.md        # page types and naming conventions
+   ├── schema.md        # page types and naming conventions (34 types in Comprehensive)
    ├── raw/sources/     # ← drop source files here
-   ├── wiki/            # ← LLM-written pages live here
+   ├── wiki/            # ← LLM-written pages, organised by schema
+   │   ├── travel-plans/   #   single-page types: kept whole
+   │   ├── manuals/
+   │   ├── project-docs/
+   │   ├── books/
+   │   ├── recipes/
+   │   ├── papers/         #   multi-page types: source summary + concept sub-pages
+   │   ├── concepts/
+   │   └── ...
    ├── .llm-wiki/       # project shared metadata (safe to sync via cloud)
    └── .llm-wiki-local/ # personal chat history (must be excluded from cloud sync)
    ```
+
+> Comprehensive template's splitting rules and full category list: see [`features.md §5`](features.md#5-smart-splitting--comprehensive-schema) and [`user-rules.md §2.0`](user-rules.md).
 
 ---
 
@@ -136,7 +149,7 @@ You accept / reject without interrupting the LLM's workflow.
 
 ---
 
-## 5. Three new features (LLMWiKi fork only)
+## 5. Four new features (LLMWiKi fork only)
 
 ### 5.1 `.llmwiki` one-click import / export
 
@@ -211,11 +224,43 @@ Existing users get an automatic one-time migration of old chat files on first la
 
 Cloud-specific commands for excluding `.llm-wiki-local/` are in [`cloud-sharing.md`](cloud-sharing.md).
 
+### 5.4 Smart splitting + comprehensive schema (34 types)
+
+**Entry: new projects get the Comprehensive template by default / existing projects use Settings → Schema Upgrade**
+
+**Problem solved**: Upstream's ingest pipeline hard-codes three folders (`wiki/entities/` + `wiki/concepts/` + `wiki/sources/`) and aggressively fragments every source into entity/concept stubs. That's right for research papers, wrong for travel itineraries (a 3-day Tokyo plan should NOT explode into 20 attraction pages) and most everyday documents. This fork moves the taxonomy from hard-coded into **schema.md** (the authoritative allowlist) and adds a Comprehensive template with 34 categories covering daily-life docs.
+
+**Two ingest modes** (chosen automatically per document):
+
+| Mode | Behavior | Applies to |
+|---|---|---|
+| **Single-page** | One source → one wiki page, no fragmentation | travel-plan, manual, project-doc, tutorial, book, recipe, note, report, article, meeting, decision, project, film-tv, music, game, menu, shopping-list, fitness-plan, contract, invoice, medical-record, insurance, code-snippet, api-doc, error-log |
+| **Multi-page** | Source summary + concept / tool / person sub-pages | paper, concept, tool, dataset, person, company, regulation |
+
+**New projects** → Comprehensive is the default template (you can pick a narrower one at step §3.2).
+
+**Existing projects** still on the old 6-type schema:
+1. **Settings → Schema Upgrade** (✨ icon in the sidebar)
+2. One click does:
+   - Backs up current `schema.md` → `schema.md.bak-YYYY-MM-DD`
+   - Writes the Comprehensive schema (zh / en variant follows your UI language)
+   - Pre-creates the 34 category directories
+3. **Does NOT** auto-classify existing pages — your old `wiki/entities/`, `wiki/concepts/`, `wiki/sources/` pages stay put. Only **new ingests** route to the new directories. To migrate old pages: clear the ingest cache and re-import the source documents.
+
+**Customising the taxonomy**: Comprehensive is just the default starting point. Edit `schema.md`'s Page Types table (add rows / rename directories / change descriptions) — the LLM will follow your new schema on the next ingest. See [`user-rules.md`](user-rules.md).
+
+**Chinese-folder Git config** (one-time, only matters on Windows):
+```bash
+git config --global core.quotepath false
+```
+
+Full details in [`features.md §5`](features.md#5-smart-splitting--comprehensive-schema).
+
 ---
 
 ## 6. Custom page types / rules / format (user rules)
 
-LLMWiki ships with 6 default page types (entity / concept / source / query / comparison / synthesis). If you're working in a specific domain (academic research, technical docs, reading notes, product analysis, etc.), you can **fully customise** the page taxonomy, naming conventions, frontmatter fields, and AI output style.
+LLMWiki ships with **34 default page types** (the Comprehensive template, covering daily life + work + research). If you're working in a specific domain (academic research, technical docs, reading notes, product analysis, etc.), you can **fully customise** the page taxonomy, naming conventions, frontmatter fields, and AI output style.
 
 **Where to customise** ——
 
@@ -271,6 +316,8 @@ Every file in `wiki/*.md` is just plain markdown. You can edit it directly (insi
 | macOS says "is damaged" on launch | `xattr -dr com.apple.quarantine "/Applications/LLM Wiki.app"` |
 | Ingest stuck | Settings → LLM Models → Test; check Review panel for stuck items |
 | Chinese translation missing in places | Your version may be older — the fork has all new sections translated |
+| Ingested doc shattered into dozens of small pages | Your project is still on the old 6-type schema (forced entity/concept split). Go to **Settings → Schema Upgrade** to switch to the Comprehensive schema. |
+| Windows `git status` shows `\346\227\205...`-style escapes | Chinese folder names being escaped — run `git config --global core.quotepath false` once. |
 | Scheduled refresh never fires | Configure Settings → Web Search provider first; check frontmatter `refresh-enabled: true` spelling |
 | Cloud drive shows .json (Conflict) files | Multiple writers at the same time — agree on one primary writer, or switch to git mode |
 | Can't find the API key | It lives in the OS app-data dir, not in the project: macOS `~/Library/Application Support/com.llm-wiki.app/` |

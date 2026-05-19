@@ -139,6 +139,16 @@ async function assertOutcome(
     expect(exists, `file not written: ${p}`).toBe(true)
   }
 
+  // 1b. Forbidden files (e.g. wiki/sources/<x>.md when LLM already
+  //     emitted wiki/旅游方案/<x>.md) must NOT exist.
+  if (expected.forbiddenPaths) {
+    for (const p of expected.forbiddenPaths) {
+      const full = path.join(tmpPath, p)
+      const exists = await fileExists(full)
+      expect(exists, `forbidden file was written: ${p}`).toBe(false)
+    }
+  }
+
   // 2. File contents contain expected substrings
   if (expected.fileContains) {
     for (const [relPath, substrs] of Object.entries(expected.fileContains)) {

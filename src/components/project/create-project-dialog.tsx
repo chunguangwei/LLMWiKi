@@ -24,10 +24,14 @@ interface CreateProjectDialogProps {
 }
 
 export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: CreateProjectDialogProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [name, setName] = useState("")
   const [path, setPath] = useState("")
-  const [selectedTemplate, setSelectedTemplate] = useState("general")
+  // Default to the new comprehensive template — it's the recommended
+  // starting point for everyday-document use cases (travel, manuals,
+  // books, recipes, contracts...). Users can switch to a narrower
+  // template (research/reading/etc.) in the picker if they want.
+  const [selectedTemplate, setSelectedTemplate] = useState("comprehensive")
   // Empty string = "user hasn't picked yet"; we validate this on
   // submit so a fresh project never starts in implicit auto-detect
   // mode. Once chosen, the value is one of OUTPUT_LANGUAGE_OPTIONS
@@ -64,7 +68,15 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
       const project = await createProject(name.trim(), path.trim())
       const pp = normalizePath(project.path)
 
-      const template = getTemplate(selectedTemplate)
+      // Schema language follows the current UI language. Chinese UI →
+      // Chinese directory names (wiki/旅游方案/, wiki/书籍/...); English
+      // UI → ASCII slugs (wiki/travel-plans/, wiki/books/...). This is
+      // baked at creation time and the schema.md stays whichever
+      // language was chosen, even if the user later flips the UI
+      // language — switching folder names mid-project would orphan
+      // existing pages.
+      const schemaLang = i18n.language.startsWith("zh") ? "zh" : "en"
+      const template = getTemplate(selectedTemplate, schemaLang)
       await writeFile(`${pp}/schema.md`, template.schema)
       await writeFile(`${pp}/purpose.md`, template.purpose)
       for (const dir of template.extraDirs) {
@@ -83,7 +95,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
       onOpenChange(false)
       setName("")
       setPath("")
-      setSelectedTemplate("general")
+      setSelectedTemplate("comprehensive")
       setLanguage("")
     } catch (err) {
       setError(String(err))

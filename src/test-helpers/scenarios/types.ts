@@ -121,6 +121,13 @@ export interface IngestScenario {
     /** Substring matches for specific files (path → list of substrings to find). */
     fileContains?: Record<string, string[]>
     /**
+     * Paths that must NOT exist after ingest. Used by single-page-mode
+     * scenarios to assert that ingesting (e.g.) a travel-plan into
+     * wiki/旅游方案/ did NOT also trigger the legacy fallback that would
+     * create a duplicate at wiki/sources/<basename>.md.
+     */
+    forbiddenPaths?: string[]
+    /**
      * Expected review items (subset match). Each entry matches if an injected
      * review has the same type and a title containing titleContains.
      */

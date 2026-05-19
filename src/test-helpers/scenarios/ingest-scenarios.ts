@@ -40,6 +40,23 @@ Each ingested source has a summary page here.
 Each concept gets its own page.
 `
 
+// Compact comprehensive-schema fixture for the single-page-mode scenarios
+// below. The runner does not parse this — it only flows through to the
+// generation prompt as context — but exercising the new path-resolution
+// logic requires SOME schema present that names the comprehensive folders.
+const COMPREHENSIVE_SCHEMA_ZH = `# Wiki Schema — 综合（推荐默认）
+
+## 页面类型
+
+| 类型 | 目录 | 用途 |
+|------|------|------|
+| travel-plan | wiki/旅游方案/ | 行程规划、攻略、游记（整篇保留） |
+| manual | wiki/用户手册/ | 产品手册、操作指南（整篇保留） |
+| contract | wiki/合同/ | 合同、协议（整篇保留） |
+| paper | wiki/论文/ | 学术论文（可拆分） |
+| concept | wiki/概念/ | 概念、术语（可拆分） |
+`
+
 export const ingestScenarios: IngestScenario[] = [
   // 1. basic-new-source — new concept wiki page + source summary, no reviews
   {
@@ -265,6 +282,226 @@ export const ingestScenarios: IngestScenario[] = [
           "[[注意力机制]]",
         ],
       },
+    },
+  },
+
+  // 5. travel-plan-single-page — comprehensive schema, Chinese folder,
+  //    LLM emits ONLY the travel-plan page; the source-summary fallback
+  //    must accept the new path and NOT also write wiki/sources/<x>.md.
+  {
+    name: "travel-plan-single-page",
+    description:
+      "Single-page mode: a Chinese travel plan ingested under the " +
+      "comprehensive schema should produce exactly ONE wiki page at " +
+      "wiki/旅游方案/<slug>.md, with no fragmentation and no fallback " +
+      "duplicate at wiki/sources/.",
+    initialWiki: {
+      "purpose.md": "# 用途\n\n我的生活资料库。\n",
+      "schema.md": COMPREHENSIVE_SCHEMA_ZH,
+      "wiki/index.md": "# 索引\n",
+    },
+    source: {
+      path: "raw/sources/东京三日游.md",
+      content: [
+        "# 东京三日游",
+        "",
+        "Day 1: 浅草寺 → 晴空塔 → 银座",
+        "Day 2: 明治神宫 → 涩谷 → 新宿",
+        "Day 3: 筑地市场 → 台场 → 羽田机场",
+      ].join("\n"),
+    },
+    analysisResponse: [
+      "Document Type: travel-plan — 三天行程的完整规划，应整篇保留为一页",
+      "",
+      "## Key Entities",
+      "- 浅草寺、晴空塔、明治神宫（景点）",
+      "",
+      "## Recommendations",
+      "- 整篇放进 wiki/旅游方案/东京三日游.md",
+    ].join("\n"),
+    generationResponse: [
+      "---FILE: wiki/旅游方案/东京三日游.md---",
+      "---",
+      "type: travel-plan",
+      "title: 东京三日游",
+      "sources: [东京三日游.md]",
+      "---",
+      "",
+      "# 东京三日游",
+      "",
+      "## Day 1: 浅草寺 → 晴空塔 → 银座",
+      "## Day 2: 明治神宫 → 涩谷 → 新宿",
+      "## Day 3: 筑地市场 → 台场 → 羽田机场",
+      "---END FILE---",
+    ].join("\n"),
+    expected: {
+      writtenPaths: ["wiki/旅游方案/东京三日游.md"],
+      fileContains: {
+        "wiki/旅游方案/东京三日游.md": [
+          "type: travel-plan",
+          "Day 1",
+        ],
+      },
+      forbiddenPaths: [
+        // The legacy fallback must NOT fire — the basename-match logic
+        // in ingest.ts should recognize wiki/旅游方案/东京三日游.md as
+        // already covering the source.
+        "wiki/sources/东京三日游.md",
+        // No fragmentation — schema-driven prompt must produce no
+        // entity / concept pages for a single-page-mode source.
+        "wiki/概念/浅草寺.md",
+        "wiki/概念/晴空塔.md",
+      ],
+      reviewsCreated: [],
+    },
+  },
+
+  // 6. manual-single-page — user manual stays as one page in wiki/用户手册/.
+  {
+    name: "manual-single-page",
+    description:
+      "Single-page mode: a product manual ingested under the comprehensive " +
+      "schema lands at wiki/用户手册/<slug>.md with no fallback duplicate.",
+    initialWiki: {
+      "purpose.md": "# 用途\n",
+      "schema.md": COMPREHENSIVE_SCHEMA_ZH,
+      "wiki/index.md": "# 索引\n",
+    },
+    source: {
+      path: "raw/sources/扫地机器人手册.md",
+      content: "# 扫地机器人使用手册\n\n开机：长按电源 3 秒。\n清洁模式：短按按钮切换。\n",
+    },
+    analysisResponse: [
+      "Document Type: manual — 完整的操作手册，整篇保留",
+      "",
+      "## Recommendations",
+      "- 放进 wiki/用户手册/扫地机器人手册.md",
+    ].join("\n"),
+    generationResponse: [
+      "---FILE: wiki/用户手册/扫地机器人手册.md---",
+      "---",
+      "type: manual",
+      "title: 扫地机器人使用手册",
+      "sources: [扫地机器人手册.md]",
+      "---",
+      "",
+      "# 扫地机器人使用手册",
+      "",
+      "开机：长按电源 3 秒。",
+      "清洁模式：短按按钮切换。",
+      "---END FILE---",
+    ].join("\n"),
+    expected: {
+      writtenPaths: ["wiki/用户手册/扫地机器人手册.md"],
+      forbiddenPaths: ["wiki/sources/扫地机器人手册.md"],
+      reviewsCreated: [],
+    },
+  },
+
+  // 7. contract-single-page — Chinese contract document, same pattern.
+  {
+    name: "contract-single-page",
+    description:
+      "Single-page mode: a contract / agreement document stays whole at " +
+      "wiki/合同/<slug>.md (no entity decomposition into people / company).",
+    initialWiki: {
+      "purpose.md": "# 用途\n",
+      "schema.md": COMPREHENSIVE_SCHEMA_ZH,
+      "wiki/index.md": "# 索引\n",
+    },
+    source: {
+      path: "raw/sources/供应商合同-2026-甲方.md",
+      content: "# 供应商合同\n\n甲方：某公司\n乙方：某供应商\n金额：100万\n",
+    },
+    analysisResponse: [
+      "Document Type: contract — 法律协议，整篇保留",
+    ].join("\n"),
+    generationResponse: [
+      "---FILE: wiki/合同/供应商合同-2026-甲方.md---",
+      "---",
+      "type: contract",
+      "title: 供应商合同 2026",
+      "sources: [供应商合同-2026-甲方.md]",
+      "---",
+      "",
+      "# 供应商合同",
+      "",
+      "甲方：某公司",
+      "乙方：某供应商",
+      "金额：100万",
+      "---END FILE---",
+    ].join("\n"),
+    expected: {
+      writtenPaths: ["wiki/合同/供应商合同-2026-甲方.md"],
+      forbiddenPaths: [
+        "wiki/sources/供应商合同-2026-甲方.md",
+        "wiki/人物/某公司.md",
+        "wiki/公司/某供应商.md",
+      ],
+      reviewsCreated: [],
+    },
+  },
+
+  // 8. paper-multi-page — multi-page mode still works for academic papers:
+  //    source page + concept page, just like the pre-change behavior. This
+  //    locks in backward compatibility for the multi-page path.
+  {
+    name: "paper-multi-page",
+    description:
+      "Multi-page mode: an academic paper ingested under the comprehensive " +
+      "schema produces a source summary at wiki/论文/ AND a concept page at " +
+      "wiki/概念/, matching the schema's two-folder split.",
+    initialWiki: {
+      "purpose.md": "# 用途\n",
+      "schema.md": COMPREHENSIVE_SCHEMA_ZH,
+      "wiki/index.md": "# 索引\n",
+    },
+    source: {
+      path: "raw/sources/vaswani-2017-attention.md",
+      content: "# Attention Is All You Need\n\n本文提出 Transformer 架构。\n",
+    },
+    analysisResponse: [
+      "Document Type: paper — 学术论文，可拆分为 concept 子页",
+      "",
+      "## Key Concepts",
+      "- Transformer 架构",
+    ].join("\n"),
+    generationResponse: [
+      "---FILE: wiki/论文/vaswani-2017-attention.md---",
+      "---",
+      "type: paper",
+      "title: Attention Is All You Need",
+      "sources: [vaswani-2017-attention.md]",
+      "---",
+      "",
+      "# Attention Is All You Need",
+      "",
+      "本文提出 [[Transformer]] 架构。",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/概念/transformer.md---",
+      "---",
+      "type: concept",
+      "title: Transformer",
+      "sources: [vaswani-2017-attention.md]",
+      "---",
+      "",
+      "# Transformer",
+      "",
+      "基于注意力机制的神经网络架构。",
+      "---END FILE---",
+    ].join("\n"),
+    expected: {
+      writtenPaths: [
+        "wiki/论文/vaswani-2017-attention.md",
+        "wiki/概念/transformer.md",
+      ],
+      forbiddenPaths: [
+        // Same idea as single-page mode: wiki/论文/ is the source-equivalent
+        // folder for type=paper, so the wiki/sources/ fallback must skip.
+        "wiki/sources/vaswani-2017-attention.md",
+      ],
+      reviewsCreated: [],
     },
   },
 ]

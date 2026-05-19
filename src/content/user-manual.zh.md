@@ -1,6 +1,6 @@
 # LLMWiki 用户使用手册
 
-适用版本：0.4.10（LLMWiKi fork）
+适用版本：0.4.12（LLMWiKi fork）
 
 本手册面向**正在使用 LLMWiki 的人**。需要安装步骤的从源码构建说明请看 [`getting-started.md`](getting-started.md)。
 
@@ -68,18 +68,31 @@ LLMWiki 帮你把零散文档（PDF / DOCX / 网页 / OneNote / ...）变成一�
 ## 3. 第一个项目（5 分钟）
 
 1. 主界面 → **新建项目**
-2. 选模板：通用研究 / 个人笔记 / 团队 wiki 等
+2. 选模板：**默认为「综合（推荐）」** —— 含 34 个目录，覆盖日常资料（旅游、手册、书籍、食谱、合同、代码…）+ 研究 / 工作类型
+   - 中文 UI 创建项目时目录名直接是中文（`wiki/旅游方案/`、`wiki/书籍/`）
+   - 英文 UI 创建时是 ASCII（`wiki/travel-plans/`、`wiki/books/`）
+   - 也可选窄场景模板：研究 / 阅读 / 个人成长 / 商务 / 通用（最小化）
 3. 命名 + 选目录（**建议放 iCloud / OneDrive / Dropbox**，方便多端同步）
 4. 创建完成 → 项目根自动生成：
    ```
    my-wiki/
    ├── purpose.md       # 项目目的（建议先填几句）
-   ├── schema.md        # 页面类型与命名约定
+   ├── schema.md        # 页面类型与命名约定（综合模板含 34 类）
    ├── raw/sources/     # ← 资料丢这里
-   ├── wiki/            # ← LLM 写的页面
+   ├── wiki/            # ← LLM 写的页面，按 schema 分目录
+   │   ├── 旅游方案/     #   单页类型：整篇保留
+   │   ├── 用户手册/
+   │   ├── 项目文档/
+   │   ├── 书籍/
+   │   ├── 食谱/
+   │   ├── 论文/         #   可拆分类型：源摘要 + 概念子页
+   │   ├── 概念/
+   │   └── ...
    ├── .llm-wiki/       # 项目共享元数据（云盘可同步）
    └── .llm-wiki-local/ # 个人聊天记录（必须排除云盘同步）
    ```
+
+> 综合模板的拆分规则、完整分类清单见 [`features.md §5`](features.md#5-智能拆分--splitting-rules综合-schema--单页类型) 和 [`user-rules.md §2.0`](user-rules.md#20-综合34-类推荐默认-)。
 
 ---
 
@@ -136,7 +149,7 @@ LLM 摄入时遇到模糊判断会标记到 **审核** 面板：
 
 ---
 
-## 5. 三个新功能（LLMWiKi fork 独有）
+## 5. 四个新功能（LLMWiKi fork 独有）
 
 ### 5.1 `.llmwiki` 一键导入 / 导出
 
@@ -211,11 +224,43 @@ API Key 一直在系统应用数据目录，**不在项目目录里**，所以�
 
 各云盘排除 `.llm-wiki-local/` 的具体命令见 [`cloud-sharing.md`](cloud-sharing.md)。
 
+### 5.4 智能拆分 + 综合 schema（34 类，中文目录）
+
+**入口：新建项目自动用综合模板 / 存量项目用 设置 → Schema 升级**
+
+**解决了什么问题**：上游原版把每份资料都按"实体 / 概念"硬拆——导入一份旅游方案会散成 20 个景点页，导入一本书会散成 50 个人物页。这次 fork 把分类从代码硬编码改为**完全由 `schema.md` 决定**，并新增「综合」模板（34 类、中文优先目录）覆盖日常文档场景。
+
+**两种行为模式**（LLM 摄入时自动判断）：
+
+| 模式 | 行为 | 适用类型 |
+|---|---|---|
+| **单页模式** | 一份源文档 → 一份 wiki 页，不拆 | 旅游方案、用户手册、项目文档、教程、书籍、食谱、笔记、报告、文章、会议、决策、项目、影视、音乐、游戏、菜单、购物清单、健身计划、合同、发票、医疗记录、保险单、代码片段、API 文档、错误日志 |
+| **可拆分模式** | 源摘要 + 概念 / 工具 / 人物子页 | 论文、概念、工具、数据集、人物、公司、法规 |
+
+**新建项目** → 综合模板自动作为默认（也可在 §3 步骤 2 切到其他模板）。
+
+**存量项目**（已经在用 6 类旧 schema）：
+1. **设置 → Schema 升级**（左侧导航的 ✨ 图标）
+2. 一键操作：
+   - 备份当前 `schema.md` → `schema.md.bak-YYYY-MM-DD`
+   - 写入综合 schema（按 UI 语言选 zh / en）
+   - 预创建 34 个分类目录
+3. **不会**自动移动旧的 `wiki/entities/` `wiki/concepts/` `wiki/sources/` 下的页面 —— 它们保留原位，**新导入**才用新目录。如想迁旧页：删除导入缓存后重新导入源文件。
+
+**自定义分类**：综合 schema 只是默认起点，不固定。直接改 `schema.md` 的 Page Types 表（加新行 / 改目录 / 改用途说明），LLM 下次导入按新规则。详见 [`user-rules.md`](user-rules.md)。
+
+**中文目录的 Git 配置**（一次性）：
+```bash
+git config --global core.quotepath false  # 让 Windows git status 正常显示中文
+```
+
+详见 [`features.md §5`](features.md#5-智能拆分--splitting-rules综合-schema--单页类型)。
+
 ---
 
 ## 6. 自定义分类 / 规则 / 格式（用户规则）
 
-LLMWiki 默认带 6 种页面类型（entity / concept / source / query / comparison / synthesis）。如果您要做特定领域（学术研究、技术文档、读书笔记、产品分析等），可以**完全自定义**页面分类、命名约定、frontmatter 字段、AI 输出风格。
+LLMWiki 默认带 **34 种**页面类型（综合模板，覆盖日常生活 + 工作 + 研究）。如果您要做特定领域（学术研究、技术文档、读书笔记、产品分析等），可以**完全自定义**页面分类、命名约定、frontmatter 字段、AI 输出风格。
 
 **所有自定义入口** ——
 
@@ -271,6 +316,8 @@ LLMWiki 默认带 6 种页面类型（entity / concept / source / query / compar
 | Mac 启动提示「已损坏」 | `xattr -dr com.apple.quarantine "/Applications/LLM Wiki.app"` |
 | 摄入卡住 | 设置 → LLM 模型 点 Test；右下角进度查 review 面板 |
 | 中文翻译有遗漏 | 你正在用的版本可能滞后；新版 fork 已补全所有新 section 翻译 |
+| 导入的资料被拆成几十个小页 | 你的项目还在用旧 schema（6 类硬拆）；走 **设置 → Schema 升级** 切到综合 schema |
+| Windows `git status` 显示 `\346\227\205...` 等转义 | 中文目录名被 git 转义，跑 `git config --global core.quotepath false` 一次即可 |
 | 定时刷新不触发 | 先在 设置 → 网页搜索 配 provider；检查 frontmatter `refresh-enabled: true` 拼写 |
 | 云盘出现 .json (Conflict) 文件 | 多人同时写了项目；约定单写主，或换 Git 模式 |
 | API Key 找不到 | 它存在 OS 应用数据目录，不在项目里：macOS `~/Library/Application Support/com.llm-wiki.app/` |

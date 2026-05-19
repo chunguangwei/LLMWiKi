@@ -637,11 +637,26 @@ async function autoIngestImpl(
     activity.updateItem(activityId, { detail: summary })
   }
 
-  // Ensure source summary page exists (LLM may not have generated it correctly)
+  // Ensure source summary page exists (LLM may not have generated it correctly).
+  //
+  // Backward-compat note: historically the source summary was always
+  // expected at `wiki/sources/<basename>.md`. With the comprehensive
+  // schema (zh: wiki/旅游方案/, wiki/用户手册/, ...; en: wiki/travel-plans/,
+  // wiki/manuals/, ...) the LLM may legitimately emit the source page
+  // into a category-appropriate folder instead. So we accept either:
+  //   1. Anything under wiki/sources/   (legacy behavior)
+  //   2. A page named after the source basename in any top-level
+  //      wiki/<dir>/ folder (new schema-driven behavior)
+  // The fallback at wiki/sources/<basename>.md only fires when neither
+  // form was emitted.
   const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
   const sourceSummaryPath = `wiki/sources/${sourceBaseName}.md`
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
-  const hasSourceSummary = writtenPaths.some((p) => p.startsWith("wiki/sources/"))
+  const hasSourceSummary = writtenPaths.some((p) => {
+    if (p.startsWith("wiki/sources/")) return true
+    const m = p.match(/^wiki\/[^/]+\/(.+)\.md$/)
+    return !!m && m[1] === sourceBaseName
+  })
 
   // If the signal was aborted (e.g. user switched projects / cancelled),
   // skip the fallback summary write — the LLM streams returned empty
@@ -984,6 +999,29 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "",
     "Your analysis should cover:",
     "",
+    "## Document Type",
+    "Begin your analysis with EXACTLY one line of this form:",
+    "",
+    "    Document Type: <type> — <one-sentence reason>",
+    "",
+    "Pick the BEST match from these categories — they drive whether the wiki keeps this source",
+    "as one coherent page or decomposes it into many entity/concept pages:",
+    "",
+    "**Single-page mode** (the wiki will create ONE page for this whole document, no fragmentation):",
+    "  travel-plan, manual, project-doc, tutorial, book, recipe, note, report, article, meeting,",
+    "  decision, project, film-tv, music, game, menu, shopping-list, fitness-plan, contract,",
+    "  invoice, medical-record, insurance, code-snippet, api-doc, error-log",
+    "",
+    "**Multi-page mode** (decompose into concept/tool/dataset/person/company sub-pages):",
+    "  paper, encyclopedia-entry, news-roundup, mixed-corpus",
+    "",
+    "**Other**: if none clearly fit, write `Document Type: other — <reason>` and explain in",
+    "Recommendations how it should be handled.",
+    "",
+    "Decision criterion: the document's NATURE (single coherent narrative or workflow?),",
+    "not its length. A 200-page itinerary is still travel-plan (single-page). A 2-page paper",
+    "is still paper (multi-page). When uncertain → single-page.",
+    "",
     "## Key Entities",
     "List people, organizations, products, datasets, tools mentioned. For each:",
     "- Name and type",
@@ -1016,7 +1054,7 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "",
     "Be thorough but concise. Focus on what's genuinely important.",
     "",
-    "If a folder context is provided, use it as a hint for categorization — the folder structure often reflects the user's organizational intent (e.g., 'papers/energy' suggests the file is an energy-related paper).",
+    "If a folder context is provided, use it as a hint for categorization — the folder structure often reflects the user's organizational intent (e.g., 'travel/japan' suggests a travel-plan; 'papers/energy' suggests an energy-related paper).",
     "",
     purpose ? `## Wiki Purpose (for context)\n${purpose}` : "",
     index ? `## Current Wiki Index (for checking existing content)\n${index}` : "",
@@ -1042,12 +1080,55 @@ export function buildGenerationPrompt(schema: string, purpose: string, index: st
     "",
     "## What to generate",
     "",
-    `1. A source summary page at **wiki/sources/${sourceBaseName}.md** (MUST use this exact path)`,
-    "2. Entity pages in wiki/entities/ for key entities identified in the analysis",
-    "3. Concept pages in wiki/concepts/ for key concepts identified in the analysis",
-    "4. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
-    "5. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
-    "6. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+    "⚠ The directory layout you MUST use is defined in '## Wiki Schema' below.",
+    "That schema's Page Types table is the AUTHORITATIVE allowlist of directories.",
+    "Do NOT invent new top-level directories. Do NOT default to entities/concepts unless",
+    "the schema lists them. Match the document's nature to the schema's most appropriate type.",
+    "",
+    "Required outputs:",
+    "",
+    `1. **A source summary page**, filename **${sourceBaseName}.md**, placed in whichever schema directory matches the document type identified in the analysis's "Document Type:" line. Examples:`,
+    "   - Document Type: travel-plan → `wiki/旅游方案/` (zh) or `wiki/travel-plans/` (en)",
+    "   - Document Type: manual      → `wiki/用户手册/`  or `wiki/manuals/`",
+    "   - Document Type: project-doc → `wiki/项目文档/`  or `wiki/project-docs/`",
+    "   - Document Type: book        → `wiki/书籍/`      or `wiki/books/`",
+    "   - Document Type: paper       → `wiki/论文/`      or `wiki/papers/`",
+    "   - Document Type: contract    → `wiki/合同/`      or `wiki/contracts/`",
+    "   - (For other types, find the row in the schema's table whose `type` column matches.)",
+    `   - If the schema has no exact match, fall back to: \`wiki/sources/${sourceBaseName}.md\``,
+    "",
+    "2. **Additional pages — see Splitting Rules below.**",
+    "",
+    "3. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries.",
+    "4. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
+    "5. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. 2-5 paragraphs covering ALL topics in the wiki, not just the new source.",
+    "",
+    "## Splitting Rules (CRITICAL — read carefully)",
+    "",
+    "Whether to fragment a source into many pages depends on the SOURCE'S NATURE, not its length.",
+    "",
+    "**Single-page mode** — output ONLY the source summary page from item (1). Do NOT also emit",
+    "entity/concept/tool/person sub-pages. Applies when the analysis's Document Type is one of:",
+    "",
+    "  travel-plan, manual, project-doc, tutorial, book, recipe, note, report, article,",
+    "  meeting, decision, project, film-tv, music, game, menu, shopping-list, fitness-plan,",
+    "  contract, invoice, medical-record, insurance, code-snippet, api-doc, error-log",
+    "",
+    "  For these, ALL relevant content lives in the single source page. Use headings and",
+    "  in-page anchors to organise it — do not scatter it across multiple wiki files.",
+    "  Cross-references to other wiki pages are still encouraged via [[wikilink]] in the body.",
+    "",
+    "**Multi-page mode** — DO decompose into typed sub-pages. Applies when Document Type is:",
+    "",
+    "  paper, encyclopedia-entry, news-roundup, mixed-corpus",
+    "",
+    "  For these, emit the source summary AND additional pages for each genuinely independent",
+    "  entity / concept / tool / dataset / person / company / regulation identified in the",
+    "  analysis. Use the matching schema directory (concept → wiki/概念/ or wiki/concepts/,",
+    "  tool → wiki/工具/ or wiki/tools/, person → wiki/人物/ or wiki/people/, etc.).",
+    "",
+    "**When in doubt → single-page mode.** Over-fragmenting is the worse failure: it scatters",
+    "one coherent document into dozens of stubs the user did not ask for.",
     "",
     "## Frontmatter Rules (CRITICAL — parser is strict)",
     "",
