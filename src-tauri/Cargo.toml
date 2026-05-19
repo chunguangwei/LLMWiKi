@@ -59,6 +59,11 @@ sha2 = "0.10"
 md-5 = "0.10"
 notify = "8"
 walkdir = "2"
+# Used by commands/storage.rs for statfs-based network-mount detection
+# on macOS and Linux. Windows path takes a different code path that
+# does not need libc.
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }

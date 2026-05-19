@@ -5,4 +5,5 @@ pub mod file_sync;
 pub mod fs;
 pub mod package;
 pub mod project;
+pub mod storage;
 pub mod vectorstore;

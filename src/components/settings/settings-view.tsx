@@ -14,6 +14,8 @@ import {
   FolderSync,
   Package,
   RefreshCw,
+  BookOpen,
+  Server,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -39,6 +41,8 @@ import { MaintenanceSection } from "./sections/maintenance-section"
 import { AboutSection } from "./sections/about-section"
 import { ImportExportSection } from "./sections/import-export-section"
 import { ScheduledRefreshSection } from "./sections/scheduled-refresh-section"
+import { StorageLocationSection } from "./sections/storage-location-section"
+import { UserManualSection } from "./sections/user-manual-section"
 
 type CategoryId =
   | "llm"
@@ -52,7 +56,9 @@ type CategoryId =
   | "import-export"
   | "output"
   | "interface"
+  | "storage-location"
   | "maintenance"
+  | "user-manual"
   | "changelog"
   | "about"
 
@@ -77,7 +83,9 @@ const CATEGORIES: Category[] = [
   { id: "import-export", labelKey: "settings.categories.importExport", icon: Package },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
+  { id: "storage-location", labelKey: "settings.categories.storageLocation", icon: Server },
   { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
+  { id: "user-manual", labelKey: "settings.categories.userManual", icon: BookOpen },
   { id: "changelog", labelKey: "settings.categories.changelog", icon: History },
   { id: "about", labelKey: "settings.categories.about", icon: Info },
 ]
@@ -404,8 +412,12 @@ export function SettingsView() {
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "interface":
         return <InterfaceSection draft={draft} setDraft={setDraft} />
+      case "storage-location":
+        return <StorageLocationSection />
       case "maintenance":
         return <MaintenanceSection />
+      case "user-manual":
+        return <UserManualSection />
       case "changelog":
         return <ChangelogSection />
       case "about":
@@ -470,10 +482,14 @@ export function SettingsView() {
           <div className="mx-auto max-w-2xl">{body}</div>
         </div>
 
-        {/* Global Save bar hidden for sections that persist inline:
+        {/* Global Save bar hidden for sections that persist inline or
+            have nothing to save:
             - "llm" saves per-row on every edit (independent per-preset state)
-            - "about" has no draft-bound fields */}
-        {active !== "about" && active !== "llm" && (
+            - "about" / "user-manual" / "storage-location" have no draft-bound fields */}
+        {active !== "about" &&
+          active !== "llm" &&
+          active !== "user-manual" &&
+          active !== "storage-location" && (
           <div className="shrink-0 border-t bg-background/80 backdrop-blur px-8 py-3">
             <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
               <p className="text-xs text-muted-foreground">

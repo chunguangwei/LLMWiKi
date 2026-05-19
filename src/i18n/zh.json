@@ -188,7 +188,9 @@
       "importExport": "导入 / 导出",
       "output": "输出偏好",
       "interface": "界面",
+      "storageLocation": "存储位置",
       "maintenance": "维护",
+      "userManual": "用户手册",
       "changelog": "更新日志",
       "about": "关于"
     },
@@ -447,6 +449,43 @@
           "merged": "已合并",
           "skipped": "已标记为不重复"
         }
+      },
+      "storageLocation": {
+        "title": "存储位置",
+        "description": "自动识别当前项目放在本地硬盘、云盘同步目录、还是网络挂载（SMB / AFP / NFS）上，并给出对应的部署提示。",
+        "projectPath": "项目路径",
+        "recheck": "重新检测",
+        "networkBadge": "网络挂载",
+        "noProject": "请先打开或创建一个项目——存储检测基于当前项目路径。",
+        "fsType": "文件系统",
+        "mountPoint": "挂载点",
+        "accessible": "可访问",
+        "writable": "可写",
+        "watchWarningTitle": "网络挂载下「资料文件夹监控」无法可靠触发",
+        "watchWarningBody": "FSEvents / inotify / ReadDirectoryChangesW 都不监听 SMB / AFP / NFS 上的变化。如需自动摄入，请改用 NAS 厂商同步客户端（Synology Drive / fnOS Drive / Qsync）把共享同步到本地路径，再让项目指向该本地路径。",
+        "excludeTitle": "排除 .llm-wiki-local/ 不参与同步",
+        "excludeDescription": ".llm-wiki-local/ 保存个人聊天记录。不应该同步——多设备间会产生冲突文件，还可能泄露私密对话。",
+        "copy": "复制",
+        "kinds": {
+          "local": { "label": "本地硬盘", "subtitle": "项目在本机文件系统上，没有同步参与。" },
+          "icloud": { "label": "iCloud Drive", "subtitle": "通过 iCloud 同步。给 .llm-wiki-local 加 .nosync 后缀可排除。" },
+          "dropbox": { "label": "Dropbox", "subtitle": "通过 Dropbox 同步。用 xattr 命令把 .llm-wiki-local/ 加进忽略。" },
+          "onedrive": { "label": "OneDrive", "subtitle": "通过 OneDrive 同步。" },
+          "gdrive": { "label": "Google Drive", "subtitle": "通过 Google Drive 同步。" },
+          "synologyDrive": { "label": "Synology Drive", "subtitle": "通过 Synology Drive 客户端同步到群晖 NAS。" },
+          "fnosDrive": { "label": "fnOS Drive", "subtitle": "通过 fnOS Drive 客户端同步到飞牛 (fnOS) NAS。" },
+          "qsync": { "label": "QNAP Qsync", "subtitle": "通过 Qsync 客户端同步到 QNAP NAS。" },
+          "terrasync": { "label": "TerraMaster Sync", "subtitle": "通过 TerraSync 同步到铁威马 NAS。" },
+          "smb": { "label": "SMB / CIFS 共享", "subtitle": "已挂载的网络共享。资料文件夹监控不工作。" },
+          "afp": { "label": "AFP 共享", "subtitle": "已弃用的 Apple Filing Protocol 挂载，建议改用 SMB。" },
+          "nfs": { "label": "NFS 共享", "subtitle": "已挂载的 NFS 导出。资料文件夹监控不工作。" },
+          "webdav": { "label": "WebDAV 挂载", "subtitle": "已挂载的 WebDAV 共享，性能因服务端而异。" },
+          "unknown": { "label": "未知", "subtitle": "无法识别该路径的存储类型——按本地处理即可。" }
+        }
+      },
+      "userManual": {
+        "title": "用户手册",
+        "description": "LLM Wiki 的日常使用指南，与 docs/user-manual.md 同步，直接在应用内查看，无需切换窗口。"
       },
       "changelog": {
         "title": "更新日志",

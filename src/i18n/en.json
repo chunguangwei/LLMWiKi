@@ -188,7 +188,9 @@
       "importExport": "Import / Export",
       "output": "Output",
       "interface": "Interface",
+      "storageLocation": "Storage Location",
       "maintenance": "Maintenance",
+      "userManual": "User Manual",
       "changelog": "Changelog",
       "about": "About"
     },
@@ -447,6 +449,43 @@
           "merged": "Merged",
           "skipped": "Marked not duplicates"
         }
+      },
+      "storageLocation": {
+        "title": "Storage Location",
+        "description": "Detects whether the current project lives on local disk, a cloud sync folder, or a network share (SMB / AFP / NFS), and gives setup hints for that storage type.",
+        "projectPath": "Project path",
+        "recheck": "Recheck",
+        "networkBadge": "Network mount",
+        "noProject": "Open or create a project first — storage detection runs against the project path.",
+        "fsType": "Filesystem",
+        "mountPoint": "Mount point",
+        "accessible": "Accessible",
+        "writable": "Writable",
+        "watchWarningTitle": "Source Watch won't fire reliably on network mounts",
+        "watchWarningBody": "FSEvents / inotify / ReadDirectoryChangesW don't watch SMB / AFP / NFS paths. To keep auto-ingest working, use a NAS-vendor sync client (Synology Drive, fnOS Drive, Qsync) that syncs the share to a real local path, then point the project at that local path instead.",
+        "excludeTitle": "Exclude .llm-wiki-local/ from sync",
+        "excludeDescription": ".llm-wiki-local/ holds your personal chat history. Don't sync it — it produces conflict files across devices and leaks private conversations.",
+        "copy": "Copy",
+        "kinds": {
+          "local": { "label": "Local disk", "subtitle": "Lives on this device's filesystem. No sync involved." },
+          "icloud": { "label": "iCloud Drive", "subtitle": "Synced via iCloud. Add .nosync suffix to exclude chat history." },
+          "dropbox": { "label": "Dropbox", "subtitle": "Synced via Dropbox. Use xattr to ignore .llm-wiki-local/." },
+          "onedrive": { "label": "OneDrive", "subtitle": "Synced via OneDrive." },
+          "gdrive": { "label": "Google Drive", "subtitle": "Synced via Google Drive." },
+          "synologyDrive": { "label": "Synology Drive", "subtitle": "Synced to a Synology NAS via the Drive Client." },
+          "fnosDrive": { "label": "fnOS Drive", "subtitle": "Synced to a fnOS (FeiNiu) NAS via the fnOS Drive client." },
+          "qsync": { "label": "QNAP Qsync", "subtitle": "Synced to a QNAP NAS via the Qsync client." },
+          "terrasync": { "label": "TerraMaster Sync", "subtitle": "Synced to a TerraMaster NAS via TerraSync." },
+          "smb": { "label": "SMB / CIFS share", "subtitle": "Mounted network share. Source Watch won't fire here." },
+          "afp": { "label": "AFP share", "subtitle": "Legacy Apple Filing Protocol mount. SMB is recommended instead." },
+          "nfs": { "label": "NFS share", "subtitle": "Mounted NFS export. Source Watch won't fire here." },
+          "webdav": { "label": "WebDAV mount", "subtitle": "Mounted WebDAV share. Performance varies." },
+          "unknown": { "label": "Unknown", "subtitle": "Couldn't classify this path's storage type — treat as local." }
+        }
+      },
+      "userManual": {
+        "title": "User Manual",
+        "description": "Day-to-day guide for using LLM Wiki. Same content as docs/user-manual.md, rendered inline so you don't have to leave the app."
       },
       "changelog": {
         "title": "Changelog",
