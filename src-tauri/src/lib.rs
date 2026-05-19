@@ -1,3 +1,4 @@
+mod api_server;
 mod clip_server;
 mod commands;
 mod panic_guard;
@@ -10,6 +11,23 @@ use panic_guard::run_guarded;
 fn clip_server_status() -> String {
     run_guarded("clip_server_status", || {
         Ok(clip_server::get_daemon_status().to_string())
+    })
+    .unwrap_or_else(|e| format!("error: {e}"))
+}
+
+#[tauri::command]
+fn api_server_status() -> String {
+    run_guarded("api_server_status", || {
+        Ok(api_server::get_api_status().to_string())
+    })
+    .unwrap_or_else(|e| format!("error: {e}"))
+}
+
+#[tauri::command]
+fn api_server_reload_config() -> String {
+    run_guarded("api_server_reload_config", || {
+        api_server::invalidate_config_cache();
+        Ok("ok".to_string())
     })
     .unwrap_or_else(|e| format!("error: {e}"))
 }
@@ -75,6 +93,7 @@ pub fn run() {
             app.manage(commands::claude_cli::ClaudeCliState::default());
             app.manage(commands::codex_cli::CodexCliState::default());
             app.manage(commands::file_sync::FileSyncState::default());
+            api_server::start_api_server(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -99,7 +118,10 @@ pub fn run() {
             commands::package::export_package,
             commands::package::import_package,
             commands::package::inspect_package,
+            commands::search::search_project,
             clip_server_status,
+            api_server_status,
+            api_server_reload_config,
             commands::vectorstore::vector_upsert,
             commands::vectorstore::vector_search,
             commands::vectorstore::vector_delete,
@@ -163,7 +185,11 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = event
+            {
                 if !has_visible_windows {
                     use tauri::Manager;
                     if let Some(window) = app.get_webview_window("main") {

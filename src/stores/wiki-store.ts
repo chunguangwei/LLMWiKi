@@ -142,6 +142,26 @@ interface ScheduledImportConfig {
   lastScan: number | null // 上次扫描时间戳
 }
 
+/**
+ * Local HTTP API server config. Read by the Rust `api_server` module on
+ * every request via `load_app_state` (5s cache). The Rust side is the
+ * source of truth at request time; this struct is the persisted form
+ * the UI edits.
+ *
+ *   - `enabled` gates all non-/health endpoints. Default `true` so an
+ *     env-token-only setup keeps working after the toggle is added.
+ *   - `allowUnauthenticated` lets local agents call the API without a
+ *     token. It is explicit and default-off.
+ *   - `token` is the bearer secret. Empty + auth required =
+ *     every non-/health request returns 401. The env var
+ *     `LLM_WIKI_API_TOKEN` overrides this field at the backend.
+ */
+interface ApiConfig {
+  enabled: boolean
+  allowUnauthenticated: boolean
+  token: string
+}
+
 interface SourceWatchConfig {
   enabled: boolean
   autoIngest: boolean
@@ -247,6 +267,7 @@ interface WikiState {
   proxyConfig: ProxyConfig
   scheduledImportConfig: ScheduledImportConfig
   sourceWatchConfig: SourceWatchConfig
+  apiConfig: ApiConfig
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -266,6 +287,7 @@ interface WikiState {
   setProxyConfig: (config: ProxyConfig) => void
   setScheduledImportConfig: (config: ScheduledImportConfig) => void
   setSourceWatchConfig: (config: SourceWatchConfig) => void
+  setApiConfig: (config: ApiConfig) => void
   bumpDataVersion: () => void
 }
 
@@ -348,6 +370,17 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   sourceWatchConfig: DEFAULT_SOURCE_WATCH_CONFIG,
 
+  // Default `enabled: true` preserves the pre-toggle behavior: anyone
+  // who already had `LLM_WIKI_API_TOKEN` set or `apiConfig.token`
+  // hand-edited keeps their working API. New users land in
+  // "enabled + no token = 401 on every endpoint" — fail-closed by
+  // virtue of the token being empty.
+  apiConfig: {
+    enabled: true,
+    allowUnauthenticated: false,
+    token: "",
+  },
+
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
   setActivePresetId: (activePresetId) => set({ activePresetId }),
@@ -358,7 +391,8 @@ export const useWikiStore = create<WikiState>((set) => ({
   setProxyConfig: (proxyConfig) => set({ proxyConfig }),
   setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
+  setApiConfig: (apiConfig) => set({ apiConfig }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
-export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig }
+export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig }

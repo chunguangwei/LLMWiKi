@@ -111,14 +111,12 @@ pub fn extract_pdf_markdown(
 
     let _guard = crate::commands::fs::lock_pdfium();
     let pdfium = crate::commands::fs::pdfium()?;
-    let doc = pdfium
-        .load_pdf_from_file(path, None)
-        .map_err(|e| match e {
-            PdfiumError::PdfiumLibraryInternalError(
-                PdfiumInternalError::PasswordError,
-            ) => format!("PDF is password-protected and cannot be read: '{path}'"),
-            _ => format!("Failed to open PDF '{path}': {e}"),
-        })?;
+    let doc = pdfium.load_pdf_from_file(path, None).map_err(|e| match e {
+        PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError) => {
+            format!("PDF is password-protected and cannot be read: '{path}'")
+        }
+        _ => format!("Failed to open PDF '{path}': {e}"),
+    })?;
 
     let mut out = String::new();
     let mut idx: u32 = 0;
@@ -144,9 +142,7 @@ pub fn extract_pdf_markdown(
 
         let page_text = page
             .text()
-            .map_err(|e| {
-                format!("Page {page_num} text extraction failed in '{path}': {e}")
-            })?;
+            .map_err(|e| format!("Page {page_num} text extraction failed in '{path}': {e}"))?;
         out.push_str(&page_text.all());
         // Single trailing newline so the next block starts on its own
         // line; the `\n\n` separator before the next `## Page` heading
@@ -170,9 +166,7 @@ pub fn extract_pdf_markdown(
             let dyn_img = match image.get_raw_image() {
                 Ok(b) => b,
                 Err(e) => {
-                    eprintln!(
-                        "[extract_pdf_markdown] page {page_num} image read failed: {e}"
-                    );
+                    eprintln!("[extract_pdf_markdown] page {page_num} image read failed: {e}");
                     continue;
                 }
             };
@@ -186,9 +180,7 @@ pub fn extract_pdf_markdown(
                 &mut std::io::Cursor::new(&mut png_bytes),
                 image::ImageFormat::Png,
             ) {
-                eprintln!(
-                    "[extract_pdf_markdown] page {page_num} PNG encode failed: {e}"
-                );
+                eprintln!("[extract_pdf_markdown] page {page_num} PNG encode failed: {e}");
                 continue;
             }
             idx += 1;
@@ -198,9 +190,7 @@ pub fn extract_pdf_markdown(
             // pass dest_dir for both args so save_one_image's
             // strip_prefix is a no-op.
             if let Err(e) = save_one_image(&png_bytes, dest_dir, dest_dir, &file_name) {
-                eprintln!(
-                    "[extract_pdf_markdown] page {page_num} save failed: {e}"
-                );
+                eprintln!("[extract_pdf_markdown] page {page_num} save failed: {e}");
                 continue;
             }
             total_saved += 1;
@@ -230,9 +220,7 @@ pub fn extract_pdf_markdown(
     }
 
     if media_dest_dir.is_some() {
-        eprintln!(
-            "[extract_pdf_markdown] '{path}' DONE — pages={page_count}, saved={total_saved}"
-        );
+        eprintln!("[extract_pdf_markdown] '{path}' DONE — pages={page_count}, saved={total_saved}");
     }
 
     Ok(out)
@@ -695,7 +683,11 @@ pub fn extract_and_save_pdf_images(
                 filtered_too_small += 1;
                 eprintln!(
                     "[extract_and_save_pdf_images] page {} image {}x{} < min ({}x{}) — skipped",
-                    page_idx + 1, width, height, options.min_width, options.min_height
+                    page_idx + 1,
+                    width,
+                    height,
+                    options.min_width,
+                    options.min_height
                 );
                 continue;
             }

@@ -5,7 +5,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useChatStore } from "@/stores/chat-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig } from "@/lib/project-store"
 import { loadReviewItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
@@ -221,6 +221,22 @@ function App() {
         const savedProxy = await loadProxyConfig()
         if (savedProxy) {
           useWikiStore.getState().setProxyConfig(savedProxy)
+        }
+        // Local HTTP API server config — global (single token + enable
+        // flag for the whole install, not per-project). The Rust side
+        // reads `apiConfig.{enabled,token}` from `app-state.json`
+        // directly; this only hydrates the Zustand store so the
+        // Settings UI reflects the persisted values.
+        const savedApi = await loadApiConfig()
+        if (savedApi) {
+          useWikiStore.getState().setApiConfig({
+            enabled: typeof savedApi.enabled === "boolean" ? savedApi.enabled : true,
+            allowUnauthenticated:
+              typeof savedApi.allowUnauthenticated === "boolean"
+                ? savedApi.allowUnauthenticated
+                : false,
+            token: typeof savedApi.token === "string" ? savedApi.token : "",
+          })
         }
         const savedLang = await loadLanguage()
         if (savedLang) {

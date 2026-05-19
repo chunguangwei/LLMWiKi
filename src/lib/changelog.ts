@@ -26,6 +26,34 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.12",
+    date: "2026-05-19",
+    highlights: {
+      en: [
+        "Fixed SearXNG web search configuration so self-hosted instances work without requiring an API key.",
+      ],
+      zh: [
+        "修复 SearXNG 网页搜索配置：自托管实例不再被错误要求填写 API Key。",
+      ],
+    },
+  },
+  {
+    version: "0.4.11",
+    date: "2026-05-19",
+    highlights: {
+      en: [
+        "Added a local API server for project files, search, graph data, and source rescans, with configurable access control in Settings.",
+        "Unified UI and API search on the Rust backend with keyword and vector retrieval.",
+        "Added Knowledge Graph search with a compact expandable search control and improved empty-result stability.",
+      ],
+      zh: [
+        "新增本地 API Server，可通过接口访问项目文件、搜索、关系图数据和资料重扫，并可在设置中配置访问控制。",
+        "UI 搜索和 API 搜索统一到 Rust 后端，支持关键词与向量检索。",
+        "关系图新增搜索功能，默认使用紧凑的可展开搜索按钮，并改进无结果时的稳定性。",
+      ],
+    },
+  },
+  {
     version: "0.4.10",
     date: "2026-05-14",
     highlights: {

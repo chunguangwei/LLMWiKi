@@ -86,6 +86,15 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
   }
 }
 
+export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
+  const resolved = resolveSearchConfig(config)
+  if (resolved.provider === "none") return false
+  if (resolved.provider === "searxng") {
+    return Boolean(resolved.searXngUrl?.trim())
+  }
+  return Boolean(resolved.apiKey?.trim())
+}
+
 export async function webSearch(
   query: string,
   config: SearchApiConfig,

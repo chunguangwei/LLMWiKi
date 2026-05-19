@@ -113,3 +113,11 @@ export async function openProjectFolder(path: string): Promise<void> {
 export async function clipServerStatus(): Promise<string> {
   return invoke<string>("clip_server_status")
 }
+
+export async function apiServerStatus(): Promise<string> {
+  return invoke<string>("api_server_status")
+}
+
+export async function apiServerReloadConfig(): Promise<string> {
+  return invoke<string>("api_server_reload_config")
+}

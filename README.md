@@ -51,6 +51,7 @@
 - **Deep Research** — LLM-optimized search topics, multi-query web search via Tavily, SerpApi, or SearXNG, auto-ingest results into wiki
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
+- **Local HTTP API + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API (token-protected) for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/nashsu/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
 
 ## What is this?
 
@@ -463,6 +464,32 @@ npm run tauri build    # Production build
 7. Browse the **Knowledge Graph** to see connections
 8. Check **Review** for items needing your attention
 9. Run **Lint** periodically to maintain wiki health
+
+## Local HTTP API + AI Agent Skill
+
+LLM Wiki ships a built-in local HTTP API at `http://127.0.0.1:19828` (token-protected, `127.0.0.1`-only) so external tools — including AI agents like **Claude Code**, **Codex**, or any HTTP-capable script — can query your wiki:
+
+- `GET /api/v1/health` — server status (no auth)
+- `GET /api/v1/projects` — list projects
+- `GET /api/v1/projects/{id}/files` / `files/content` — read files and content
+- `POST /api/v1/projects/{id}/search` — **hybrid** retrieval (keyword + vector) returning `mode`, `tokenHits`, `vectorHits`, per-result `vectorScore`
+- `GET /api/v1/projects/{id}/graph` — wikilinks graph
+- `POST /api/v1/projects/{id}/sources/rescan` — trigger a backend rescan
+
+Enable + generate a token in **Settings → API Server**.
+
+### Plug your AI agent in with one command
+
+A ready-made **agent skill** for LLM Wiki lives in its own repo. Install it into Claude Code / Codex / any skills-compatible runtime:
+
+```bash
+npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm_wiki_skill
+```
+
+After install, the agent can answer prompts like "what does my LLM Wiki say about X", "search my 知识库 for Y", "show the neighborhood of node Z in my wiki graph", and "rescan my wiki sources" by talking to your locally-running app — read-only by default, citing wiki page paths so you can verify in-app.
+
+- **Skill repo**: <https://github.com/nashsu/llm_wiki_skill>
+- **Trigger discipline**: it intentionally does **not** trigger on generic "search my notes" / "check my Obsidian / Notion / Logseq" — only when you explicitly name LLM Wiki / `my wiki` / `知识库`.
 
 ## Project Structure
 

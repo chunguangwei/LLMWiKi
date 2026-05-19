@@ -16,6 +16,7 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
+import { hasConfiguredSearchProvider } from "@/lib/web-search"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -38,8 +39,8 @@ export function ReviewView() {
     // Deep Research — must be checked FIRST before any fuzzy matching
     if (action === "__deep_research__" && project) {
       const searchConfig = useWikiStore.getState().searchApiConfig
-      if (searchConfig.provider === "none" || !searchConfig.apiKey) {
-        window.alert("Web Search not configured. Go to Settings → Web Search to add a Tavily or SerpApi API key first.")
+      if (!hasConfiguredSearchProvider(searchConfig)) {
+        window.alert("Web Search not configured. Go to Settings → Web Search to configure a provider first.")
         return
       }
       const item = items.find((i) => i.id === id)
@@ -139,7 +140,7 @@ export function ReviewView() {
     } else if (actionLooksLikeResearch(action) && project) {
       // Actions with "research" trigger deep research, not just page creation
       const searchConfig = useWikiStore.getState().searchApiConfig
-      if (searchConfig.provider === "none" || !searchConfig.apiKey) {
+      if (!hasConfiguredSearchProvider(searchConfig)) {
         // No search API — fall through to create a page instead
         const item = items.find((i) => i.id === id)
         if (item) {

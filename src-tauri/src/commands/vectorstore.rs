@@ -1,10 +1,9 @@
-use lancedb::connect;
-use lancedb::query::{ExecutableQuery, QueryBase};
 use arrow_array::{
-    Float32Array, RecordBatch, StringArray, FixedSizeListArray, ArrayRef,
-    UInt32Array,
+    ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StringArray, UInt32Array,
 };
 use arrow_schema::{DataType, Field, Schema};
+use lancedb::connect;
+use lancedb::query::{ExecutableQuery, QueryBase};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -58,8 +57,14 @@ fn validate_page_id(page_id: &str) -> Result<(), String> {
         return Err("Invalid page_id: empty or too long".to_string());
     }
     // Only allow alphanumeric, hyphens, underscores, dots
-    if !page_id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.') {
-        return Err(format!("Invalid page_id: contains disallowed characters: {}", page_id));
+    if !page_id
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(format!(
+            "Invalid page_id: contains disallowed characters: {}",
+            page_id
+        ));
     }
     Ok(())
 }
@@ -69,28 +74,27 @@ fn make_schema(dim: i32) -> Arc<Schema> {
         Field::new("page_id", DataType::Utf8, false),
         Field::new(
             "vector",
-            DataType::FixedSizeList(
-                Arc::new(Field::new("item", DataType::Float32, true)),
-                dim,
-            ),
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim),
             false,
         ),
     ]))
 }
 
-fn make_batch(schema: Arc<Schema>, page_id: &str, embedding: Vec<f32>, dim: i32) -> Result<RecordBatch, String> {
+fn make_batch(
+    schema: Arc<Schema>,
+    page_id: &str,
+    embedding: Vec<f32>,
+    dim: i32,
+) -> Result<RecordBatch, String> {
     let ids: ArrayRef = Arc::new(StringArray::from(vec![page_id]));
     let values = Float32Array::from(embedding);
-    let vector: ArrayRef = Arc::new(
-        FixedSizeListArray::new(
-            Arc::new(Field::new("item", DataType::Float32, true)),
-            dim,
-            Arc::new(values),
-            None,
-        )
-    );
-    RecordBatch::try_new(schema, vec![ids, vector])
-        .map_err(|e| format!("Batch error: {e}"))
+    let vector: ArrayRef = Arc::new(FixedSizeListArray::new(
+        Arc::new(Field::new("item", DataType::Float32, true)),
+        dim,
+        Arc::new(values),
+        None,
+    ));
+    RecordBatch::try_new(schema, vec![ids, vector]).map_err(|e| format!("Batch error: {e}"))
 }
 
 /// Upsert a page embedding into LanceDB
@@ -113,23 +117,29 @@ pub async fn vector_upsert(
         let batch = make_batch(schema.clone(), &page_id, embedding, dim)?;
         let data = vec![batch];
 
-        let tables = db.table_names()
+        let tables = db
+            .table_names()
             .execute()
             .await
             .map_err(|e| format!("List tables error: {e}"))?;
 
         if tables.contains(&TABLE_V1.to_string()) {
-            let table = db.open_table(TABLE_V1)
+            let table = db
+                .open_table(TABLE_V1)
                 .execute()
                 .await
                 .map_err(|e| format!("Open table error: {e}"))?;
 
             // Delete existing entry then add new one
             if let Err(e) = table.delete(&format!("page_id = '{}'", page_id)).await {
-                eprintln!("[vectorstore] Warning: delete before upsert failed for '{}': {}", page_id, e);
+                eprintln!(
+                    "[vectorstore] Warning: delete before upsert failed for '{}': {}",
+                    page_id, e
+                );
             }
 
-            table.add(data)
+            table
+                .add(data)
                 .execute()
                 .await
                 .map_err(|e| format!("Add error: {e}"))?;
@@ -158,7 +168,8 @@ pub async fn vector_search(
             .await
             .map_err(|e| format!("DB connect error: {e}"))?;
 
-        let tables = db.table_names()
+        let tables = db
+            .table_names()
             .execute()
             .await
             .map_err(|e| format!("List tables error: {e}"))?;
@@ -167,7 +178,8 @@ pub async fn vector_search(
             return Ok(vec![]);
         }
 
-        let table = db.open_table(TABLE_V1)
+        let table = db
+            .open_table(TABLE_V1)
             .execute()
             .await
             .map_err(|e| format!("Open table error: {e}"))?;
@@ -214,10 +226,7 @@ pub async fn vector_search(
 
 /// Delete a page from the vector index
 #[tauri::command]
-pub async fn vector_delete(
-    project_path: String,
-    page_id: String,
-) -> Result<(), String> {
+pub async fn vector_delete(project_path: String, page_id: String) -> Result<(), String> {
     run_guarded_async("vector_delete", async move {
         validate_page_id(&page_id)?;
 
@@ -226,7 +235,8 @@ pub async fn vector_delete(
             .await
             .map_err(|e| format!("DB connect error: {e}"))?;
 
-        let tables = db.table_names()
+        let tables = db
+            .table_names()
             .execute()
             .await
             .map_err(|e| format!("List tables error: {e}"))?;
@@ -235,12 +245,14 @@ pub async fn vector_delete(
             return Ok(());
         }
 
-        let table = db.open_table(TABLE_V1)
+        let table = db
+            .open_table(TABLE_V1)
             .execute()
             .await
             .map_err(|e| format!("Open table error: {e}"))?;
 
-        table.delete(&format!("page_id = '{}'", page_id))
+        table
+            .delete(&format!("page_id = '{}'", page_id))
             .await
             .map_err(|e| format!("Delete error: {e}"))?;
 
@@ -251,16 +263,15 @@ pub async fn vector_delete(
 
 /// Get count of indexed vectors
 #[tauri::command]
-pub async fn vector_count(
-    project_path: String,
-) -> Result<usize, String> {
+pub async fn vector_count(project_path: String) -> Result<usize, String> {
     run_guarded_async("vector_count", async move {
         let db = connect(&db_path(&project_path))
             .execute()
             .await
             .map_err(|e| format!("DB connect error: {e}"))?;
 
-        let tables = db.table_names()
+        let tables = db
+            .table_names()
             .execute()
             .await
             .map_err(|e| format!("List tables error: {e}"))?;
@@ -269,12 +280,14 @@ pub async fn vector_count(
             return Ok(0);
         }
 
-        let table = db.open_table(TABLE_V1)
+        let table = db
+            .open_table(TABLE_V1)
             .execute()
             .await
             .map_err(|e| format!("Open table error: {e}"))?;
 
-        let count = table.count_rows(None)
+        let count = table
+            .count_rows(None)
             .await
             .map_err(|e| format!("Count error: {e}"))?;
 
@@ -338,10 +351,7 @@ fn make_schema_v2(dim: i32) -> Arc<Schema> {
         Field::new("heading_path", DataType::Utf8, false),
         Field::new(
             "vector",
-            DataType::FixedSizeList(
-                Arc::new(Field::new("item", DataType::Float32, true)),
-                dim,
-            ),
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim),
             false,
         ),
     ]))
@@ -450,10 +460,7 @@ pub async fn vector_upsert_chunks(
                 .await
                 .map_err(|e| format!("Open table error: {e}"))?;
 
-            if let Err(e) = table
-                .delete(&format!("page_id = '{}'", page_id))
-                .await
-            {
+            if let Err(e) = table.delete(&format!("page_id = '{}'", page_id)).await {
                 eprintln!(
                     "[vectorstore v2] Warning: delete before upsert failed for page '{}': {}",
                     page_id, e
@@ -570,10 +577,7 @@ pub async fn vector_search_chunks(
 /// Delete every chunk belonging to a page. Used when a source document
 /// is removed, or before a full re-embed of a page whose content shrank.
 #[tauri::command]
-pub async fn vector_delete_page(
-    project_path: String,
-    page_id: String,
-) -> Result<(), String> {
+pub async fn vector_delete_page(project_path: String, page_id: String) -> Result<(), String> {
     run_guarded_async("vector_delete_page", async move {
         validate_page_id_for_v2(&page_id)?;
 
@@ -831,7 +835,9 @@ mod tests_v2 {
             .unwrap();
         assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 5);
 
-        vector_delete_page(pp.clone(), "page-a".into()).await.unwrap();
+        vector_delete_page(pp.clone(), "page-a".into())
+            .await
+            .unwrap();
         assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 2);
     }
 
@@ -905,8 +911,12 @@ mod tests_v2 {
         vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 2, 16))
             .await
             .unwrap();
-        vector_delete_page(pp.clone(), "page-a".into()).await.unwrap();
-        vector_delete_page(pp.clone(), "page-a".into()).await.unwrap();
+        vector_delete_page(pp.clone(), "page-a".into())
+            .await
+            .unwrap();
+        vector_delete_page(pp.clone(), "page-a".into())
+            .await
+            .unwrap();
 
         assert_eq!(vector_count_chunks(pp).await.unwrap(), 0);
     }
@@ -942,12 +952,7 @@ mod tests_v2 {
         let pp = p.to_string_lossy().to_string();
 
         // Quote would be a SQL-injection footgun for the delete filter.
-        let result = vector_upsert_chunks(
-            pp,
-            "bad'; DROP".into(),
-            make_chunks("x", 1, 16),
-        )
-        .await;
+        let result = vector_upsert_chunks(pp, "bad'; DROP".into(), make_chunks("x", 1, 16)).await;
         assert!(result.is_err());
     }
 
@@ -985,9 +990,13 @@ mod tests_v2 {
         vector_upsert(pp.clone(), "old-page".into(), fake_embedding(0, 16))
             .await
             .unwrap();
-        vector_upsert_chunks(pp.clone(), "new-page".into(), make_chunks("new-page", 2, 16))
-            .await
-            .unwrap();
+        vector_upsert_chunks(
+            pp.clone(),
+            "new-page".into(),
+            make_chunks("new-page", 2, 16),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(vector_legacy_row_count(pp.clone()).await.unwrap(), 1);
         assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 2);

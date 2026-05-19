@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
+import type { ApiConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { normalizePath } from "@/lib/path-utils"
 
@@ -133,6 +133,28 @@ export async function saveProxyConfig(config: ProxyConfig): Promise<void> {
 export async function loadProxyConfig(): Promise<ProxyConfig | null> {
   const store = await getStore()
   return (await store.get<ProxyConfig>(PROXY_CONFIG_KEY)) ?? null
+}
+
+// Local API server config. KEY MUST stay `apiConfig` — the Rust
+// `api_server` module reads `parsed.get("apiConfig")` from this same
+// `app-state.json` on every request (5s cache). Rename one side and
+// the API silently goes back to "no token configured = 401 forever".
+const API_CONFIG_KEY = "apiConfig"
+
+export async function saveApiConfig(config: ApiConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(API_CONFIG_KEY, config)
+  // Force-flush. The 100ms debounce default is fine for cosmetic
+  // settings, but the API token is on a security hot path — a user
+  // generates one, hits Save, then immediately curls the API from
+  // another terminal. We want the disk file to match in-memory
+  // state before the next request reads it.
+  await store.save()
+}
+
+export async function loadApiConfig(): Promise<ApiConfig | null> {
+  const store = await getStore()
+  return (await store.get<ApiConfig>(API_CONFIG_KEY)) ?? null
 }
 
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"

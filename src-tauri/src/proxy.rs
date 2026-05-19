@@ -87,8 +87,7 @@ pub fn apply_proxy_env(config: &ProxyConfig) -> String {
     // through the now-removed proxy. The same applies to invalid
     // URLs and unsupported schemes (treat as disabled).
     let url = config.url.trim();
-    let invalid_scheme =
-        !url.starts_with("http://") && !url.starts_with("https://");
+    let invalid_scheme = !url.starts_with("http://") && !url.starts_with("https://");
 
     if !config.enabled || url.is_empty() || invalid_scheme {
         clear_proxy_env();
@@ -315,7 +314,7 @@ mod tests {
         // the URL to something we won't apply (socks5://) must clear
         // any previously-applied http(s) values, not silently keep
         // them.
-    isolated(|| {
+        isolated(|| {
             apply_proxy_env(&ProxyConfig {
                 enabled: true,
                 url: "http://127.0.0.1:7890".into(),

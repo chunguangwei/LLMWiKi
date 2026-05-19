@@ -4420,7 +4420,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "llm-wiki"
-version = "0.4.10"
+version = "0.4.12"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -4435,6 +4435,7 @@ dependencies = [
  "md-5",
  "notify",
  "pdfium-render",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2",

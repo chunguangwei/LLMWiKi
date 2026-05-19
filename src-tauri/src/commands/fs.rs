@@ -4,7 +4,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use calamine::{Reader, open_workbook_auto, Data};
+use calamine::{open_workbook_auto, Data, Reader};
 
 use crate::commands::file_sync;
 use crate::panic_guard::run_guarded;
@@ -16,8 +16,8 @@ const IMAGE_EXTS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif", "avif", "heic", "heif", "svg",
 ];
 const MEDIA_EXTS: &[&str] = &[
-    "mp4", "webm", "mov", "avi", "mkv", "flv", "wmv", "m4v",
-    "mp3", "wav", "ogg", "flac", "aac", "m4a", "wma",
+    "mp4", "webm", "mov", "avi", "mkv", "flv", "wmv", "m4v", "mp3", "wav", "ogg", "flac", "aac",
+    "m4a", "wma",
 ];
 const LEGACY_DOC_EXTS: &[&str] = &["doc", "xls", "ppt", "pages", "numbers", "key", "epub"];
 
@@ -113,10 +113,7 @@ pub async fn preprocess_file(path: String) -> Result<String, String> {
 fn cache_path_for(original: &Path) -> std::path::PathBuf {
     let parent = original.parent().unwrap_or(Path::new("."));
     let cache_dir = parent.join(".cache");
-    let file_name = original
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy();
+    let file_name = original.file_name().unwrap_or_default().to_string_lossy();
     cache_dir.join(format!("{}.txt", file_name))
 }
 
@@ -137,8 +134,7 @@ fn write_cache(original: &Path, text: &str) -> Result<(), String> {
         fs::create_dir_all(parent).ok();
     }
     crate::commands::file_sync::mark_app_write_path(&cache_path);
-    fs::write(&cache_path, text)
-        .map_err(|e| format!("Failed to write cache: {}", e))
+    fs::write(&cache_path, text).map_err(|e| format!("Failed to write cache: {}", e))
 }
 
 /// Global PDFium instance — the library prefers a single binding shared
@@ -177,8 +173,7 @@ pub(crate) fn lock_pdfium() -> std::sync::MutexGuard<'static, ()> {
 /// once the AppHandle is available. Lets the pdfium resolver find the
 /// bundled dylib without re-implementing Tauri's platform-specific
 /// resource-dir logic.
-static RESOURCE_DIR_HINT: std::sync::OnceLock<std::path::PathBuf> =
-    std::sync::OnceLock::new();
+static RESOURCE_DIR_HINT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
 /// Called from Tauri's setup() with the resolved resource directory.
 /// No-op if already set.
@@ -266,7 +261,10 @@ fn pdfium_candidate_paths() -> Vec<String> {
                 push(&mut v, exe_dir.join("pdfium").join("pdfium.dll"));
                 push(&mut v, exe_dir.join("libpdfium.dll"));
                 push(&mut v, exe_dir.join("resources").join("pdfium.dll"));
-                push(&mut v, exe_dir.join("resources").join("pdfium").join("pdfium.dll"));
+                push(
+                    &mut v,
+                    exe_dir.join("resources").join("pdfium").join("pdfium.dll"),
+                );
             }
 
             #[cfg(target_os = "linux")]
@@ -274,7 +272,13 @@ fn pdfium_candidate_paths() -> Vec<String> {
                 push(&mut v, exe_dir.join("libpdfium.so"));
                 push(&mut v, exe_dir.join("pdfium").join("libpdfium.so"));
                 push(&mut v, exe_dir.join("resources").join("libpdfium.so"));
-                push(&mut v, exe_dir.join("resources").join("pdfium").join("libpdfium.so"));
+                push(
+                    &mut v,
+                    exe_dir
+                        .join("resources")
+                        .join("pdfium")
+                        .join("libpdfium.so"),
+                );
                 push(&mut v, exe_dir.join("../lib/libpdfium.so"));
             }
         }
@@ -391,8 +395,7 @@ fn extract_office_text(path: &str, ext: &str) -> Result<String, String> {
     }
 
     // PPTX and ODF: use ZIP-based parsing
-    let file = fs::File::open(path)
-        .map_err(|e| format!("Failed to open '{}': {}", path, e))?;
+    let file = fs::File::open(path).map_err(|e| format!("Failed to open '{}': {}", path, e))?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|e| format!("Failed to read ZIP archive '{}': {}", path, e))?;
 
@@ -460,7 +463,9 @@ fn extract_docx_with_library(path: &str) -> Result<String, String> {
                 }
 
                 let text = para_text.trim().to_string();
-                if text.is_empty() { continue; }
+                if text.is_empty() {
+                    continue;
+                }
 
                 if is_heading {
                     let prefix = "#".repeat(heading_level as usize);
@@ -509,7 +514,9 @@ fn extract_docx_with_library(path: &str) -> Result<String, String> {
                         result.push_str(" |\n");
                         if i == 0 {
                             result.push('|');
-                            for _ in 0..max_cols { result.push_str(" --- |"); }
+                            for _ in 0..max_cols {
+                                result.push_str(" --- |");
+                            }
                             result.push('\n');
                         }
                     }
@@ -577,7 +584,9 @@ fn extract_docx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
             let tag_start = i;
             i += 1;
             let is_closing = i < len && chars[i] == '/';
-            if is_closing { i += 1; }
+            if is_closing {
+                i += 1;
+            }
 
             let mut tag_name = String::new();
             while i < len && chars[i] != '>' && chars[i] != ' ' && chars[i] != '/' {
@@ -591,7 +600,9 @@ fn extract_docx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
                 tag_content.push(chars[i]);
                 i += 1;
             }
-            if i < len { i += 1; } // skip >
+            if i < len {
+                i += 1;
+            } // skip >
 
             match tag_name.as_str() {
                 // Paragraph start
@@ -634,16 +645,26 @@ fn extract_docx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
                             }
                         }
                     }
-                    if tag_content.contains("ListParagraph") || tag_content.contains("listParagraph") {
+                    if tag_content.contains("ListParagraph")
+                        || tag_content.contains("listParagraph")
+                    {
                         in_list_item = true;
                     }
                 }
                 // Bold
-                "w:b" if !is_closing && !tag_content.contains("w:val=\"0\"") && !tag_content.contains("w:val=\"false\"") => {
+                "w:b"
+                    if !is_closing
+                        && !tag_content.contains("w:val=\"0\"")
+                        && !tag_content.contains("w:val=\"false\"") =>
+                {
                     is_bold = true;
                 }
                 // Italic
-                "w:i" if !is_closing && !tag_content.contains("w:val=\"0\"") && !tag_content.contains("w:val=\"false\"") => {
+                "w:i"
+                    if !is_closing
+                        && !tag_content.contains("w:val=\"0\"")
+                        && !tag_content.contains("w:val=\"false\"") =>
+                {
                     is_italic = true;
                 }
                 // Run end — apply formatting
@@ -732,8 +753,16 @@ fn extract_pptx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
 
     // Sort by slide number
     slide_names.sort_by(|a, b| {
-        let num_a = a.trim_start_matches("ppt/slides/slide").trim_end_matches(".xml").parse::<u32>().unwrap_or(0);
-        let num_b = b.trim_start_matches("ppt/slides/slide").trim_end_matches(".xml").parse::<u32>().unwrap_or(0);
+        let num_a = a
+            .trim_start_matches("ppt/slides/slide")
+            .trim_end_matches(".xml")
+            .parse::<u32>()
+            .unwrap_or(0);
+        let num_b = b
+            .trim_start_matches("ppt/slides/slide")
+            .trim_end_matches(".xml")
+            .parse::<u32>()
+            .unwrap_or(0);
         num_a.cmp(&num_b)
     });
 
@@ -802,7 +831,9 @@ fn extract_spreadsheet(path: &str) -> Result<String, String> {
 
     for sheet_name in &sheet_names {
         if let Ok(range) = workbook.worksheet_range(sheet_name) {
-            if range.is_empty() { continue; }
+            if range.is_empty() {
+                continue;
+            }
 
             if sheet_names.len() > 1 {
                 result.push_str(&format!("## {}\n\n", sheet_name));
@@ -812,8 +843,9 @@ fn extract_spreadsheet(path: &str) -> Result<String, String> {
             let mut max_cols = 0;
 
             for row in range.rows() {
-                let cells: Vec<String> = row.iter().map(|cell| {
-                    match cell {
+                let cells: Vec<String> = row
+                    .iter()
+                    .map(|cell| match cell {
                         Data::Empty => String::new(),
                         Data::String(s) => s.clone(),
                         Data::Float(f) => {
@@ -829,14 +861,18 @@ fn extract_spreadsheet(path: &str) -> Result<String, String> {
                         Data::DateTimeIso(s) => s.clone(),
                         Data::DurationIso(s) => s.clone(),
                         Data::Error(e) => format!("ERR:{:?}", e),
-                    }
-                }).collect();
-                if cells.len() > max_cols { max_cols = cells.len(); }
+                    })
+                    .collect();
+                if cells.len() > max_cols {
+                    max_cols = cells.len();
+                }
                 rows.push(cells);
             }
 
             // Skip empty sheets
-            if rows.is_empty() || max_cols == 0 { continue; }
+            if rows.is_empty() || max_cols == 0 {
+                continue;
+            }
 
             for (i, row) in rows.iter().enumerate() {
                 let mut padded = row.clone();
@@ -849,7 +885,9 @@ fn extract_spreadsheet(path: &str) -> Result<String, String> {
 
                 if i == 0 {
                     result.push('|');
-                    for _ in 0..max_cols { result.push_str(" --- |"); }
+                    for _ in 0..max_cols {
+                        result.push_str(" --- |");
+                    }
                     result.push('\n');
                 }
             }
@@ -866,8 +904,8 @@ fn extract_spreadsheet(path: &str) -> Result<String, String> {
 
 /// Extract OpenDocument format text (basic).
 fn extract_odf_text(archive: &mut zip::ZipArchive<fs::File>) -> Result<String, String> {
-    let xml = read_zip_file(archive, "content.xml")
-        .ok_or_else(|| "No content.xml found".to_string())?;
+    let xml =
+        read_zip_file(archive, "content.xml").ok_or_else(|| "No content.xml found".to_string())?;
 
     let mut result = String::new();
     let mut in_tag = false;
@@ -885,7 +923,11 @@ fn extract_odf_text(archive: &mut zip::ZipArchive<fs::File>) -> Result<String, S
     }
 
     let cleaned = decode_xml_entities(&result);
-    let lines: Vec<&str> = cleaned.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = cleaned
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
 
     if lines.is_empty() {
         Ok("[Could not extract text from this file]".to_string())
@@ -937,8 +979,9 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
 
             file_sync::mark_app_write_path(&tmp_path);
             file_sync::mark_app_write_path(p);
-            fs::write(&tmp_path, contents)
-                .map_err(|e| format!("Failed to write temp file '{}': {}", tmp_path.display(), e))?;
+            fs::write(&tmp_path, contents).map_err(|e| {
+                format!("Failed to write temp file '{}': {}", tmp_path.display(), e)
+            })?;
 
             fs::rename(&tmp_path, p).map_err(|e| {
                 let _ = fs::remove_file(&tmp_path);
@@ -1008,11 +1051,7 @@ fn build_tree(dir: &Path, depth: usize, max_depth: usize) -> Result<Vec<FileNode
     let mut nodes = Vec::new();
     for entry in entries {
         let entry_path = entry.path();
-        let name = entry
-            .file_name()
-            .to_str()
-            .unwrap_or("")
-            .to_string();
+        let name = entry.file_name().to_str().unwrap_or("").to_string();
         // Always return forward-slash paths so the TS layer can compare
         // and compose paths consistently across Windows and Unix. Windows
         // APIs accept forward slashes, so normalizing here is safe and
@@ -1103,9 +1142,8 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
                     if path.is_dir() {
                         copy_recursive(&path, &dest_path, files)?;
                     } else {
-                        fs::copy(&path, &dest_path).map_err(|e| {
-                            format!("Failed to copy '{}': {}", path.display(), e)
-                        })?;
+                        fs::copy(&path, &dest_path)
+                            .map_err(|e| format!("Failed to copy '{}': {}", path.display(), e))?;
                         file_sync::mark_app_write_path(&dest_path);
                         files.push(dest_path.to_string_lossy().replace('\\', "/"));
                     }
@@ -1178,7 +1216,10 @@ fn is_windows_transient_delete_error(err: &std::io::Error) -> bool {
 /// Find wiki pages that reference a given source file name.
 /// Scans all .md files under wiki/ for the source filename in frontmatter or content.
 #[tauri::command]
-pub async fn find_related_wiki_pages(project_path: String, source_name: String) -> Result<Vec<String>, String> {
+pub async fn find_related_wiki_pages(
+    project_path: String,
+    source_name: String,
+) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("find_related_wiki_pages", || {
             let wiki_dir = Path::new(&project_path).join("wiki");
@@ -1195,7 +1236,11 @@ pub async fn find_related_wiki_pages(project_path: String, source_name: String) 
     .map_err(|e| format!("find_related_wiki_pages blocking task join error: {e}"))?
 }
 
-fn collect_related_pages(dir: &Path, source_name: &str, results: &mut Vec<String>) -> Result<(), String> {
+fn collect_related_pages(
+    dir: &Path,
+    source_name: &str,
+    results: &mut Vec<String>,
+) -> Result<(), String> {
     let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
 
     // Get just the filename without path — use Path for cross-platform separator handling
@@ -1215,7 +1260,11 @@ fn collect_related_pages(dir: &Path, source_name: &str, results: &mut Vec<String
         .rev()
         .collect::<Vec<_>>()
         .join(".");
-    let file_stem_lower = if file_stem.is_empty() { file_name_lower.clone() } else { file_stem.to_lowercase() };
+    let file_stem_lower = if file_stem.is_empty() {
+        file_name_lower.clone()
+    } else {
+        file_stem.to_lowercase()
+    };
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -1238,11 +1287,9 @@ fn collect_related_pages(dir: &Path, source_name: &str, results: &mut Vec<String
 
                 // Match 2: source summary page (wiki/sources/{stem}.md)
                 // Use Path component iteration to avoid hardcoded separator assumptions
-                let is_in_sources_dir = path
-                    .components()
-                    .any(|c| c.as_os_str() == "sources");
-                let is_source_summary = is_in_sources_dir
-                    && fname.to_lowercase().starts_with(&file_stem_lower);
+                let is_in_sources_dir = path.components().any(|c| c.as_os_str() == "sources");
+                let is_source_summary =
+                    is_in_sources_dir && fname.to_lowercase().starts_with(&file_stem_lower);
 
                 // Match 3: the page's *sources block* mentions the
                 // filename. Covers the multi-line YAML list form
@@ -1281,7 +1328,10 @@ fn collect_related_pages(dir: &Path, source_name: &str, results: &mut Vec<String
                                 // indented; an un-indented line means
                                 // we've left the sources block for
                                 // another top-level field.
-                                if line.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
+                                if line.is_empty()
+                                    || line.starts_with(' ')
+                                    || line.starts_with('\t')
+                                {
                                     if line.contains(&file_name_lower) {
                                         found = true;
                                         break;
@@ -1346,8 +1396,7 @@ pub async fn read_file_as_base64(path: String) -> Result<FileBase64, String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("read_file_as_base64", || {
-            let bytes = fs::read(&path)
-                .map_err(|e| format!("Failed to read '{}': {}", path, e))?;
+            let bytes = fs::read(&path).map_err(|e| format!("Failed to read '{}': {}", path, e))?;
             let p = Path::new(&path);
             let ext = p
                 .extension()
@@ -1504,7 +1553,10 @@ mod tests {
             let path = tmp_pdf_with_bytes(bytes);
             let result = read_file(path.clone()).await;
             let _ = fs::remove_file(&path);
-            eprintln!("[{name}] => {:?}", result.as_ref().map(|s| &s[..s.len().min(80)]));
+            eprintln!(
+                "[{name}] => {:?}",
+                result.as_ref().map(|s| &s[..s.len().min(80)])
+            );
         }
     }
 
@@ -1544,7 +1596,8 @@ mod tests {
                     let p = entry.path();
                     if p.is_dir() {
                         walk(&p, out);
-                    } else if p.extension()
+                    } else if p
+                        .extension()
                         .and_then(|e| e.to_str())
                         .map(|e| e.eq_ignore_ascii_case("pdf"))
                         .unwrap_or(false)
@@ -1557,7 +1610,11 @@ mod tests {
         walk(root, &mut pdfs);
         pdfs.sort();
 
-        eprintln!("\n[pdf_probe] found {} PDFs under {}\n", pdfs.len(), root.display());
+        eprintln!(
+            "\n[pdf_probe] found {} PDFs under {}\n",
+            pdfs.len(),
+            root.display()
+        );
 
         let mut ok = 0usize;
         let mut err = 0usize;
@@ -1572,11 +1629,23 @@ mod tests {
             match result {
                 Ok(Ok(text)) => {
                     ok += 1;
-                    eprintln!("[{:>3}/{}] OK     ({:>7} chars)  {}", idx + 1, pdfs.len(), text.len(), display);
+                    eprintln!(
+                        "[{:>3}/{}] OK     ({:>7} chars)  {}",
+                        idx + 1,
+                        pdfs.len(),
+                        text.len(),
+                        display
+                    );
                 }
                 Ok(Err(e)) => {
                     err += 1;
-                    eprintln!("[{:>3}/{}] ERR    {}  →  {}", idx + 1, pdfs.len(), display, e);
+                    eprintln!(
+                        "[{:>3}/{}] ERR    {}  →  {}",
+                        idx + 1,
+                        pdfs.len(),
+                        display,
+                        e
+                    );
                 }
                 Err(payload) => {
                     panicked += 1;
@@ -1587,12 +1656,24 @@ mod tests {
                     } else {
                         "(non-string panic)".to_string()
                     };
-                    eprintln!("[{:>3}/{}] PANIC  {}  →  {}", idx + 1, pdfs.len(), display, msg);
+                    eprintln!(
+                        "[{:>3}/{}] PANIC  {}  →  {}",
+                        idx + 1,
+                        pdfs.len(),
+                        display,
+                        msg
+                    );
                 }
             }
         }
 
-        eprintln!("\n[pdf_probe] summary: {} OK / {} ERR / {} PANIC (total {})", ok, err, panicked, pdfs.len());
+        eprintln!(
+            "\n[pdf_probe] summary: {} OK / {} ERR / {} PANIC (total {})",
+            ok,
+            err,
+            panicked,
+            pdfs.len()
+        );
     }
 
     // ── collect_related_pages: regression coverage for the three match ─────
@@ -1622,7 +1703,9 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         for (rel, body) in files {
             let p = dir.join(rel);
-            if let Some(parent) = p.parent() { fs::create_dir_all(parent).unwrap(); }
+            if let Some(parent) = p.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
             fs::write(&p, body).unwrap();
         }
         dir
@@ -1679,10 +1762,7 @@ mod tests {
         // deleted source's stem counts as the source-summary page —
         // kept linked even if its sources field happens to be missing.
         let wiki = make_wiki(&[
-            (
-                "sources/test.md",
-                "---\ntitle: Test Summary\n---\nbody\n",
-            ),
+            ("sources/test.md", "---\ntitle: Test Summary\n---\nbody\n"),
             (
                 "concepts/unrelated.md",
                 "---\ntitle: Unrelated\nsources: [\"other.md\"]\n---\nbody\n",
@@ -1873,7 +1953,11 @@ mod tests {
         assert_eq!(copied.len(), 2, "expected two files, got: {:?}", copied);
         // Deep file made it across with full nesting preserved.
         let leaf_dest = dest.join("a/b/c/d/e/leaf.txt");
-        assert!(leaf_dest.exists(), "deep leaf.txt missing at {:?}", leaf_dest);
+        assert!(
+            leaf_dest.exists(),
+            "deep leaf.txt missing at {:?}",
+            leaf_dest
+        );
         assert_eq!(std::fs::read(&leaf_dest).unwrap(), b"deep content");
         // Top-level file too.
         assert!(dest.join("top.md").exists());
@@ -1942,7 +2026,13 @@ mod tests {
         // forward-slashed and end with the expected filename).
         let names: Vec<String> = copied
             .iter()
-            .map(|p| Path::new(p).file_name().unwrap().to_string_lossy().to_string())
+            .map(|p| {
+                Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
             .collect();
         assert!(names.contains(&"report.pdf".to_string()));
         assert!(names.contains(&"notes.md".to_string()));

@@ -49,6 +49,7 @@
 - **Deep Research**: Tavily、SerpApi、SearXNG を使った複数クエリ検索と、結果の自動 Wiki 化。
 - **非同期 Review System**: LLM が判断待ち項目を作成し、ユーザーが後から確認できます。
 - **Chrome Web Clipper**: Web ページをワンクリップで取り込み、知識ベースへ自動 ingest します。
+- **ローカル HTTP API + AI Agent Skill**: `127.0.0.1:19828` の JSON API（Token 認証）で hybrid 検索 / ファイル取得 / グラフ参照 / 再スキャンを提供。専用の [agent skill](https://github.com/nashsu/llm_wiki_skill) はワンコマンドで Claude Code / Codex に追加できます（`npx skills add …`）。
 
 ## これは何ですか？
 
@@ -185,6 +186,32 @@ npm run tauri build    # Production build
 6. **Chat** で知識ベースに質問します。
 7. **Knowledge Graph** で関連を探索します。
 8. **Review** と **Lint** で Wiki の品質を保ちます。
+
+## ローカル HTTP API + AI Agent Skill
+
+LLM Wiki は `http://127.0.0.1:19828` でローカル HTTP API を提供します（Token 認証、`127.0.0.1` のみ）。**Claude Code**、**Codex** などの AI Agent や任意の HTTP クライアントから Wiki にアクセスできます：
+
+- `GET /api/v1/health` — サーバー状態（認証不要）
+- `GET /api/v1/projects` — プロジェクト一覧
+- `GET /api/v1/projects/{id}/files` / `files/content` — ファイル / 本文取得
+- `POST /api/v1/projects/{id}/search` — **Hybrid 検索**（キーワード + ベクトル）。レスポンスに `mode` / `tokenHits` / `vectorHits` / `vectorScore` を含む
+- `GET /api/v1/projects/{id}/graph` — Wikilinks グラフ
+- `POST /api/v1/projects/{id}/sources/rescan` — バックエンド再スキャン
+
+**Settings → API Server** で API を有効化し Token を発行してください。
+
+### AI Agent をワンコマンドで接続
+
+LLM Wiki 用の **agent skill** は別リポジトリで管理しています。Claude Code / Codex などへインストール：
+
+```bash
+npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm_wiki_skill
+```
+
+インストール後、「LLM Wiki に X について書いてある？」「知識ベースで Y を検索」「Wiki グラフで Z の近傍を表示」「ソースを再スキャン」といった依頼に対し、Agent がローカル App を直接呼び出して答えます。デフォルトは読み取り専用で、Wiki ページのパスを引用するため App 内で照合できます。
+
+- **Skill リポジトリ**：<https://github.com/nashsu/llm_wiki_skill>
+- **トリガー制約**：「メモを検索」「Obsidian / Notion / Logseq を見て」といった汎用的な依頼には**意図的に反応しません**。LLM Wiki / `my wiki` / `知識ベース` を明示した場合のみ起動します。
 
 ## Project Structure
 

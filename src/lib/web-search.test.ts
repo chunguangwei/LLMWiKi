@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { webSearch } from "./web-search"
+import { hasConfiguredSearchProvider, webSearch } from "./web-search"
 
 const fetchMock = vi.fn<typeof fetch>()
 
@@ -158,5 +158,21 @@ describe("webSearch", () => {
       .rejects.toThrow("Tavily or SerpApi API key")
     await expect(webSearch("x", { provider: "searxng", apiKey: "" }, 5))
       .rejects.toThrow("SearXNG instance URL")
+  })
+
+  it("treats SearXNG instance URLs as configured without an API key", () => {
+    expect(hasConfiguredSearchProvider({
+      provider: "searxng",
+      apiKey: "",
+      providerConfigs: {
+        searxng: {
+          searXngUrl: "http://127.0.0.1:8080",
+          searXngCategories: ["general", "science", "it"],
+        },
+      },
+      searXngUrl: "http://127.0.0.1:8080",
+      searXngCategories: ["general", "science", "it"],
+      serpApiEngine: "google",
+    })).toBe(true)
   })
 })

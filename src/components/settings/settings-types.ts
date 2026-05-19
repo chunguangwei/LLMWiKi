@@ -62,6 +62,11 @@ export interface SettingsDraft {
 
   // Source folder auto watch
   sourceWatchConfig: SourceWatchConfig
+
+  // Local HTTP API server
+  apiEnabled: boolean
+  apiAllowUnauthenticated: boolean
+  apiToken: string
 }
 
 export type DraftSetter = <K extends keyof SettingsDraft>(

@@ -48,6 +48,7 @@
 - **深度研究** — LLM 智能生成搜索主题，通过 Tavily、SerpApi 或 SearXNG 进行多查询网络搜索，研究结果自动摄入 Wiki
 - **异步审核系统** — LLM 在摄入时标记需人工判断的项，预定义操作，预生成搜索查询
 - **Chrome 网页剪藏** — 一键捕获网页内容，自动摄入知识库
+- **本地 HTTP API + AI Agent Skill** — 内置 `127.0.0.1:19828` JSON API（Token 鉴权），支持 Hybrid 检索、文件读取、知识图谱遍历、源资料重新扫描；配套 [agent skill](https://github.com/nashsu/llm_wiki_skill) 一行命令接入 Claude Code / Codex（`npx skills add …`）
 
 ## 这是什么？
 
@@ -460,6 +461,32 @@ npm run tauri build    # 生产构建
 7. 浏览 **知识图谱** 查看关联
 8. 查看 **审核** 处理需要你关注的项目
 9. 定期运行 **Lint** 维护 Wiki 健康度
+
+## 本地 HTTP API + AI Agent Skill
+
+LLM Wiki 内置一个本地 HTTP API（监听 `http://127.0.0.1:19828`，Token 鉴权，仅本机可达），任何外部工具——包括 **Claude Code**、**Codex** 这类 AI Agent，或者任意能发 HTTP 请求的脚本——都可以直接查询你的知识库：
+
+- `GET /api/v1/health` —— 服务状态（无需鉴权）
+- `GET /api/v1/projects` —— 项目列表
+- `GET /api/v1/projects/{id}/files` / `files/content` —— 读取文件树与内容
+- `POST /api/v1/projects/{id}/search` —— **Hybrid 混合检索**（关键词 + 向量），返回 `mode`、`tokenHits`、`vectorHits`，每条结果带 `vectorScore`
+- `GET /api/v1/projects/{id}/graph` —— Wikilinks 知识图谱
+- `POST /api/v1/projects/{id}/sources/rescan` —— 触发后端重新扫描
+
+在 **设置 → API 服务** 中开启 API 并生成 Token。
+
+### 一条命令把 AI Agent 接进你的知识库
+
+LLM Wiki 配套的 **agent skill** 单独维护在另一个仓库。把它装进 Claude Code / Codex / 任意兼容 skills 的 runtime：
+
+```bash
+npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm_wiki_skill
+```
+
+安装完成后，Agent 就能响应 "我的 LLM Wiki 里关于 X 是怎么说的"、"在我的知识库里搜 Y"、"展示我 wiki 图谱里 Z 的邻居"、"重新索引我的资料源" 等请求——直接调用本机运行的 App，默认只读，引用 wiki 页面路径方便你在 App 内核对。
+
+- **Skill 仓库**：<https://github.com/nashsu/llm_wiki_skill>
+- **触发约束**：刻意**不会**响应"搜我的笔记"/"看我的 Obsidian / Notion / Logseq"这类泛指的请求——只有你明确说 LLM Wiki / `我的 wiki` / `我的知识库` 时才会被调用。
 
 ## 项目结构
 

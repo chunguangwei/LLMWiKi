@@ -15,6 +15,7 @@ import {
   Package,
   RefreshCw,
   BookOpen,
+  HardDrive,
   Server,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -36,6 +37,7 @@ import { InterfaceSection } from "./sections/interface-section"
 import { NetworkSection } from "./sections/network-section"
 import { ScheduledImportSection } from "./sections/scheduled-import-section"
 import { SourceWatchSection } from "./sections/source-watch-section"
+import { ApiServerSection } from "./sections/api-server-section"
 import { ChangelogSection } from "./sections/changelog-section"
 import { MaintenanceSection } from "./sections/maintenance-section"
 import { AboutSection } from "./sections/about-section"
@@ -54,6 +56,7 @@ type CategoryId =
   | "scheduled-import"
   | "scheduled-refresh"
   | "import-export"
+  | "api-server"
   | "output"
   | "interface"
   | "storage-location"
@@ -81,9 +84,10 @@ const CATEGORIES: Category[] = [
   { id: "scheduled-import", labelKey: "settings.categories.scheduledImport", icon: Clock },
   { id: "scheduled-refresh", labelKey: "settings.categories.scheduledRefresh", icon: RefreshCw },
   { id: "import-export", labelKey: "settings.categories.importExport", icon: Package },
+  { id: "api-server", labelKey: "settings.categories.apiServer", icon: Server },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
-  { id: "storage-location", labelKey: "settings.categories.storageLocation", icon: Server },
+  { id: "storage-location", labelKey: "settings.categories.storageLocation", icon: HardDrive },
   { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
   { id: "user-manual", labelKey: "settings.categories.userManual", icon: BookOpen },
   { id: "changelog", labelKey: "settings.categories.changelog", icon: History },
@@ -98,6 +102,7 @@ function initialDraft(
   proxy: ReturnType<typeof useWikiStore.getState>["proxyConfig"],
   scheduledImport: ReturnType<typeof useWikiStore.getState>["scheduledImportConfig"],
   sourceWatch: ReturnType<typeof useWikiStore.getState>["sourceWatchConfig"],
+  apiConfig: ReturnType<typeof useWikiStore.getState>["apiConfig"],
   maxHistoryMessages: number,
   uiLanguage: string,
   projectPath?: string,
@@ -147,6 +152,9 @@ function initialDraft(
     scheduledImportPath: displayPath,
     scheduledImportInterval: scheduledImport.interval,
     sourceWatchConfig: normalizeSourceWatchConfig(sourceWatch),
+    apiEnabled: apiConfig.enabled,
+    apiAllowUnauthenticated: apiConfig.allowUnauthenticated,
+    apiToken: apiConfig.token,
     uiLanguage,
   }
 }
@@ -168,6 +176,8 @@ export function SettingsView() {
   const setScheduledImportConfig = useWikiStore((s) => s.setScheduledImportConfig)
   const sourceWatchConfig = useWikiStore((s) => s.sourceWatchConfig)
   const setSourceWatchConfig = useWikiStore((s) => s.setSourceWatchConfig)
+  const apiConfig = useWikiStore((s) => s.apiConfig)
+  const setApiConfig = useWikiStore((s) => s.setApiConfig)
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
   const setMaxHistoryMessages = useChatStore((s) => s.setMaxHistoryMessages)
   // Drives the red dot next to the "About" row in the settings
@@ -191,6 +201,7 @@ export function SettingsView() {
       proxyConfig,
       scheduledImportConfig,
       sourceWatchConfig,
+      apiConfig,
       maxHistoryMessages,
       i18n.language,
       project?.path,
@@ -233,6 +244,7 @@ export function SettingsView() {
         proxyConfig,
         scheduledImportConfig,
         sourceWatchConfig,
+        apiConfig,
         maxHistoryMessages,
         prev.uiLanguage,
         project?.path,
@@ -246,6 +258,7 @@ export function SettingsView() {
     proxyConfig,
     scheduledImportConfig,
     sourceWatchConfig,
+    apiConfig,
     maxHistoryMessages,
     project,
   ])
@@ -263,6 +276,7 @@ export function SettingsView() {
       saveProxyConfig,
       saveScheduledImportConfig,
       saveSourceWatchConfig,
+      saveApiConfig,
     } = await import("@/lib/project-store")
 
     const newLlm = {
@@ -364,6 +378,23 @@ export function SettingsView() {
 
     setMaxHistoryMessages(draft.maxHistoryMessages)
 
+    // ── API server: persist + push to store. The Rust side reads
+    // `apiConfig.{enabled,token}` from this same `app-state.json` on
+    // every request via a 5s cache, so saved changes propagate
+    // within that window without any IPC round-trip.
+    const newApiConfig = {
+      enabled: draft.apiEnabled,
+      allowUnauthenticated: draft.apiAllowUnauthenticated,
+      token: draft.apiToken.trim(),
+    }
+    setApiConfig(newApiConfig)
+    await saveApiConfig(newApiConfig)
+    try {
+      await invoke<string>("api_server_reload_config")
+    } catch (err) {
+      console.warn("[api] failed to reload API server config cache:", err)
+    }
+
     if (draft.uiLanguage !== i18n.language) {
       await i18n.changeLanguage(draft.uiLanguage)
       await saveLanguage(draft.uiLanguage)
@@ -380,6 +411,7 @@ export function SettingsView() {
     setProxyConfig,
     setScheduledImportConfig,
     setSourceWatchConfig,
+    setApiConfig,
     scheduledImportConfig,
     setMaxHistoryMessages,
     outputLanguage,
@@ -408,6 +440,8 @@ export function SettingsView() {
         return <ScheduledRefreshSection />
       case "import-export":
         return <ImportExportSection />
+      case "api-server":
+        return <ApiServerSection draft={draft} setDraft={setDraft} />
       case "output":
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "interface":

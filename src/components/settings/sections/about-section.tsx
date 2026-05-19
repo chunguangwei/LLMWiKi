@@ -2,15 +2,24 @@ import { useEffect, useState, useCallback } from "react"
 import { Download, RefreshCw, CheckCircle2, Sparkles } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { openUrl } from "@tauri-apps/plugin-opener"
-import { clipServerStatus } from "@/commands/fs"
+import { apiServerStatus, clipServerStatus } from "@/commands/fs"
 import { Button } from "@/components/ui/button"
+import { API_SERVER_HEALTH_URL, API_SERVER_PORT } from "@/lib/api-server-constants"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { checkForUpdates, toLatestReleaseUrl } from "@/lib/update-check"
 import { saveUpdateCheckState } from "@/lib/project-store"
 
+interface ApiHealth {
+  enabled?: boolean
+  authConfigured?: boolean
+  allowUnauthenticated?: boolean
+}
+
 export function AboutSection() {
   const { t } = useTranslation()
   const [clipStatus, setClipStatus] = useState<string>("...")
+  const [apiStatus, setApiStatus] = useState<string>("...")
+  const [apiHealth, setApiHealth] = useState<ApiHealth | null>(null)
   const updateStore = useUpdateStore()
 
   useEffect(() => {
@@ -21,6 +30,21 @@ export function AboutSection() {
       })
       .catch(() => {
         if (alive) setClipStatus("unknown")
+      })
+    apiServerStatus()
+      .then((s) => {
+        if (alive) setApiStatus(s)
+      })
+      .catch(() => {
+        if (alive) setApiStatus("unknown")
+      })
+    fetch(API_SERVER_HEALTH_URL)
+      .then((res) => res.json() as Promise<ApiHealth>)
+      .then((value) => {
+        if (alive) setApiHealth(value)
+      })
+      .catch(() => {
+        if (alive) setApiHealth(null)
       })
     return () => {
       alive = false
@@ -67,9 +91,22 @@ export function AboutSection() {
     })
   }, [])
 
+  const apiStatusDisplay = (() => {
+    if (apiStatus === "running" && apiHealth?.enabled === false) {
+      return t("settings.sections.about.apiDisabled")
+    }
+    if (apiStatus === "running" && apiHealth?.allowUnauthenticated) {
+      return t("settings.sections.about.apiOpen")
+    }
+    if (apiStatus === "running" && apiHealth?.authConfigured === false) {
+      return t("settings.sections.about.apiNoToken")
+    }
+    return apiStatus
+  })()
   const rows: Array<{ label: string; value: string; mono?: boolean }> = [
     { label: t("settings.sections.about.version"), value: `v${__APP_VERSION__}`, mono: true },
     { label: t("settings.sections.about.clipServer"), value: `${clipStatus}  @  127.0.0.1:19827`, mono: true },
+    { label: t("settings.sections.about.apiServer"), value: `${apiStatusDisplay}  @  127.0.0.1:${API_SERVER_PORT}`, mono: true },
   ]
 
   // About panel = user-initiated navigation. They came here on
