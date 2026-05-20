@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.14",
+    date: "2026-05-20",
+    highlights: {
+      en: [
+        "macOS builds are now ad-hoc signed, so the downloaded app runs reliably on Apple Silicon after clearing quarantine (first launch may still need `xattr -dr com.apple.quarantine`).",
+      ],
+      zh: [
+        "macOS 安装包改为 ad-hoc 签名，从 GitHub 下载的版本在 Apple 芯片上清一次隔离后可稳定运行（首次启动可能仍需执行一次 `xattr -dr com.apple.quarantine`）。",
+      ],
+    },
+  },
+  {
     version: "0.4.13",
     date: "2026-05-20",
     highlights: {
