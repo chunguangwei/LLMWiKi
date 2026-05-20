@@ -101,12 +101,17 @@ jobs:
           # step fails — so keep the secrets in sync with the keypair.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # NOTE: Apple Developer ID code-signing env vars are intentionally
+          # NOT set — we have no paid Apple cert. Passing them as empty
+          # strings (unset secrets resolve to "") makes the macOS bundler
+          # attempt codesign with an empty signing identity, which fails with
+          # "security import: failed to import keychain certificate". The app
+          # therefore ships unsigned on macOS (users clear quarantine with
+          # `xattr -dr com.apple.quarantine`). The updater artifacts are still
+          # signed via TAURI_SIGNING_PRIVATE_KEY above — that's a separate
+          # minisign key, unrelated to Apple notarization. If you later buy an
+          # Apple Developer ID, re-add APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY
+          # / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID here.
         with:
           # Tag-triggered runs publish a real GitHub Release.
           # Manual (workflow_dispatch) runs leave tagName/releaseName
