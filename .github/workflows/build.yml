@@ -89,6 +89,18 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing. With bundle.createUpdaterArtifacts = true in
+          # tauri.conf.json, tauri-action signs each bundle with this
+          # minisign key and auto-generates + uploads `latest.json` to the
+          # GitHub Release. The app's updater (pubkey in tauri.conf.json)
+          # then verifies that signature before installing. Set these as
+          # repo secrets:
+          #   TAURI_SIGNING_PRIVATE_KEY          = contents of ~/.tauri/llmwiki_updater.key
+          #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD = the password chosen at keygen
+          # Without them the updater artifacts are unsigned and the build
+          # step fails — so keep the secrets in sync with the keypair.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}

@@ -48,6 +48,12 @@ fn set_proxy_env(config: proxy::ProxyConfig) -> String {
     summary
 }
 
+// IDENTIFIER LOCK: the bundle identifier in tauri.conf.json
+// (com.llmwiki.app) is load-bearing — it scopes the OS app-data dir
+// (macOS: ~/Library/Application Support/<identifier>/app-state.json)
+// where all config + API keys live, AND the keyring service name in
+// commands/config_backup.rs. Changing it orphans every user's config
+// and decryption key. Do NOT change it. Locked since 0.4.10.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     clip_server::start_clip_server();
@@ -56,15 +62,39 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        // In-place auto-update + relaunch. The updater fetches the
+        // signed latest.json from our GitHub releases (endpoint +
+        // pubkey in tauri.conf.json) and replaces the app in place,
+        // so the OS app-data dir (config + keys) is never touched.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // Rust-backed fetch so third-party LLM APIs that reject
         // browser-origin headers via CORS preflight (MiniMax, Volcengine
         // Ark's api/coding/v3, etc.) still work. Requests leave the app
         // from Rust, never the webview.
         .plugin(tauri_plugin_http::init())
         .setup(|app| {
+            use tauri::Manager;
+            // Config safety net — runs BEFORE anything reads
+            // app-state.json (proxy config below, and the frontend's
+            // first store load). On a fresh/empty install, restore the
+            // encrypted backup from ~/Documents/LLMWiki/; then refresh
+            // the backup to capture the current state. Best-effort: a
+            // keychain prompt decline or headless env must never block
+            // startup.
+            {
+                let h = app.handle().clone();
+                match commands::config_backup::restore_if_empty(&h) {
+                    Ok(true) => eprintln!("[config-backup] restored config from encrypted backup"),
+                    Ok(false) => {}
+                    Err(e) => eprintln!("[config-backup] restore skipped: {e}"),
+                }
+                if let Err(e) = commands::config_backup::auto_backup(&h) {
+                    eprintln!("[config-backup] backup skipped: {e}");
+                }
+            }
             // Let the PDF extractor find the bundled pdfium dynamic
             // library via Tauri's platform-correct resource path.
-            use tauri::Manager;
             if let Ok(dir) = app.path().resource_dir() {
                 commands::fs::set_resource_dir_hint(dir);
             }
@@ -149,6 +179,10 @@ pub fn run() {
             commands::file_sync::retry_file_change_task,
             commands::file_sync::ignore_file_change_task,
             commands::storage::detect_storage,
+            commands::config_crypto::export_config,
+            commands::config_crypto::import_config,
+            commands::config_backup::config_backup_status,
+            commands::config_backup::config_backup_now,
             set_proxy_env,
         ])
         .on_window_event(|window, event| {

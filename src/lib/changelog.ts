@@ -26,6 +26,28 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.13",
+    date: "2026-05-20",
+    highlights: {
+      en: [
+        "New Comprehensive project template with 34 categories (travel, manuals, books, recipes, contracts, code, and more), Chinese-first directory names — now the default for new projects.",
+        "Smart ingest splitting: everyday documents (travel plans, manuals, books…) stay as one page instead of being fragmented; papers still decompose into concept pages.",
+        "Sidebar and knowledge graph now group and colour all page types correctly — previously new types were lumped under 'Other'.",
+        "One-click Schema Upgrade in Settings to migrate existing projects to the comprehensive schema.",
+        "In-place auto-update from our own GitHub releases — updating no longer requires a reinstall, so your settings and API keys are preserved.",
+        "Encrypted config backup: passphrase-protected export/import for moving settings between machines, plus automatic encrypted backup (key in the OS keychain) that auto-restores after a reinstall.",
+      ],
+      zh: [
+        "新增「综合」项目模板，含 34 个分类（旅游、手册、书籍、食谱、合同、代码 等），中文优先目录名——新建项目默认使用。",
+        "智能拆分摄入：旅游方案、手册、书籍等整篇保留为一页，不再被拆碎；论文仍会拆成概念页。",
+        "侧栏和知识图谱现在能正确分组 / 着色所有页面类型——之前新类型都被归到「Other」。",
+        "设置里新增「Schema 升级」一键按钮，把存量项目迁移到综合 schema。",
+        "从你自己的 GitHub 就地自动更新——更新不再需要卸载重装，配置和 API Key 全部保留。",
+        "加密配置备份：口令加密的导出 / 导入用于换机器迁移；外加每次启动的自动加密备份（密钥存系统钥匙串），重装后自动恢复。",
+      ],
+    },
+  },
+  {
     version: "0.4.12",
     date: "2026-05-19",
     highlights: {

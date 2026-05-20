@@ -1,6 +1,6 @@
 [package]
 name = "llm-wiki"
-version = "0.4.12"
+version = "0.4.13"
 description = "LLM Wiki - A personal knowledge base for LLM concepts"
 authors = []
 edition = "2021"
@@ -28,6 +28,23 @@ tauri-plugin-dialog = "2.7.1"
 pdfium-render = "0.9"
 tauri-plugin-store = "2.4.2"
 tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
+# In-place auto-update from our own GitHub releases (signed with the
+# updater minisign keypair; pubkey lives in tauri.conf.json). `process`
+# provides relaunch() after a successful install.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+# Encrypted config backup / portable export. argon2id derives a key
+# from the user's passphrase (export/import); aes-gcm is the AEAD
+# cipher; keyring holds the random auto-backup data key in the OS
+# keychain (survives an app-data wipe so a same-machine reinstall can
+# auto-restore). zeroize wipes key material from memory after use.
+# secret-service uses pure-Rust zbus + crypto-rust so Linux CI compiles
+# without libdbus / openssl system headers.
+argon2 = "0.5"
+aes-gcm = "0.10"
+rand = "0.8"
+zeroize = "1"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tiny_http = "0.12"
 zip = "2"

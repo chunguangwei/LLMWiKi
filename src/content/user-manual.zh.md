@@ -1,6 +1,6 @@
 # LLMWiki 用户使用手册
 
-适用版本：0.4.12（LLMWiKi fork）
+适用版本：0.4.13（LLMWiKi fork）
 
 本手册面向**正在使用 LLMWiki 的人**。需要安装步骤的从源码构建说明请看 [`getting-started.md`](getting-started.md)。
 
@@ -149,7 +149,7 @@ LLM 摄入时遇到模糊判断会标记到 **审核** 面板：
 
 ---
 
-## 5. 四个新功能（LLMWiKi fork 独有）
+## 5. 五个新功能（LLMWiKi fork 独有）
 
 ### 5.1 `.llmwiki` 一键导入 / 导出
 
@@ -256,6 +256,30 @@ git config --global core.quotepath false  # 让 Windows git status 正常显示�
 
 详见 [`features.md §5`](features.md#5-智能拆分--splitting-rules综合-schema--单页类型)。
 
+### 5.5 自动更新（就地）+ 加密配置备份
+
+**入口：顶部横幅 / 设置 → 关于（更新）；设置 → 配置备份（备份）**
+
+更新源已指向你自己的 GitHub（`chunguangwei/LLMWiKi`），并升级为**真正的就地更新**——不再卸载重装，配置和 Key 天然保留。
+
+**怎么更新**：
+- app 启动后台检查；有新版时顶部出现横幅，或在 设置 → 关于 看到「立即更新」。
+- 点「立即更新」→ 自动下载 + 验签 + 就地替换 → 点「重启以应用」。**配置、API Key 全程不动。**
+- 「手动下载」按钮作兜底。
+
+**怎么发布新版本**（你自己改完代码后，让所有设备能更新）：
+1. 改 `app/package.json` 和 `app/src-tauri/tauri.conf.json` 的 `version`（两处一致）。
+2. `git push origin main`，然后打 tag：`git tag v0.4.13 && git push origin v0.4.13`。
+3. GitHub Actions 自动构建 + 签名 + 出 release。各设备下次启动即可更新。
+> 详细发版步骤 + 必备 GitHub Secret 见 [`features.md §6.3`](features.md#63-发版流程你怎么发布新版本让所有端更新)。
+> ⚠️ 务必备份 `~/.tauri/llmwiki_updater.key` 和 `.password`——私钥丢了就再也签不了新版本。
+
+**配置备份（防丢 Key）**：设置 → 配置备份
+- **导出 / 导入**（换机器用）：设一个口令 → 导出成加密文件 `.llmwiki-config`；新机器输同一口令导入。用 Argon2id + AES-256-GCM 加密，**口令是唯一解钥**。
+- **自动备份**（同机重装用）：每次启动自动加密备份到 `~/Documents/LLMWiki/`，密钥存系统钥匙串；重装后自动恢复，无需操作。
+
+详见 [`features.md §6`](features.md#6-自己-github-自动更新就地更新--加密配置备份)。
+
 ---
 
 ## 6. 自定义分类 / 规则 / 格式（用户规则）
@@ -320,8 +344,11 @@ LLMWiki 默认带 **34 种**页面类型（综合模板，覆盖日常生活 + �
 | Windows `git status` 显示 `\346\227\205...` 等转义 | 中文目录名被 git 转义，跑 `git config --global core.quotepath false` 一次即可 |
 | 定时刷新不触发 | 先在 设置 → 网页搜索 配 provider；检查 frontmatter `refresh-enabled: true` 拼写 |
 | 云盘出现 .json (Conflict) 文件 | 多人同时写了项目；约定单写主，或换 Git 模式 |
-| API Key 找不到 | 它存在 OS 应用数据目录，不在项目里：macOS `~/Library/Application Support/com.llm-wiki.app/` |
+| API Key 找不到 | 它存在 OS 应用数据目录，不在项目里：macOS `~/Library/Application Support/com.llmwiki.app/app-state.json` |
 | 想清空所有 LLM 缓存 | 删除项目根的 `.llm-wiki/` 子目录，应用会自动重建 |
+| 重装后配置 / Key 没了 | 正常会自动从加密备份恢复；若没恢复，确认 `~/Documents/LLMWiki/config-backup.enc` 在、系统钥匙串密钥在。换机器要用 设置 → 配置备份 的口令导出/导入 |
+| 「立即更新」失败 | dev 模式无更新产物（用手动下载）；或 release 缺 `latest.json`/签名；macOS 未签名被 Gatekeeper 拦时跑 `xattr -dr com.apple.quarantine` |
+| 别用深度卸载工具 | AppCleaner 等会删 `~/Library/Application Support/com.llmwiki.app/` 导致配置丢失。就地更新不需要卸载；真要卸载先在 设置 → 配置备份 导出一份 |
 
 ---
 

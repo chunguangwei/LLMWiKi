@@ -1,10 +1,11 @@
-import { useCallback } from "react"
-import { Sparkles, X, Download } from "lucide-react"
+import { useCallback, useState } from "react"
+import { Sparkles, X, Download, RefreshCw } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import { useUpdateStore, shouldShowUpdateBanner } from "@/stores/update-store"
 import { saveUpdateCheckState } from "@/lib/project-store"
 import { toLatestReleaseUrl } from "@/lib/update-check"
+import { runInPlaceUpdate, relaunchApp } from "@/lib/updater"
 
 /**
  * App-wide update-available banner.
@@ -31,21 +32,46 @@ export function UpdateBanner() {
   const { t } = useTranslation()
   const visible = useUpdateStore((s) => shouldShowUpdateBanner(s))
   const result = useUpdateStore((s) => s.lastResult)
+  // Compact in-place-update state for this single-line banner.
+  const [phase, setPhase] = useState<"idle" | "working" | "ready">("idle")
 
+  // Manual-download fallback: open /releases/latest in the browser.
+  // /latest always follows GitHub's redirect to the newest release.
   const handleOpen = useCallback(async () => {
     if (!result || result.kind !== "available") return
-    // Send the user to `/releases/latest`, NOT the tag-specific
-    // page from `release.html_url`. /latest always follows GitHub's
-    // redirect to whatever is currently the most recent release —
-    // robust to (a) a newer release shipping between notification
-    // and click, and (b) the bare `/releases` listing's default
-    // sort not putting newest at the top.
     try {
       await openUrl(toLatestReleaseUrl(result.release.html_url))
     } catch (err) {
       console.error("[update-banner] openUrl failed:", err)
     }
   }, [result])
+
+  // Primary CTA: in-place update. On any failure (dev build with no
+  // updater artifacts, signature/Gatekeeper issue) fall back to opening
+  // the manual download page so the button is never a dead end.
+  const handleUpdateNow = useCallback(async () => {
+    setPhase("working")
+    try {
+      const res = await runInPlaceUpdate()
+      if (res.updated) {
+        setPhase("ready")
+      } else {
+        setPhase("idle")
+      }
+    } catch (err) {
+      console.error("[update-banner] in-place update failed, opening download page:", err)
+      setPhase("idle")
+      await handleOpen()
+    }
+  }, [handleOpen])
+
+  const handleRestart = useCallback(async () => {
+    try {
+      await relaunchApp()
+    } catch (err) {
+      console.error("[update-banner] relaunch failed:", err)
+    }
+  }, [])
 
   const handleDismiss = useCallback(async () => {
     if (!result || result.kind !== "available") return
@@ -89,14 +115,28 @@ export function UpdateBanner() {
           })}
         </span>
       </div>
-      <button
-        type="button"
-        onClick={handleOpen}
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
-      >
-        <Download className="h-3.5 w-3.5" />
-        {t("updateBanner.openDownload", { defaultValue: "Open download page" })}
-      </button>
+      {phase === "ready" ? (
+        <button
+          type="button"
+          onClick={handleRestart}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          {t("updateBanner.restart", { defaultValue: "Restart to apply" })}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={handleUpdateNow}
+          disabled={phase === "working"}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-70"
+        >
+          <Download className={`h-3.5 w-3.5 ${phase === "working" ? "animate-pulse" : ""}`} />
+          {phase === "working"
+            ? t("updateBanner.working", { defaultValue: "Updating…" })
+            : t("updateBanner.updateNow", { defaultValue: "Update now" })}
+        </button>
+      )}
       <button
         type="button"
         onClick={handleDismiss}

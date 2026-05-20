@@ -8,6 +8,8 @@ import { API_SERVER_HEALTH_URL, API_SERVER_PORT } from "@/lib/api-server-constan
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { checkForUpdates, toLatestReleaseUrl } from "@/lib/update-check"
 import { saveUpdateCheckState } from "@/lib/project-store"
+import { APP_REPO, APP_REPO_URL } from "@/lib/app-repo"
+import { runInPlaceUpdate, relaunchApp, type UpdaterProgress } from "@/lib/updater"
 
 interface ApiHealth {
   enabled?: boolean
@@ -55,7 +57,7 @@ export function AboutSection() {
     useUpdateStore.getState().setChecking(true)
     const result = await checkForUpdates({
       currentVersion: __APP_VERSION__,
-      repo: "nashsu/llm_wiki",
+      repo: APP_REPO,
     })
     const now = Date.now()
     useUpdateStore.getState().setResult(result, now)
@@ -219,15 +221,15 @@ export function AboutSection() {
            */}
           <a
             className="cursor-pointer underline underline-offset-2 hover:text-primary"
-            href="https://github.com/nashsu/llm_wiki"
+            href={APP_REPO_URL}
             onClick={(e) => {
               e.preventDefault()
-              void openUrl("https://github.com/nashsu/llm_wiki").catch((err) => {
+              void openUrl(APP_REPO_URL).catch((err) => {
                 console.error("[about] openUrl failed:", err)
               })
             }}
           >
-            github.com/nashsu/llm_wiki
+            {APP_REPO_URL.replace(/^https:\/\//, "")}
           </a>
         </p>
       </div>
@@ -251,6 +253,59 @@ function UpdateAvailableBanner({
   onDismiss,
 }: UpdateAvailableBannerProps) {
   const { t } = useTranslation()
+  // In-place update state. `phase`:
+  //   idle      → show "Update now"
+  //   working   → downloading/installing, show progress
+  //   ready     → install staged, show "Restart now"
+  //   error     → show error + fall back to manual download link
+  const [phase, setPhase] = useState<"idle" | "working" | "ready" | "error">("idle")
+  const [progress, setProgress] = useState<UpdaterProgress | null>(null)
+  const [errorMsg, setErrorMsg] = useState<string>("")
+
+  const handleUpdateNow = async () => {
+    setPhase("working")
+    setErrorMsg("")
+    try {
+      const res = await runInPlaceUpdate((p) => setProgress(p))
+      if (res.updated) {
+        setPhase("ready")
+      } else {
+        // Updater says we're current even though the GitHub-API check
+        // flagged a new version — endpoint lag. Treat as done.
+        setPhase("idle")
+      }
+    } catch (err) {
+      console.error("[update] in-place update failed:", err)
+      setErrorMsg(String(err))
+      setPhase("error")
+    }
+  }
+
+  const handleRestart = async () => {
+    try {
+      await relaunchApp()
+    } catch (err) {
+      console.error("[update] relaunch failed:", err)
+      setErrorMsg(String(err))
+      setPhase("error")
+    }
+  }
+
+  const progressLabel = (() => {
+    if (!progress) return ""
+    if (progress.stage === "downloading") {
+      if (progress.total && progress.total > 0) {
+        const pct = Math.min(100, Math.round((progress.downloaded ?? 0) / progress.total * 100))
+        return t("settings.sections.about.updateDownloading", { pct, defaultValue: `Downloading… ${pct}%` })
+      }
+      const mb = ((progress.downloaded ?? 0) / 1_048_576).toFixed(1)
+      return t("settings.sections.about.updateDownloadingMb", { mb, defaultValue: `Downloading… ${mb} MB` })
+    }
+    if (progress.stage === "installing") return t("settings.sections.about.updateInstalling", { defaultValue: "Installing…" })
+    if (progress.stage === "checking") return t("settings.sections.about.checking")
+    return ""
+  })()
+
   // Use `/releases/latest` (canonical GitHub redirect to the newest
   // release) rather than the tag-specific URL from the release
   // payload. Same rationale as in the top banner — see
@@ -300,15 +355,48 @@ function UpdateAvailableBanner({
           {truncated && " …"}
         </pre>
       )}
-      <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" onClick={handleOpen} className="gap-1.5">
-          <Download className="h-3.5 w-3.5" />
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {phase === "ready" ? (
+          <Button size="sm" onClick={handleRestart} className="gap-1.5">
+            <RefreshCw className="h-3.5 w-3.5" />
+            {t("settings.sections.about.updateRestart", { defaultValue: "Restart to apply" })}
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            onClick={handleUpdateNow}
+            disabled={phase === "working"}
+            className="gap-1.5"
+          >
+            <Download className={`h-3.5 w-3.5 ${phase === "working" ? "animate-pulse" : ""}`} />
+            {phase === "working"
+              ? (progressLabel || t("settings.sections.about.updateWorking", { defaultValue: "Updating…" }))
+              : t("settings.sections.about.updateNow", { defaultValue: "Update now" })}
+          </Button>
+        )}
+        {/* Manual download fallback — always available; the only path
+            that works in dev (no updater artifacts) or if the in-place
+            updater errors on an unsigned/Gatekeeper-blocked replace. */}
+        <Button size="sm" variant="outline" onClick={handleOpen} className="gap-1.5">
           {t("settings.sections.about.openDownload")}
         </Button>
-        <Button size="sm" variant="ghost" onClick={onDismiss}>
-          {t("settings.sections.about.later")}
-        </Button>
+        {phase !== "ready" && (
+          <Button size="sm" variant="ghost" onClick={onDismiss}>
+            {t("settings.sections.about.later")}
+          </Button>
+        )}
       </div>
+      {phase === "ready" && (
+        <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
+          {t("settings.sections.about.updateStaged", { defaultValue: "Update downloaded. Restart to finish — your settings are preserved." })}
+        </p>
+      )}
+      {phase === "error" && (
+        <p className="mt-2 text-xs text-destructive break-words">
+          {t("settings.sections.about.updateError", { defaultValue: "Auto-update failed; use the download button above." })}
+          {errorMsg ? ` (${errorMsg})` : ""}
+        </p>
+      )}
     </div>
   )
 }

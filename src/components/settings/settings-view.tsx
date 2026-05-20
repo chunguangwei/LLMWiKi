@@ -18,6 +18,7 @@ import {
   HardDrive,
   Server,
   Sparkles,
+  ShieldCheck,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -47,6 +48,7 @@ import { ScheduledRefreshSection } from "./sections/scheduled-refresh-section"
 import { StorageLocationSection } from "./sections/storage-location-section"
 import { UserManualSection } from "./sections/user-manual-section"
 import { SchemaUpgradeSection } from "./sections/schema-upgrade-section"
+import { ConfigBackupSection } from "./sections/config-backup-section"
 
 type CategoryId =
   | "llm"
@@ -65,6 +67,7 @@ type CategoryId =
   | "maintenance"
   | "user-manual"
   | "schema-upgrade"
+  | "config-backup"
   | "changelog"
   | "about"
 
@@ -94,6 +97,7 @@ const CATEGORIES: Category[] = [
   { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
   { id: "user-manual", labelKey: "settings.categories.userManual", icon: BookOpen },
   { id: "schema-upgrade", labelKey: "settings.categories.schemaUpgrade", icon: Sparkles },
+  { id: "config-backup", labelKey: "settings.categories.configBackup", icon: ShieldCheck },
   { id: "changelog", labelKey: "settings.categories.changelog", icon: History },
   { id: "about", labelKey: "settings.categories.about", icon: Info },
 ]
@@ -458,6 +462,8 @@ export function SettingsView() {
         return <UserManualSection />
       case "schema-upgrade":
         return <SchemaUpgradeSection />
+      case "config-backup":
+        return <ConfigBackupSection />
       case "changelog":
         return <ChangelogSection />
       case "about":

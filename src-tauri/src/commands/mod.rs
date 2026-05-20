@@ -1,5 +1,7 @@
 pub mod claude_cli;
 pub mod codex_cli;
+pub mod config_backup;
+pub mod config_crypto;
 pub mod extract_images;
 pub mod file_sync;
 pub mod fs;

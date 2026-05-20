@@ -13,6 +13,7 @@ import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
 import type { WikiProject } from "@/types/wiki"
+import { APP_REPO, APP_RELEASES_URL } from "@/lib/app-repo"
 
 function App() {
   const project = useWikiStore((s) => s.project)
@@ -68,7 +69,7 @@ function App() {
                 "- Bigger red dot on the Settings icon\n" +
                 "- Top banner with one-click dismiss\n" +
                 "- Once dismissed, won't reappear for this version",
-              html_url: "https://github.com/nashsu/llm_wiki/releases",
+              html_url: APP_RELEASES_URL,
               published_at: new Date().toISOString(),
             },
           },
@@ -142,7 +143,7 @@ function App() {
         )
         const result = await checkForUpdates({
           currentVersion: __APP_VERSION__,
-          repo: "nashsu/llm_wiki",
+          repo: APP_REPO,
         })
         if (cancelled) return
         useUpdateStore.getState().setResult(result, Date.now())

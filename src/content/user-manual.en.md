@@ -1,6 +1,6 @@
 # LLMWiki User Manual
 
-Version: 0.4.12 (LLMWiKi fork)
+Version: 0.4.13 (LLMWiKi fork)
 
 This manual is for **people already using LLMWiki**. For install / build-from-source instructions, see [`getting-started.md`](getting-started.md).
 
@@ -149,7 +149,7 @@ You accept / reject without interrupting the LLM's workflow.
 
 ---
 
-## 5. Four new features (LLMWiKi fork only)
+## 5. Five new features (LLMWiKi fork only)
 
 ### 5.1 `.llmwiki` one-click import / export
 
@@ -256,6 +256,30 @@ git config --global core.quotepath false
 
 Full details in [`features.md §5`](features.md#5-smart-splitting--comprehensive-schema).
 
+### 5.5 Auto-update (in-place) + encrypted config backup
+
+**Entry: top banner / Settings → About (update); Settings → Config Backup (backup)**
+
+Updates now come from your own GitHub (`chunguangwei/LLMWiKi`) and install **in place** — no more uninstall/reinstall, so config and API keys are preserved automatically.
+
+**Updating**:
+- The app checks in the background; a banner appears when a new version exists, or find "Update now" in Settings → About.
+- Click "Update now" → it downloads + verifies the signature + replaces in place → click "Restart to apply". **Config and keys are never touched.**
+- A "Download manually" button is kept as a fallback.
+
+**Releasing a new version** (so all your devices can update):
+1. Bump `version` in both `app/package.json` and `app/src-tauri/tauri.conf.json` (keep them equal).
+2. `git push origin main`, then tag: `git tag v0.4.13 && git push origin v0.4.13`.
+3. GitHub Actions builds + signs + publishes the release. Devices update on next launch.
+> Full release steps + required GitHub Secrets: [`features.md §6.3`](features.md#63-发版流程你怎么发布新版本让所有端更新).
+> ⚠️ Back up `~/.tauri/llmwiki_updater.key` and `.password` — losing the private key means you can never sign new releases again.
+
+**Config backup (so you never lose keys)**: Settings → Config Backup
+- **Export / Import** (cross-machine): set a password → export an encrypted `.llmwiki-config` file; on another machine, import with the same password. Argon2id + AES-256-GCM; the password is the only decryption key.
+- **Auto-backup** (same-machine reinstall): on every launch the app writes an encrypted backup to `~/Documents/LLMWiki/`, key held in the OS keychain; it auto-restores after a reinstall, no action needed.
+
+Full details in [`features.md §6`](features.md#6-自己-github-自动更新就地更新--加密配置备份).
+
 ---
 
 ## 6. Custom page types / rules / format (user rules)
@@ -320,8 +344,11 @@ Every file in `wiki/*.md` is just plain markdown. You can edit it directly (insi
 | Windows `git status` shows `\346\227\205...`-style escapes | Chinese folder names being escaped — run `git config --global core.quotepath false` once. |
 | Scheduled refresh never fires | Configure Settings → Web Search provider first; check frontmatter `refresh-enabled: true` spelling |
 | Cloud drive shows .json (Conflict) files | Multiple writers at the same time — agree on one primary writer, or switch to git mode |
-| Can't find the API key | It lives in the OS app-data dir, not in the project: macOS `~/Library/Application Support/com.llm-wiki.app/` |
+| Can't find the API key | It lives in the OS app-data dir, not in the project: macOS `~/Library/Application Support/com.llmwiki.app/app-state.json` |
 | Want to wipe all LLM cache | Delete the project root's `.llm-wiki/` subdirectory; the app rebuilds it automatically |
+| Config / keys gone after reinstall | It should auto-restore from the encrypted backup; if not, check `~/Documents/LLMWiki/config-backup.enc` exists and the keychain key is present. For a new machine, use Settings → Config Backup export/import with a password |
+| "Update now" fails | Dev mode has no updater artifacts (use manual download); or the release is missing `latest.json`/signatures; on unsigned macOS run `xattr -dr com.apple.quarantine` if Gatekeeper blocks the in-place replace |
+| Don't use deep-clean uninstallers | AppCleaner et al. delete `~/Library/Application Support/com.llmwiki.app/`, losing config. In-place updates need no uninstall; if you must uninstall, export config first |
 
 ---
 
