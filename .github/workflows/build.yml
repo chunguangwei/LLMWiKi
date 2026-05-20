@@ -101,17 +101,24 @@ jobs:
           # step fails — so keep the secrets in sync with the keypair.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # NOTE: Apple Developer ID code-signing env vars are intentionally
-          # NOT set — we have no paid Apple cert. Passing them as empty
-          # strings (unset secrets resolve to "") makes the macOS bundler
-          # attempt codesign with an empty signing identity, which fails with
-          # "security import: failed to import keychain certificate". The app
-          # therefore ships unsigned on macOS (users clear quarantine with
-          # `xattr -dr com.apple.quarantine`). The updater artifacts are still
-          # signed via TAURI_SIGNING_PRIVATE_KEY above — that's a separate
-          # minisign key, unrelated to Apple notarization. If you later buy an
-          # Apple Developer ID, re-add APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY
-          # / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID here.
+          # Ad-hoc code signing for macOS. The "-" identity tells tauri to run
+          # `codesign --sign -`, which signs the app WITHOUT an Apple Developer
+          # certificate. This is what lets the arm64 build run reliably on
+          # Apple Silicon after the user clears quarantine — an entirely
+          # unsigned arm64 binary can be killed as "damaged". Crucially, we do
+          # NOT set APPLE_CERTIFICATE, so tauri-action skips the keychain
+          # certificate import (an empty/real cert there is what broke the
+          # earlier macOS build). This is ignored on Windows/Linux.
+          #
+          # This is NOT Apple notarization — the app stays unsigned in
+          # Gatekeeper's eyes, so a first-launch `xattr -dr
+          # com.apple.quarantine "/Applications/LLM Wiki.app"` may still be
+          # needed. For zero-friction launch you'd need a paid Apple Developer
+          # ID: then add APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD /
+          # APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID and set this to the real
+          # identity. The updater artifacts are signed separately via the
+          # minisign TAURI_SIGNING_PRIVATE_KEY above.
+          APPLE_SIGNING_IDENTITY: "-"
         with:
           # Tag-triggered runs publish a real GitHub Release.
           # Manual (workflow_dispatch) runs leave tagName/releaseName
