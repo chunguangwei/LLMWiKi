@@ -20,6 +20,7 @@ import { applyGraphSearch } from "@/lib/graph-search"
 import { useTranslation } from "react-i18next"
 
 const NODE_TYPE_COLORS: Record<string, string> = {
+  // legacy / meta
   entity: "#60a5fa",    // blue-400
   concept: "#c084fc",   // purple-400
   source: "#fb923c",    // orange-400
@@ -28,6 +29,39 @@ const NODE_TYPE_COLORS: Record<string, string> = {
   overview: "#facc15",  // yellow-400
   comparison: "#2dd4bf", // teal-400
   other: "#94a3b8",     // slate-400
+  // comprehensive-schema single-page types
+  "travel-plan": "#38bdf8",   // sky-400
+  manual: "#fb923c",          // orange-400
+  "project-doc": "#60a5fa",   // blue-400
+  tutorial: "#818cf8",        // indigo-400
+  book: "#d97706",            // amber-600
+  recipe: "#fb7185",          // rose-400
+  note: "#ca8a04",            // yellow-600
+  report: "#64748b",          // slate-500
+  article: "#2dd4bf",         // teal-400
+  meeting: "#06b6d4",         // cyan-500
+  decision: "#a78bfa",        // violet-400
+  project: "#3b82f6",         // blue-500
+  "film-tv": "#e879f9",       // fuchsia-400
+  music: "#f472b6",           // pink-400
+  game: "#22c55e",            // green-500
+  menu: "#ea580c",            // orange-600
+  "shopping-list": "#84cc16", // lime-500
+  "fitness-plan": "#ef4444",  // red-500
+  contract: "#78716c",        // stone-500
+  invoice: "#059669",         // emerald-600
+  "medical-record": "#dc2626",// red-600
+  insurance: "#15803d",       // green-700
+  "code-snippet": "#71717a",  // zinc-500
+  "api-doc": "#06b6d4",       // cyan-500
+  "error-log": "#f87171",     // red-400
+  // comprehensive-schema multi-page types
+  paper: "#fb923c",           // orange-400
+  tool: "#475569",            // slate-600
+  dataset: "#60a5fa",         // blue-400
+  person: "#3b82f6",          // blue-500
+  company: "#4f46e5",         // indigo-600
+  regulation: "#b45309",      // amber-700
 }
 
 const COMMUNITY_COLORS = [
@@ -52,6 +86,14 @@ const MAX_NODE_SIZE = 28
 
 function nodeColor(type: string): string {
   return NODE_TYPE_COLORS[type] ?? NODE_TYPE_COLORS.other
+}
+
+// Map a kebab-case page type (e.g. "travel-plan") to the camelCase i18n
+// key under knowledgeTree.types (e.g. "travelPlan"). Identity for
+// single-word types. Keeps the graph legend labels in sync with the
+// sidebar without a duplicate label map.
+function typeToLabelKey(type: string): string {
+  return type.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -375,18 +417,17 @@ export function GraphView() {
     }
   }, [project])
 
-  // Initialize node type labels when i18n is ready
+  // Initialize node type labels when i18n is ready. Reuses the shared
+  // knowledgeTree.types.* labels so the graph legend stays in sync with
+  // the sidebar group names (and covers all comprehensive-schema types).
+  // The legend only renders entries whose typeCounts > 0, so listing
+  // every known type here is harmless — unused ones never show.
   useEffect(() => {
-    setNodeTypeLabels({
-      entity: t("graph.nodeTypeLabels.entity"),
-      concept: t("graph.nodeTypeLabels.concept"),
-      source: t("graph.nodeTypeLabels.source"),
-      query: t("graph.nodeTypeLabels.query"),
-      synthesis: t("graph.nodeTypeLabels.synthesis"),
-      overview: t("graph.nodeTypeLabels.overview"),
-      comparison: t("graph.nodeTypeLabels.comparison"),
-      other: t("graph.nodeTypeLabels.other"),
-    })
+    const labels: Record<string, string> = {}
+    for (const type of Object.keys(NODE_TYPE_COLORS)) {
+      labels[type] = t(`knowledgeTree.types.${typeToLabelKey(type)}`)
+    }
+    setNodeTypeLabels(labels)
   }, [t])
 
   useEffect(() => {

@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from "react"
+import { useTranslation } from "react-i18next"
 import {
   FileText, Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, ChevronRight, ChevronDown, Layout, Globe, Trash2,
+  Plane, Wrench, GraduationCap, ChefHat, StickyNote, Newspaper, Clapperboard, Music, Gamepad2,
+  UtensilsCrossed, ShoppingCart, Dumbbell, FileSignature, Receipt, HeartPulse, ShieldCheck,
+  FileCode, Bug, Database, User, Building2, Scale, FolderKanban, CalendarClock, Plug,
 } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
@@ -18,19 +22,60 @@ interface WikiPageInfo {
   origin?: string
 }
 
-const TYPE_CONFIG: Record<string, { icon: typeof FileText; label: string; color: string; order: number }> = {
-  overview:    { icon: Layout,      label: "Overview",     color: "text-yellow-500", order: 0 },
-  entity:      { icon: Users,       label: "Entities",     color: "text-blue-500",   order: 1 },
-  concept:     { icon: Lightbulb,   label: "Concepts",     color: "text-purple-500", order: 2 },
-  source:      { icon: BookOpen,    label: "Sources",      color: "text-orange-500", order: 3 },
-  synthesis:   { icon: GitMerge,    label: "Synthesis",    color: "text-red-500",    order: 4 },
-  comparison:  { icon: BarChart3,   label: "Comparisons",  color: "text-emerald-500",order: 5 },
-  query:       { icon: HelpCircle,  label: "Queries",      color: "text-green-500",  order: 6 },
+// Maps a page's frontmatter `type` (always the english slug, e.g.
+// "travel-plan", even when the folder name is Chinese) to a sidebar
+// group: an icon, an i18n label key, a color, and a sort order. Covers
+// the comprehensive schema's 34 types plus the 7 legacy ones. Anything
+// not listed falls through to DEFAULT_CONFIG ("Other") — which is what
+// used to swallow every new type before this map was extended.
+const TYPE_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; color: string; order: number }> = {
+  overview:        { icon: Layout,          labelKey: "knowledgeTree.types.overview",      color: "text-yellow-500",  order: 0 },
+  // ── single-page everyday types ──
+  "travel-plan":   { icon: Plane,           labelKey: "knowledgeTree.types.travelPlan",    color: "text-sky-500",     order: 10 },
+  manual:          { icon: BookOpen,        labelKey: "knowledgeTree.types.manual",        color: "text-orange-500",  order: 11 },
+  "project-doc":   { icon: FileText,        labelKey: "knowledgeTree.types.projectDoc",    color: "text-blue-500",    order: 12 },
+  tutorial:        { icon: GraduationCap,   labelKey: "knowledgeTree.types.tutorial",      color: "text-indigo-500",  order: 13 },
+  book:            { icon: BookOpen,        labelKey: "knowledgeTree.types.book",          color: "text-amber-600",   order: 14 },
+  recipe:          { icon: ChefHat,         labelKey: "knowledgeTree.types.recipe",        color: "text-rose-500",    order: 15 },
+  note:            { icon: StickyNote,      labelKey: "knowledgeTree.types.note",          color: "text-yellow-600",  order: 16 },
+  report:          { icon: FileText,        labelKey: "knowledgeTree.types.report",        color: "text-slate-500",   order: 17 },
+  article:         { icon: Newspaper,       labelKey: "knowledgeTree.types.article",       color: "text-teal-500",    order: 18 },
+  meeting:         { icon: CalendarClock,   labelKey: "knowledgeTree.types.meeting",       color: "text-cyan-600",    order: 19 },
+  decision:        { icon: Scale,           labelKey: "knowledgeTree.types.decision",      color: "text-violet-500",  order: 20 },
+  project:         { icon: FolderKanban,    labelKey: "knowledgeTree.types.project",       color: "text-blue-600",    order: 21 },
+  "film-tv":       { icon: Clapperboard,    labelKey: "knowledgeTree.types.filmTv",        color: "text-fuchsia-500", order: 22 },
+  music:           { icon: Music,           labelKey: "knowledgeTree.types.music",         color: "text-pink-500",    order: 23 },
+  game:            { icon: Gamepad2,        labelKey: "knowledgeTree.types.game",          color: "text-green-600",   order: 24 },
+  menu:            { icon: UtensilsCrossed, labelKey: "knowledgeTree.types.menu",          color: "text-orange-600",  order: 25 },
+  "shopping-list": { icon: ShoppingCart,    labelKey: "knowledgeTree.types.shoppingList",  color: "text-lime-600",    order: 26 },
+  "fitness-plan":  { icon: Dumbbell,        labelKey: "knowledgeTree.types.fitnessPlan",   color: "text-red-500",     order: 27 },
+  contract:        { icon: FileSignature,   labelKey: "knowledgeTree.types.contract",      color: "text-stone-500",   order: 28 },
+  invoice:         { icon: Receipt,         labelKey: "knowledgeTree.types.invoice",       color: "text-emerald-600", order: 29 },
+  "medical-record":{ icon: HeartPulse,      labelKey: "knowledgeTree.types.medicalRecord", color: "text-red-600",     order: 30 },
+  insurance:       { icon: ShieldCheck,     labelKey: "knowledgeTree.types.insurance",     color: "text-green-700",   order: 31 },
+  "code-snippet":  { icon: FileCode,        labelKey: "knowledgeTree.types.codeSnippet",   color: "text-zinc-500",    order: 32 },
+  "api-doc":       { icon: Plug,            labelKey: "knowledgeTree.types.apiDoc",        color: "text-cyan-500",    order: 33 },
+  "error-log":     { icon: Bug,             labelKey: "knowledgeTree.types.errorLog",      color: "text-red-400",     order: 34 },
+  // ── multi-page (decomposable) types ──
+  paper:           { icon: FileText,        labelKey: "knowledgeTree.types.paper",         color: "text-orange-500",  order: 40 },
+  concept:         { icon: Lightbulb,       labelKey: "knowledgeTree.types.concept",       color: "text-purple-500",  order: 41 },
+  tool:            { icon: Wrench,          labelKey: "knowledgeTree.types.tool",          color: "text-slate-600",   order: 42 },
+  dataset:         { icon: Database,        labelKey: "knowledgeTree.types.dataset",       color: "text-blue-400",    order: 43 },
+  person:          { icon: User,            labelKey: "knowledgeTree.types.person",        color: "text-blue-500",    order: 44 },
+  company:         { icon: Building2,       labelKey: "knowledgeTree.types.company",       color: "text-indigo-600",  order: 45 },
+  regulation:      { icon: Scale,           labelKey: "knowledgeTree.types.regulation",    color: "text-amber-700",   order: 46 },
+  // ── meta + legacy types ──
+  synthesis:       { icon: GitMerge,        labelKey: "knowledgeTree.types.synthesis",     color: "text-red-500",     order: 50 },
+  comparison:      { icon: BarChart3,       labelKey: "knowledgeTree.types.comparison",    color: "text-emerald-500", order: 51 },
+  query:           { icon: HelpCircle,      labelKey: "knowledgeTree.types.query",         color: "text-green-500",   order: 52 },
+  source:          { icon: BookOpen,        labelKey: "knowledgeTree.types.source",        color: "text-orange-500",  order: 53 },
+  entity:          { icon: Users,           labelKey: "knowledgeTree.types.entity",        color: "text-blue-500",    order: 54 },
 }
 
-const DEFAULT_CONFIG = { icon: FileText, label: "Other", color: "text-muted-foreground", order: 99 }
+const DEFAULT_CONFIG = { icon: FileText, labelKey: "knowledgeTree.types.other", color: "text-muted-foreground", order: 99 }
 
 export function KnowledgeTree() {
+  const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
@@ -116,7 +161,7 @@ export function KnowledgeTree() {
   if (!project) {
     return (
       <div className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground">
-        No project open
+        {t("knowledgeTree.noProject", { defaultValue: "No project open" })}
       </div>
     )
   }
@@ -154,7 +199,7 @@ export function KnowledgeTree() {
 
         {sortedGroups.length === 0 && (
           <div className="px-2 py-4 text-center text-xs text-muted-foreground">
-            No wiki pages yet. Import sources to get started.
+            {t("knowledgeTree.empty", { defaultValue: "No wiki pages yet. Import sources to get started." })}
           </div>
         )}
 
@@ -175,7 +220,7 @@ export function KnowledgeTree() {
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 )}
                 <Icon className={`h-3.5 w-3.5 shrink-0 ${config.color}`} />
-                <span className="flex-1 text-left font-medium">{config.label}</span>
+                <span className="flex-1 text-left font-medium">{t(config.labelKey)}</span>
                 <span className="text-xs text-muted-foreground">{items.length}</span>
               </button>
 
@@ -235,6 +280,7 @@ export function KnowledgeTree() {
 }
 
 function RawSourcesSection() {
+  const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const selectedFile = useWikiStore((s) => s.selectedFile)
@@ -263,7 +309,7 @@ function RawSourcesSection() {
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
         <BookOpen className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-        <span className="flex-1 text-left font-medium text-muted-foreground">Raw Sources</span>
+        <span className="flex-1 text-left font-medium text-muted-foreground">{t("knowledgeTree.rawSources", { defaultValue: "Raw Sources" })}</span>
         <span className="text-xs text-muted-foreground">{sources.length}</span>
       </button>
       {expanded && (
