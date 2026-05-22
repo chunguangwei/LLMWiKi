@@ -6,6 +6,7 @@ export type FileCategory =
   | "video"
   | "audio"
   | "pdf"
+  | "office"
   | "document"
   | "data"
   | "unknown"
@@ -96,16 +97,19 @@ const EXT_MAP: Record<string, FileCategory> = {
   // PDF
   pdf: "pdf",
 
-  // Documents (binary, not directly previewable)
+  // Office documents whose text the backend can extract (read_file ->
+  // extract_office_text). Previewed as extracted markdown, like PDF.
+  docx: "office",
+  xlsx: "office",
+  pptx: "office",
+  odt: "office",
+  ods: "office",
+  odp: "office",
+
+  // Documents we can't extract text from yet — show a placeholder.
   doc: "document",
-  docx: "document",
   xls: "document",
-  xlsx: "document",
   ppt: "document",
-  pptx: "document",
-  odt: "document",
-  ods: "document",
-  odp: "document",
   pages: "document",
   numbers: "document",
   key: "document",

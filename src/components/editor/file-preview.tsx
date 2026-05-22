@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react"
+import { useTranslation } from "react-i18next"
 import { convertFileSrc } from "@tauri-apps/api/core"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -42,6 +43,8 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
       return <AudioPreview filePath={filePath} fileName={fileName} />
     case "pdf":
       return <TextPreview filePath={filePath} content={textContent} label="PDF (extracted text)" />
+    case "office":
+      return <TextPreview filePath={filePath} content={textContent} label="Document (extracted text)" />
     case "code":
       return <CodePreview filePath={filePath} content={textContent} />
     case "data":
@@ -270,6 +273,7 @@ function BinaryPlaceholder({
     video: Film,
   }
   const Icon = iconMap[category] ?? FileQuestion
+  const { t } = useTranslation()
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
@@ -279,7 +283,7 @@ function BinaryPlaceholder({
         <p className="mt-1 text-xs text-muted-foreground">{filePath}</p>
       </div>
       <p className="text-sm text-muted-foreground">
-        Preview not available for this file type
+        {t("preview.notAvailable", { defaultValue: "Preview not available for this file type" })}
       </p>
     </div>
   )

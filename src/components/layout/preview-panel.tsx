@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useRef } from "react"
+import { useTranslation } from "react-i18next"
 import { X } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile } from "@/commands/fs"
@@ -12,6 +13,7 @@ export function PreviewPanel() {
   const fileContent = useWikiStore((s) => s.fileContent)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
+  const { t } = useTranslation()
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Snapshot of what was most recently loaded from disk. Milkdown re-emits
   // `markdownUpdated` on initial parse (before the user types anything),
@@ -77,7 +79,7 @@ export function PreviewPanel() {
   if (!selectedFile) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Select a file to preview
+        {t("preview.selectFile", { defaultValue: "Select a file to preview" })}
       </div>
     )
   }
