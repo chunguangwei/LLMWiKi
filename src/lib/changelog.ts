@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.15",
+    date: "2026-05-22",
+    highlights: {
+      en: [
+        "Source preview now renders Word / Office files (.docx, .xlsx, .pptx, .odt, .ods, .odp) as extracted text instead of showing \"Preview not available\".",
+      ],
+      zh: [
+        "原始文件预览现在能直接显示 Word / Office 文件（.docx、.xlsx、.pptx、.odt、.ods、.odp）的提取文本，不再提示「该文件类型暂不支持预览」。",
+      ],
+    },
+  },
+  {
     version: "0.4.14",
     date: "2026-05-20",
     highlights: {
