@@ -317,6 +317,8 @@
         "model": "Model",
         "outputDimensionality": "输出维度（仅 Gemini）",
         "outputDimensionalityHint": "可选。仅对 Gemini 原生 embedContent endpoint 作为 `output_dimensionality` 发送；OpenAI 兼容 endpoint 会忽略此项。留空则使用模型默认值。修改模型或维度后需要重建嵌入。",
+        "extraHeaders": "自定义请求头",
+        "extraHeadersHint": "可选。每行一条，格式 `Header-Name: value`。用于需要按请求头路由的网关，例如 mify 需要 `X-Model-Provider-Id: siliconflow`。Authorization、Content-Type、Host、Content-Length 由系统管理，会被忽略。",
         "chunking": "切分参数",
         "maxChunkChars": "每块最大字符数",
         "maxChunkCharsHint": "单个 chunk 的目标长度。endpoint 上下文较小时（llama.cpp n_ctx=512、mxbai-embed-large 等）调低（如 500）。",
