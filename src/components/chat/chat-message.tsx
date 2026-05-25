@@ -7,7 +7,7 @@ import "katex/dist/katex.min.css"
 import {
   Bot, User, FileText, BookmarkPlus, ChevronDown, ChevronRight, RefreshCw, Copy, Check,
   Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, Layout, Globe,
-  Image as ImageIcon,
+  TrendingUp, Target, Image as ImageIcon,
 } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
@@ -24,6 +24,7 @@ import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-reso
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
+import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -276,20 +277,16 @@ const REF_TYPE_CONFIG: Record<string, { icon: typeof FileText; color: string }> 
   query: { icon: HelpCircle, color: "text-green-500" },
   synthesis: { icon: GitMerge, color: "text-red-500" },
   comparison: { icon: BarChart3, color: "text-teal-500" },
+  finding: { icon: TrendingUp, color: "text-purple-500" },
+  thesis: { icon: Target, color: "text-rose-500" },
+  methodology: { icon: BookOpen, color: "text-teal-500" },
   overview: { icon: Layout, color: "text-yellow-500" },
   clip: { icon: Globe, color: "text-blue-400" },
 }
 
 function getRefType(path: string): string {
-  if (path.includes("/entities/")) return "entity"
-  if (path.includes("/concepts/")) return "concept"
-  if (path.includes("/sources/")) return "source"
-  if (path.includes("/queries/")) return "query"
-  if (path.includes("/synthesis/")) return "synthesis"
-  if (path.includes("/comparisons/")) return "comparison"
-  if (path.includes("overview")) return "overview"
   if (path.includes("raw/sources/")) return "clip"
-  return "source"
+  return inferWikiTypeFromPath(path) ?? "source"
 }
 
 /**

@@ -9,9 +9,20 @@ import {
   type SearchProvider,
   type SearchProviderOverride,
 } from "@/stores/wiki-store"
-import { SEARXNG_CATEGORY_OPTIONS, SERPAPI_ENGINE_OPTIONS, resolveSearchConfig } from "@/lib/web-search"
+import {
+  SEARXNG_CATEGORY_OPTIONS,
+  SERPAPI_ENGINE_OPTIONS,
+  resolveSearchConfig,
+} from "@/lib/web-search"
 
 const SEARCH_PROVIDERS = [
+  {
+    id: "ollama",
+    label: "Ollama",
+    hint: "Ollama Web Search API",
+    keyPlaceholder: "Enter your Ollama API key (ollama.com)",
+    needsApiKey: true,
+  },
   {
     id: "tavily",
     label: "Tavily",
@@ -158,6 +169,11 @@ export function WebSearchSection() {
                         onChange={(e) => updateProvider(provider.id, { apiKey: e.target.value })}
                         placeholder={provider.keyPlaceholder}
                       />
+                      {provider.id === "ollama" && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.sections.webSearch.ollamaHint")}
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-2">

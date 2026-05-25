@@ -20,6 +20,30 @@ import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { useTranslation } from "react-i18next"
 
+interface IndexedLintResult {
+  result: LintResult
+  index: number
+}
+
+export function groupLintResultsForDisplay(results: readonly LintResult[]): {
+  warnings: IndexedLintResult[]
+  infos: IndexedLintResult[]
+} {
+  const warnings: IndexedLintResult[] = []
+  const infos: IndexedLintResult[] = []
+
+  results.forEach((result, index) => {
+    const item = { result, index }
+    if (result.severity === "warning") {
+      warnings.push(item)
+    } else {
+      infos.push(item)
+    }
+  })
+
+  return { warnings, infos }
+}
+
 export function LintView() {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
@@ -203,8 +227,10 @@ export function LintView() {
     }
   }
 
-  const warnings = results.filter((r) => r.severity === "warning")
-  const infos = results.filter((r) => r.severity === "info")
+  const { warnings, infos } = useMemo(
+    () => groupLintResultsForDisplay(results),
+    [results],
+  )
 
   return (
     <div className="flex h-full flex-col">
@@ -256,12 +282,12 @@ export function LintView() {
             {warnings.length > 0 && (
               <SectionHeader icon={AlertTriangle} label={t("lint.warnings")} count={warnings.length} color="text-amber-500" t={t} />
             )}
-            {warnings.map((result, i) => (
+            {warnings.map(({ result, index }) => (
               <LintCard
-                key={`warn-${i}`}
+                key={`warn-${index}`}
                 result={result}
-                index={i}
-                fixing={fixingId === `${result.type}-${i}`}
+                index={index}
+                fixing={fixingId === `${result.type}-${index}`}
                 onOpenPage={handleOpenPage}
                 onFix={handleFix}
                 onDelete={result.type === "orphan" ? handleDeleteOrphan : undefined}
@@ -272,22 +298,19 @@ export function LintView() {
             {infos.length > 0 && (
               <SectionHeader icon={Info} label={t("lint.info")} count={infos.length} color="text-blue-500" t={t} />
             )}
-            {infos.map((result, i) => {
-              const realIndex = warnings.length + i
-              return (
-                <LintCard
-                  key={`info-${i}`}
-                  result={result}
-                  index={realIndex}
-                  fixing={fixingId === `${result.type}-${realIndex}`}
-                  onOpenPage={handleOpenPage}
-                  onFix={handleFix}
-                  onDelete={result.type === "orphan" ? handleDeleteOrphan : undefined}
-                  typeConfig={typeConfig}
-                  t={t}
-                />
-              )
-            })}
+            {infos.map(({ result, index }) => (
+              <LintCard
+                key={`info-${index}`}
+                result={result}
+                index={index}
+                fixing={fixingId === `${result.type}-${index}`}
+                onOpenPage={handleOpenPage}
+                onFix={handleFix}
+                onDelete={result.type === "orphan" ? handleDeleteOrphan : undefined}
+                typeConfig={typeConfig}
+                t={t}
+              />
+            ))}
           </div>
         )}
       </div>

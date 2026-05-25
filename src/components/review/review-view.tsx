@@ -36,6 +36,7 @@ export function ReviewView() {
 
   const handleResolve = useCallback(async (id: string, action: string) => {
     const pp = project ? normalizePath(project.path) : ""
+    const item = items.find((i) => i.id === id)
     // Deep Research — must be checked FIRST before any fuzzy matching
     if (action === "__deep_research__" && project) {
       const searchConfig = useWikiStore.getState().searchApiConfig
@@ -43,7 +44,6 @@ export function ReviewView() {
         window.alert("Web Search not configured. Go to Settings → Web Search to configure a provider first.")
         return
       }
-      const item = items.find((i) => i.id === id)
       if (item) {
         const llmConfig = useWikiStore.getState().llmConfig
         // Use pre-generated search queries if available, otherwise fall back to title
@@ -106,25 +106,29 @@ export function ReviewView() {
         console.error("Failed to save to wiki from review:", err)
         resolveItem(id, "Save failed")
       }
-    } else if (action.startsWith("open:") && project) {
-      // Open a page for editing
-      const page = action.slice(5)
-      const candidates = [
-        `${pp}/wiki/${page}`,
-        `${pp}/wiki/${page}.md`,
-      ]
+    } else if ((action.startsWith("open:") || actionLooksLikeOpen(action)) && project) {
+      // Open a page in the right-side preview without resolving the
+      // review item. Viewing is not the same as accepting / fixing it.
+      const page = action.startsWith("open:")
+        ? action.slice(5)
+        : item?.affectedPages?.[0] ?? item?.sourcePath ?? ""
+      if (!page) return
+      const normalizedPage = normalizePath(page)
+      const candidates = normalizedPage.startsWith(pp)
+        ? [normalizedPage]
+        : normalizedPage.startsWith("wiki/") || normalizedPage.startsWith("raw/")
+          ? [`${pp}/${normalizedPage}`, `${pp}/${normalizedPage}.md`]
+          : [`${pp}/wiki/${normalizedPage}`, `${pp}/wiki/${normalizedPage}.md`]
       for (const path of candidates) {
         try {
           const content = await readFile(path)
           useWikiStore.getState().setSelectedFile(path)
           useWikiStore.getState().setFileContent(content)
-          useWikiStore.getState().setActiveView("wiki")
-          break
+          return
         } catch {
           // try next
         }
       }
-      resolveItem(id, action)
     } else if (action.startsWith("delete:") && project) {
       // Delete a file
       const filePath = action.slice(7)
@@ -142,13 +146,11 @@ export function ReviewView() {
       const searchConfig = useWikiStore.getState().searchApiConfig
       if (!hasConfiguredSearchProvider(searchConfig)) {
         // No search API — fall through to create a page instead
-        const item = items.find((i) => i.id === id)
         if (item) {
           handleResolve(id, "__create_page__:" + action)
         }
         return
       }
-      const item = items.find((i) => i.id === id)
       if (item) {
         const llmConfig = useWikiStore.getState().llmConfig
         const topic = action.replace(/^research\s*/i, "").trim() || item.description.split("\n")[0]
@@ -168,7 +170,6 @@ export function ReviewView() {
       const realAction = action.startsWith("__create_page__:")
         ? action.slice("__create_page__:".length)
         : action
-      const item = items.find((i) => i.id === id)
       if (item) {
         try {
           const title = item.title.replace(/^(Create|Save|Add)[:\s]*/i, "").trim() || "Untitled"
@@ -366,6 +367,20 @@ function actionLooksLikeResearch(action: string): boolean {
     lower.includes("研究") ||
     lower.includes("调研") ||
     lower.includes("探索")
+  )
+}
+
+function actionLooksLikeOpen(action: string): boolean {
+  const lower = action.trim().toLowerCase()
+  return (
+    lower === "open" ||
+    lower === "view" ||
+    lower === "open page" ||
+    lower === "view page" ||
+    lower === "打开" ||
+    lower === "查看" ||
+    lower === "打开页面" ||
+    lower === "查看页面"
   )
 }
 

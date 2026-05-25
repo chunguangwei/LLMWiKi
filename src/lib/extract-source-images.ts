@@ -51,12 +51,14 @@ const SUPPORTED_OFFICE_EXTS = ["pptx", "docx", "ppt", "doc"] as const
  * as an empty array — image extraction failure must NEVER abort the
  * ingest pipeline (which is why this isn't `throws`).
  *
- * `slug` is the basename of the source file without extension. Same
- * convention the rest of ingest uses (see `wiki/sources/<slug>.md`).
+ * By default, `slug` is the basename of the source file without extension.
+ * Callers can pass a slug that includes source-folder context so same-named
+ * files from different `raw/sources` subdirectories do not collide.
  */
 export async function extractAndSaveSourceImages(
   projectPath: string,
   sourcePath: string,
+  slugOverride?: string,
 ): Promise<SavedImage[]> {
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
@@ -67,7 +69,7 @@ export async function extractAndSaveSourceImages(
   const isOffice = (SUPPORTED_OFFICE_EXTS as readonly string[]).includes(ext)
   if (!isPdf && !isOffice) return []
 
-  const slug = fileName.replace(/\.[^.]+$/, "")
+  const slug = slugOverride ?? fileName.replace(/\.[^.]+$/, "")
   const destDir = `${pp}/wiki/media/${slug}`
   const relTo = `${pp}/wiki`
 

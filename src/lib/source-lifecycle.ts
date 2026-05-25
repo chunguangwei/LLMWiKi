@@ -14,6 +14,10 @@ import { enqueueBatch } from "@/lib/ingest-queue"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getFileName, getFileStem, normalizePath } from "@/lib/path-utils"
 import {
+  sourceIdentityForPath,
+  sourceReferenceIdentity,
+} from "@/lib/source-identity"
+import {
   parseFrontmatterArray,
   parseSources,
   writeFrontmatterArray,
@@ -176,33 +180,44 @@ export async function deleteSourceFiles(
   options: { fileAlreadyDeleted?: boolean; logReason?: string } = {},
 ): Promise<DeleteSourcesResult> {
   const pp = normalizePath(projectPath)
-  const normalizedSources = sourcePaths.map(normalizePath)
-  const fileNames = normalizedSources
-    .map((source) => source.split("/").pop() ?? "")
-    .filter(Boolean)
+  const sourceInfos = sourcePaths
+    .map((sourcePath) => {
+      const source = normalizePath(sourcePath)
+      return {
+        source,
+        fileName: getFileName(source),
+        identity: sourceIdentityForPath(pp, source),
+      }
+    })
+    .filter((info) => info.fileName.length > 0)
 
-  if (fileNames.length === 0) {
+  if (sourceInfos.length === 0) {
     return { deletedWikiPaths: [], rewrittenSourcePages: 0, skippedPages: 0 }
   }
 
-  const deletingNames = new Set(fileNames.map((name) => name.toLowerCase()))
+  const deletingNames = new Set(sourceInfos.map((info) => info.fileName.toLowerCase()))
+  const deletingIdentities = new Set(
+    sourceInfos.map((info) => sourceReferenceIdentity(info.identity).toLowerCase()),
+  )
 
   if (!options.fileAlreadyDeleted) {
-    for (const source of normalizedSources) {
-      await deleteFile(source)
+    for (const info of sourceInfos) {
+      await deleteFile(info.source)
     }
   }
 
-  for (const fileName of fileNames) {
+  for (const info of sourceInfos) {
     try {
-      await deleteFile(`${pp}/raw/sources/.cache/${fileName}.txt`)
+      await deleteFile(`${pp}/raw/sources/.cache/${info.fileName}.txt`)
     } catch {
       // cache file may not exist
     }
-    try {
-      await removeFromIngestCache(pp, fileName)
-    } catch {
-      // non-critical
+    for (const cacheKey of new Set([info.identity, info.fileName])) {
+      try {
+        await removeFromIngestCache(pp, cacheKey)
+      } catch {
+        // non-critical
+      }
     }
   }
 
@@ -232,7 +247,9 @@ export async function deleteSourceFiles(
       continue
     }
 
-    const survivors = sources.filter((source) => !sourceNameMatchesAny(source, deletingNames))
+    const survivors = sources.filter(
+      (source) => !sourceNameMatchesAny(source, deletingIdentities, deletingNames),
+    )
     if (survivors.length === sources.length) {
       continue
     }
@@ -256,7 +273,7 @@ export async function deleteSourceFiles(
     deletedWikiPaths = result.deletedPaths
   }
 
-  await appendSourceDeleteLog(pp, fileNames, {
+  await appendSourceDeleteLog(pp, sourceInfos.map((info) => info.identity), {
     reason: options.logReason ?? (options.fileAlreadyDeleted ? "external delete" : "delete"),
     deletedWikiCount: deletedWikiPaths.length,
     keptWikiCount: rewrittenSourcePages,
@@ -264,7 +281,7 @@ export async function deleteSourceFiles(
 
   if (skippedPages > 0) {
     console.debug(
-      `[source-lifecycle] skipped ${skippedPages} wiki pages with no parseable sources while deleting ${fileNames.length} source(s)`,
+      `[source-lifecycle] skipped ${skippedPages} wiki pages with no parseable sources while deleting ${sourceInfos.length} source(s)`,
     )
   }
 
@@ -413,8 +430,21 @@ function flattenMd(nodes: readonly FileNode[]): FileNode[] {
   return out
 }
 
-function sourceNameMatchesAny(source: string, deletingNames: Set<string>): boolean {
-  const normalizedSource = normalizePath(source).split("/").pop()?.toLowerCase() ?? ""
+function sourceNameMatchesAny(
+  source: string,
+  deletingIdentities: Set<string>,
+  deletingNames: Set<string>,
+): boolean {
+  const normalized = normalizePath(source)
+  const identity = sourceReferenceIdentity(normalized).toLowerCase()
+  if (deletingIdentities.has(identity)) return true
+
+  // Legacy wiki pages stored only basenames in `sources`. Keep that fallback
+  // for old pages, but do not let a path-aware source like
+  // `project-b/config.yaml` match a different deleted `config.yaml`.
+  if (normalized.includes("/")) return false
+
+  const normalizedSource = normalized.toLowerCase()
   return deletingNames.has(normalizedSource)
 }
 

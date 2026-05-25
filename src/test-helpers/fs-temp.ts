@@ -69,19 +69,17 @@ export const realFs = {
   deleteFile: async (p: string): Promise<void> => {
     await fs.unlink(p).catch(() => {})
   },
+  fileExists: async (p: string): Promise<boolean> => {
+    return fs.access(p).then(
+      () => true,
+      () => false,
+    )
+  },
   findRelatedWikiPages: async (): Promise<string[]> => {
     return []
   },
   createDirectory: async (p: string): Promise<void> => {
     await fs.mkdir(p, { recursive: true })
-  },
-  fileExists: async (p: string): Promise<boolean> => {
-    try {
-      await fs.access(p)
-      return true
-    } catch {
-      return false
-    }
   },
   createProject: async () => {
     throw new Error("createProject not supported in tests")

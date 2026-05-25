@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.16",
+    date: "2026-05-25",
+    highlights: {
+      en: [
+        "Synced upstream improvements: more reliable source handling for nested folders, non-English (e.g. Chinese) paths, and Windows; steadier local API and search; new Azure OpenAI provider; API-key-free Ollama web search; and connection tests for LLM / embedding / multimodal in Settings.",
+      ],
+      zh: [
+        "同步上游改进：嵌套资料文件夹、非英文（如中文）路径和 Windows 下的资料处理更稳健；本地 API 与搜索更可靠；新增 Azure OpenAI Provider；Ollama 免 API Key 网页搜索；设置里可一键测试 LLM / 嵌入 / 多模态连接。",
+      ],
+    },
+  },
+  {
     version: "0.4.15",
     date: "2026-05-22",
     highlights: {

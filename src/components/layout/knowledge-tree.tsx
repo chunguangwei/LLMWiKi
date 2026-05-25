@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import {
-  FileText, Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, ChevronRight, ChevronDown, Layout, Globe, Trash2,
+  FileText, Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, TrendingUp, Target, ChevronRight, ChevronDown, Layout, Globe, Trash2,
   Plane, Wrench, GraduationCap, ChefHat, StickyNote, Newspaper, Clapperboard, Music, Gamepad2,
   UtensilsCrossed, ShoppingCart, Dumbbell, FileSignature, Receipt, HeartPulse, ShieldCheck,
   FileCode, Bug, Database, User, Building2, Scale, FolderKanban, CalendarClock, Plug,
@@ -13,6 +13,7 @@ import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
+import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 
 interface WikiPageInfo {
   path: string
@@ -70,6 +71,10 @@ const TYPE_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; col
   query:           { icon: HelpCircle,      labelKey: "knowledgeTree.types.query",         color: "text-green-500",   order: 52 },
   source:          { icon: BookOpen,        labelKey: "knowledgeTree.types.source",        color: "text-orange-500",  order: 53 },
   entity:          { icon: Users,           labelKey: "knowledgeTree.types.entity",        color: "text-blue-500",    order: 54 },
+  // ── research types (added upstream 0.4.13) ──
+  finding:         { icon: TrendingUp,      labelKey: "knowledgeTree.types.finding",       color: "text-purple-500",  order: 55 },
+  thesis:          { icon: Target,          labelKey: "knowledgeTree.types.thesis",        color: "text-rose-500",    order: 56 },
+  methodology:     { icon: BookOpen,        labelKey: "knowledgeTree.types.methodology",   color: "text-teal-500",    order: 57 },
 }
 
 const DEFAULT_CONFIG = { icon: FileText, labelKey: "knowledgeTree.types.other", color: "text-muted-foreground", order: 99 }
@@ -369,13 +374,7 @@ function parsePageInfo(path: string, fileName: string, content: string): WikiPag
 
   // Fallback: infer type from path
   if (type === "other") {
-    if (path.includes("/entities/")) type = "entity"
-    else if (path.includes("/concepts/")) type = "concept"
-    else if (path.includes("/sources/")) type = "source"
-    else if (path.includes("/queries/")) type = "query"
-    else if (path.includes("/comparisons/")) type = "comparison"
-    else if (path.includes("/synthesis/")) type = "synthesis"
-    else if (fileName === "overview.md") type = "overview"
+    type = inferWikiTypeFromPath(path, fileName) ?? "other"
   }
 
   return { path, title, type, tags, origin }

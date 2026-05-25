@@ -1,3 +1,5 @@
+import type { AzureModelFamily } from "@/stores/wiki-store"
+
 /**
  * Curated LLM provider presets.
  *
@@ -12,6 +14,7 @@ export type Provider =
   | "openai"
   | "anthropic"
   | "google"
+  | "azure"
   | "ollama"
   | "custom"
   | "minimax"
@@ -39,6 +42,10 @@ export interface LlmPreset {
   baseUrlByMode?: Partial<Record<CustomApiMode, string>>
   /** Suggested default model; user can override. */
   defaultModel?: string
+  /** Azure OpenAI api-version query parameter. Azure deployments vary by resource. */
+  azureApiVersion?: string
+  /** Azure deployment names are arbitrary, so users can declare GPT-5/o-series behavior explicitly. */
+  azureModelFamily?: AzureModelFamily
   /**
    * Curated list of model ids the UI shows as clickable chips above the
    * Model input. The user can still type a custom value — the input stays
@@ -148,15 +155,33 @@ export const LLM_PRESETS: LlmPreset[] = [
     suggestedContextSize: 1000000,
   },
   {
+    id: "azure",
+    label: "Azure OpenAI",
+    hint: "Azure OpenAI resource endpoint; Model field is the deployment name",
+    provider: "azure",
+    baseUrl: "https://your-resource.openai.azure.com",
+    defaultModel: "your-deployment-name",
+    azureApiVersion: "2024-10-21",
+    suggestedContextSize: 128000,
+  },
+  {
     id: "deepseek",
     label: "DeepSeek",
     hint: "api.deepseek.com",
     provider: "custom",
     baseUrl: "https://api.deepseek.com/v1",
-    defaultModel: "deepseek-chat",
+    defaultModel: "deepseek-v4-flash",
     apiMode: "chat_completions",
-    // hermes models.py:243-246
-    suggestedModels: ["deepseek-chat", "deepseek-reasoner"],
+    // `deepseek-chat` and `deepseek-reasoner` remain selectable for
+    // existing users, but DeepSeek has announced deprecation on
+    // 2026-07-24. Keep chip values as exact model ids so clicking a
+    // suggestion can be copied directly into the request body.
+    suggestedModels: [
+      "deepseek-v4-flash",
+      "deepseek-v4-pro",
+      "deepseek-chat",
+      "deepseek-reasoner",
+    ],
     suggestedContextSize: 64000,
   },
   {
