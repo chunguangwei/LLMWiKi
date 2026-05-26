@@ -436,6 +436,140 @@ API Key 一直在 OS 应用数据目录，从不在项目目录里。
 
 左侧知识树按每页 frontmatter 的 `type:` slug 分组。现在这个 slug 可以**直接在预览面板里改**:类型徽章变成了**下拉框**(显示本地化标签,复用 `knowledgeTree.types.*` 文案)。选一个分类,程序就把该页 `type:` 写回并**实时把它挪到左侧对应分组**——不用再手改 YAML,也不必记 34 个英文 slug。原有的未知/旧 slug 会保留可选,不会被悄悄丢掉;仅对 `wiki/` 下页面生效(不含 `index.md` / `log.md` / 项目根文档)。实现:`lib/frontmatter.ts` 的 `setFrontmatterType()` 只改 frontmatter 块,`preview-panel.tsx` 写回并 `bumpDataVersion()` 触发树重载。
 
+## 示例：一份完整的 schema.md（可参考 / 复制）
+
+下面是一份实际使用中的综合 `schema.md`，覆盖 34 类页面（整篇保留 vs 可拆分）、命名约定、frontmatter 字段、索引/日志格式、互链与拆分规则。新建「综合」模板项目时会自动生成类似内容；你也可以把它整段复制到项目根的 `schema.md`，再按需增删类型——LLM 在**下次摄入**时就会按你的规则决定页面落到哪个目录、是否拆分、怎么互链。完整自定义说明见 [`docs/user-rules.md`](docs/user-rules.md)。
+
+<details>
+<summary>点击展开完整 schema.md 示例</summary>
+
+````markdown
+# Wiki Schema — 综合（推荐默认）
+
+> 这个 schema 覆盖了日常常用的所有文档类型。「整篇保留」类型导入时**一份源文档 = 一个 wiki 页**，绝不拆碎；「可拆分」类型才会按概念 / 人物 / 工具拆分子页。
+
+## 页面类型
+
+### 整篇保留（single-page mode）— 导入时不拆分
+
+| 类型 | 目录 | 用途 |
+|------|------|------|
+| travel-plan | wiki/旅游方案/ | 行程规划、攻略、游记（一份方案 = 一页） |
+| manual | wiki/用户手册/ | 产品手册、操作指南、说明书 |
+| project-doc | wiki/项目文档/ | README、设计文档、规格说明、技术方案 |
+| tutorial | wiki/教程/ | 教学材料、课程笔记、课件 |
+| book | wiki/书籍/ | 整本书摘要（一本一页） |
+| recipe | wiki/食谱/ | 菜谱、配方 |
+| note | wiki/笔记/ | 日常笔记、备忘、灵感 |
+| report | wiki/报告/ | 调研报告、白皮书、技术报告 |
+| article | wiki/文章/ | 博客、新闻文章、专栏 |
+| meeting | wiki/会议/ | 会议纪要 |
+| decision | wiki/决策/ | 决策记录（ADR） |
+| project | wiki/项目/ | 项目主页（项目维度的元信息） |
+| film-tv | wiki/影视/ | 电影、剧集、纪录片 |
+| music | wiki/音乐/ | 专辑、歌曲、播放清单 |
+| game | wiki/游戏/ | 游戏攻略、玩后感 |
+| menu | wiki/菜单/ | 餐饮菜单 |
+| shopping-list | wiki/购物清单/ | 待买清单 |
+| fitness-plan | wiki/健身计划/ | 训练计划、跑步计划 |
+| contract | wiki/合同/ | 合同、协议 |
+| invoice | wiki/发票/ | 发票、账单、收据 |
+| medical-record | wiki/医疗记录/ | 检查报告、就诊记录、处方 |
+| insurance | wiki/保险单/ | 保险单、理赔记录 |
+| code-snippet | wiki/代码片段/ | 可复用的代码片段 |
+| api-doc | wiki/API文档/ | API 接口文档 |
+| error-log | wiki/错误日志/ | 故障日志、报错记录 |
+
+### 可拆分（multi-page mode）— 导入时按需拆出子页
+
+| 类型 | 目录 | 用途 |
+|------|------|------|
+| paper | wiki/论文/ | 学术论文（拆出 concept / tool / dataset 子页） |
+| concept | wiki/概念/ | 概念、术语、想法、技术 |
+| tool | wiki/工具/ | 工具、软件、库、服务 |
+| dataset | wiki/数据集/ | 数据集 |
+| person | wiki/人物/ | 人物档案（学者、作者、CEO） |
+| company | wiki/公司/ | 公司、组织、机构 |
+| regulation | wiki/法规/ | 法律法规、合规要求、政策 |
+
+### 元数据
+
+| 类型 | 目录 | 用途 |
+|------|------|------|
+| synthesis | wiki/综合/ | 跨主题综合分析、综述 |
+| overview | wiki/ | wiki/overview.md（项目唯一） |
+| index | wiki/ | wiki/index.md（项目唯一） |
+| log | wiki/ | wiki/log.md（项目唯一） |
+
+## 命名约定
+
+- 文件名：英文用 `kebab-case.md`，中文可直接用中文（如 `东京三日游.md`、`合同-2024-供应商A.md`）
+- 来源文件已有清晰标题时，直接用标题作为 slug，不要瞎改
+- 日期类（会议 / 日志 / 发票）建议用 `YYYY-MM-DD-标题.md`
+
+## Frontmatter
+
+每个页面顶部 YAML 块（参考字段，按 type 选用）：
+
+```yaml
+---
+type: travel-plan | manual | project-doc | tutorial | book | recipe | note | report | article | meeting | decision | project | film-tv | music | game | menu | shopping-list | fitness-plan | contract | invoice | medical-record | insurance | code-snippet | api-doc | error-log | paper | concept | tool | dataset | person | company | regulation | synthesis | overview
+title: 人读的标题
+tags: []
+related: []
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+sources: [原始文件名]
+---
+```
+
+不同 type 可加专属字段（旅游：destination / dates；合同：parties / value / 签约日；菜谱：servings / prep_time；等等）。LLM 在生成时会按 type 自适应——你只要在这份 schema 里**追加示例**即可。
+
+## 索引格式
+
+`wiki/index.md` 按类型分组列出所有页面，每条格式：
+```
+- [[页面 slug]] — 一行说明
+```
+
+## 日志格式
+
+`wiki/log.md` 按时间倒序记录操作：
+```
+## YYYY-MM-DD
+
+- 操作 / 发现
+```
+
+## 互链规则
+
+- 用 `[[页面 slug]]` 在页面之间互链
+- 每个实体、概念都应出现在 `wiki/index.md`
+- query 页链到它依据的 source 和 concept
+- synthesis 页通过 `related:` 引用所有相关 source
+- 「整篇保留」类型的页之间也鼓励互链（例如旅游方案可以链到相关餐厅菜单、菜谱、购物清单）
+- 「可拆分」类型自动被 paper / report 拆分逻辑引用
+
+## 矛盾处理
+
+当资料之间出现矛盾时：
+1. 在相关 concept / entity 页里标注矛盾
+2. 新建或更新一个 query 页，追踪这个开放问题
+3. 把两份 source 都链到 query 页
+4. 证据充分后，在 synthesis 页给出结论
+
+## 拆分规则（重要）
+
+LLM 在导入资料时，**必须先判断资料属于「整篇保留」还是「可拆分」**：
+
+- **整篇保留**：旅游方案、手册、项目文档、教程、书籍、食谱、笔记、报告、文章、会议、决策、项目、影视、音乐、游戏、菜单、购物清单、健身计划、合同、发票、医疗记录、保险单、代码片段、API 文档、错误日志 → **只产出一份 wiki 页面，不要拆成 entities/concepts**
+- **可拆分**：论文、百科条目、综合性长文 → 可以同时产出一份 source 摘要 + 若干 concept / tool / dataset 子页
+
+判断标准：**文档的本质**（叙事是否连贯、是否有单一工作流），而非长度。一份 200 页的行程仍是整篇保留；一份 2 页的论文仍要拆分。**拿不准时一律走整篇保留。**
+````
+
+</details>
+
 ## 技术栈
 
 | 层级 | 技术 |

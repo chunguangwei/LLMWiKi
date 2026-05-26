@@ -418,7 +418,7 @@ Upstream hard-coded every source into entity/concept pages — a travel plan exp
 - **Single-page** — one source → one page, no splitting: travel plans, manuals, project docs, tutorials, books, recipes, notes, reports, articles, meetings, decisions, films, music, games, menus, shopping lists, contracts, invoices, medical records, code snippets, API docs, error logs …
 - **Splittable** — source summary + concept/tool/person subpages: papers, concepts, tools, datasets, people, companies, regulations
 
-New projects default to it. Existing projects upgrade via **Settings → Schema Upgrade** (backs up `schema.md` → `.bak`, writes the comprehensive schema in the UI language, pre-creates the 34 dirs; old pages stay put). Categories are just a starting point — edit `schema.md` to add/rename types. Full docs: [`docs/features.md §5`](docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型) and [`docs/user-rules.md`](docs/user-rules.md).
+New projects default to it. Existing projects upgrade via **Settings → Schema Upgrade** (backs up `schema.md` → `.bak`, writes the comprehensive schema in the UI language, pre-creates the 34 dirs; old pages stay put). Categories are just a starting point — edit `schema.md` to add/rename types. Full docs: [`docs/features.md §5`](docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型) and [`docs/user-rules.md`](docs/user-rules.md). A full ready-to-copy example `schema.md` (Chinese) is in [`README_CN.md`](README_CN.md#示例一份完整的-schemamd可参考--复制).
 
 ### 24. Self-Hosted In-Place Auto-Update
 
