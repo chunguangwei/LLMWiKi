@@ -33,11 +33,12 @@
 > **cloud-share-friendly local state split**, **complete Chinese i18n with
 > one-click language switching**, **34-type comprehensive schema + smart
 > splitting**, **self-hosted in-place auto-update**, **encrypted config
-> backup**, and **docx/Office source preview**.
+> backup**, **docx/Office source preview**, and an **editable page-type
+> selector**.
 > See the outer [`UPSTREAM.md`](../UPSTREAM.md) and [`docs/features.md`](../docs/features.md);
 > for day-to-day usage check [`docs/user-manual.md`](../docs/user-manual.md),
 > for custom categories/rules see [`docs/user-rules.md`](../docs/user-rules.md).
-> Most of this README comes from upstream; the fork additions are in sections 19–26 below.
+> Most of this README comes from upstream; the fork additions are in sections 19–27 below.
 
 ## Features
 
@@ -435,6 +436,10 @@ Details: [`../docs/features.md §6.4`](../docs/features.md#64-加密配置备份
 ### 26. docx / Office Source Preview
 
 Raw Word/Office source files (`.docx` `.xlsx` `.pptx` `.odt` `.ods` `.odp`) now render their **extracted text** in the preview panel instead of "Preview not available for this file type". They're categorized as `office` on the frontend so the panel reads them like PDFs (backend extraction via `docx-rs` / `calamine`).
+
+### 27. Editable Page-Type Selector
+
+The left knowledge tree groups pages by their frontmatter `type:` slug. That slug is now editable straight from the preview panel: the type chip is a **dropdown** (localized labels, reusing the `knowledgeTree.types.*` strings). Pick a category and the page's `type:` is rewritten and it **instantly regroups** in the sidebar — no more hand-editing YAML or memorizing the 34 English slugs. An unknown/legacy current slug is kept selectable so it's never silently dropped; enabled for `wiki/` pages only (not `index.md` / `log.md` / project docs). Implementation: `setFrontmatterType()` in `lib/frontmatter.ts` rewrites only the frontmatter block; `preview-panel.tsx` writes + bumps `dataVersion` so the tree reloads.
 
 ## Tech Stack
 

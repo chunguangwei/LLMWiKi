@@ -31,9 +31,9 @@
 > 📦 **这是 LLMWiKi fork** —— 在 nashsu/llm_wiki 之上新增了多项能力：
 > **`.llmwiki` 一键导入/导出**、**页面级定时联网刷新**、**云盘 + 团队部署友好的本地状态分离**、
 > **中文 i18n 补全 + 一键切换语言**、**34 类综合 schema + 智能拆分**、
-> **自建就地自动更新**、**加密配置备份**、**docx/Office 源文件预览**。
+> **自建就地自动更新**、**加密配置备份**、**docx/Office 源文件预览**、**页面类型选择器**。
 > 详见外层 [`UPSTREAM.md`](../UPSTREAM.md) 与 [`docs/features.md`](../docs/features.md)，日常使用看 [`docs/user-manual.md`](../docs/user-manual.md)，自定义分类/规则看 [`docs/user-rules.md`](../docs/user-rules.md)。
-> 此 README 大部分内容来自 upstream；fork 新增功能见下方第 19–26 节。
+> 此 README 大部分内容来自 upstream；fork 新增功能见下方第 19–27 节。
 
 ## 功能亮点
 
@@ -431,6 +431,10 @@ API Key 一直在 OS 应用数据目录，从不在项目目录里。
 ### 26. docx / Office 源文件预览
 
 原始 Word/Office 源文件（`.docx` `.xlsx` `.pptx` `.odt` `.ods` `.odp`）现在在预览面板里直接渲染**提取出的文本**，而不再提示「Preview not available for this file type」。前端把它们归为 `office` 类，预览面板像读 PDF 一样读取（后端用 `docx-rs` / `calamine` 提取）。
+
+### 27. 页面类型选择器（即时调整左侧分组）
+
+左侧知识树按每页 frontmatter 的 `type:` slug 分组。现在这个 slug 可以**直接在预览面板里改**:类型徽章变成了**下拉框**(显示本地化标签,复用 `knowledgeTree.types.*` 文案)。选一个分类,程序就把该页 `type:` 写回并**实时把它挪到左侧对应分组**——不用再手改 YAML,也不必记 34 个英文 slug。原有的未知/旧 slug 会保留可选,不会被悄悄丢掉;仅对 `wiki/` 下页面生效(不含 `index.md` / `log.md` / 项目根文档)。实现:`lib/frontmatter.ts` 的 `setFrontmatterType()` 只改 frontmatter 块,`preview-panel.tsx` 写回并 `bumpDataVersion()` 触发树重载。
 
 ## 技术栈
 
