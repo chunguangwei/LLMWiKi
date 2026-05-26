@@ -79,6 +79,36 @@ const TYPE_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; col
 
 const DEFAULT_CONFIG = { icon: FileText, labelKey: "knowledgeTree.types.other", color: "text-muted-foreground", order: 99 }
 
+// Which type groups start expanded the first time a project is opened.
+// After that, the user's expand/collapse choices are remembered per
+// project (localStorage) so groups don't snap back on reload/relaunch.
+const DEFAULT_EXPANDED = ["overview", "entity", "concept", "source"]
+const EXPANDED_KEY_PREFIX = "knowledgeTreeExpanded:"
+
+function loadExpandedTypes(projectId: string | undefined): Set<string> {
+  if (!projectId) return new Set(DEFAULT_EXPANDED)
+  try {
+    const raw = localStorage.getItem(EXPANDED_KEY_PREFIX + projectId)
+    if (!raw) return new Set(DEFAULT_EXPANDED)
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter((x): x is string => typeof x === "string"))
+    }
+  } catch {
+    /* fall through to default */
+  }
+  return new Set(DEFAULT_EXPANDED)
+}
+
+function saveExpandedTypes(projectId: string | undefined, set: Set<string>) {
+  if (!projectId) return
+  try {
+    localStorage.setItem(EXPANDED_KEY_PREFIX + projectId, JSON.stringify([...set]))
+  } catch {
+    /* non-critical: persistence is best-effort */
+  }
+}
+
 export function KnowledgeTree() {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
@@ -89,7 +119,11 @@ export function KnowledgeTree() {
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
   const dataVersion = useWikiStore((s) => s.dataVersion)
   const [pages, setPages] = useState<WikiPageInfo[]>([])
-  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["overview", "entity", "concept", "source"]))
+  // Restored from localStorage (per project) so expand/collapse choices
+  // survive reload / relaunch instead of resetting to the default set.
+  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(() =>
+    loadExpandedTypes(useWikiStore.getState().project?.id),
+  )
   // Two-stage delete: first click arms the row, second click executes.
   // Only one row armed at a time (clicking another row replaces).
   const [armedPath, setArmedPath] = useState<string | null>(null)
@@ -132,6 +166,11 @@ export function KnowledgeTree() {
   useEffect(() => {
     loadPages()
   }, [loadPages, fileTree, dataVersion])
+
+  // Switching projects restores that project's saved expand/collapse state.
+  useEffect(() => {
+    setExpandedTypes(loadExpandedTypes(project?.id))
+  }, [project?.id])
 
   const handleDeleteClick = useCallback(
     async (pagePath: string) => {
@@ -194,6 +233,7 @@ export function KnowledgeTree() {
       const next = new Set(prev)
       if (next.has(type)) next.delete(type)
       else next.add(type)
+      saveExpandedTypes(project?.id, next)
       return next
     })
   }
