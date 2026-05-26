@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.17",
+    date: "2026-05-26",
+    highlights: {
+      en: [
+        "Change a wiki page's type right from the preview panel: the type chip is now a dropdown — pick a category and the page instantly moves to the matching group in the left sidebar (no more hand-editing frontmatter).",
+      ],
+      zh: [
+        "在预览面板里直接改 wiki 页面的类型：类型徽章变成下拉框，选一个分类，页面立刻归到左侧对应分组（不用再手动改 frontmatter）。",
+      ],
+    },
+  },
+  {
     version: "0.4.16",
     date: "2026-05-25",
     highlights: {
