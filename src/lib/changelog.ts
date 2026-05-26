@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.18",
+    date: "2026-05-26",
+    highlights: {
+      en: [
+        "Changing a page's type now also updates wiki/index.md: the page's catalog entry moves to the matching category section (kept in sync with the left sidebar), while its Sources listing stays intact.",
+      ],
+      zh: [
+        "修改页面类型时会一并更新 wiki/index.md：目录里该页的条目自动移到对应分类章节（与左侧分组保持一致），同时保留它在「Sources」里的条目。",
+      ],
+    },
+  },
+  {
     version: "0.4.17",
     date: "2026-05-26",
     highlights: {
