@@ -33,7 +33,7 @@
 > **クラウド共有 / チーム配備に対応したローカル状態分離**、
 > **中国語 i18n 完全化 + ワンクリック言語切替**、**34 種類の総合スキーマ + スマート分割**、
 > **セルフホスト型インプレース自動更新**、**暗号化された設定バックアップ**、**docx/Office ソースプレビュー**、**編集可能なページタイプセレクタ**。
-> 詳細は外側の [`UPSTREAM.md`](../UPSTREAM.md) と [`docs/features.md`](../docs/features.md) を参照。
+> 詳細は外側の [`UPSTREAM.md`](UPSTREAM.md) と [`docs/features.md`](docs/features.md) を参照。
 > フォークの追加機能は下記 §19〜27 にあります。
 
 ## 主な機能
@@ -368,7 +368,7 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 
 ---
 
-> 以下のセクションは nashsu/llm_wiki に対する **LLMWiKi フォーク** の追加機能です。ユーザー向けの詳細は [`../docs/features.md`](../docs/features.md) を参照してください。
+> 以下のセクションは nashsu/llm_wiki に対する **LLMWiKi フォーク** の追加機能です。ユーザー向けの詳細は [`docs/features.md`](docs/features.md) を参照してください。
 
 ### 19. `.llmwiki` ワンクリック インポート / エクスポート
 
@@ -405,7 +405,7 @@ refresh-queries:                  # 任意。省略時は LLM が自動生成
 - `.llm-wiki/` — **プロジェクト共有**: インジェストキャッシュ、レビューキュー、ページ履歴、project.json
 - `.llm-wiki-local/` — **ユーザー個別の非公開**: チャット会話、conversations.json
 
-既存ユーザーは初回起動時に自動移行。デプロイ手順は [`../docs/cloud-sharing.md`](../docs/cloud-sharing.md)（iCloud / OneDrive / Dropbox / Git での `.llm-wiki-local/` 除外ルール）。API キーは常に OS のアプリデータディレクトリにあり、プロジェクト内には保存されません。
+既存ユーザーは初回起動時に自動移行。デプロイ手順は [`docs/cloud-sharing.md`](docs/cloud-sharing.md)（iCloud / OneDrive / Dropbox / Git での `.llm-wiki-local/` 除外ルール）。API キーは常に OS のアプリデータディレクトリにあり、プロジェクト内には保存されません。
 
 ### 22. 中国語 i18n の完成 + ワンクリック言語切替
 
@@ -420,11 +420,11 @@ refresh-queries:                  # 任意。省略時は LLM が自動生成
 - **単一ページ型** — 1 ソース → 1 ページ、分割なし: 旅行プラン、マニュアル、プロジェクト文書、チュートリアル、書籍、レシピ、ノート、レポート、記事、会議、意思決定、映画、音楽、ゲーム、メニュー、買い物リスト、契約、請求書、医療記録、コードスニペット、API ドキュメント、エラーログ……
 - **分割可能型** — ソースサマリー + コンセプト/ツール/人物のサブページ: 論文、コンセプト、ツール、データセット、人物、企業、規制
 
-新規プロジェクトは既定でこれを使用。既存プロジェクトは **設定 → スキーマアップグレード**（`schema.md` を `.bak` にバックアップ、UI 言語で総合スキーマを書き込み、34 ディレクトリを事前作成。旧ページはそのまま）。分類は出発点に過ぎず、`schema.md` を編集して型を追加・改名できます。詳細: [`../docs/features.md §5`](../docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型)、[`../docs/user-rules.md`](../docs/user-rules.md)。
+新規プロジェクトは既定でこれを使用。既存プロジェクトは **設定 → スキーマアップグレード**（`schema.md` を `.bak` にバックアップ、UI 言語で総合スキーマを書き込み、34 ディレクトリを事前作成。旧ページはそのまま）。分類は出発点に過ぎず、`schema.md` を編集して型を追加・改名できます。詳細: [`docs/features.md §5`](docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型)、[`docs/user-rules.md`](docs/user-rules.md)。
 
 ### 24. セルフホスト型インプレース自動更新
 
-更新エンドポイントは本フォーク自身の GitHub リリース（`chunguangwei/LLMWiKi`）を指し、**真のインプレース更新**（`tauri-plugin-updater` + `tauri-plugin-process`）に強化されています：バックグラウンドチェック → バナー / 設定 → バージョン情報 → *今すぐ更新* → 署名済み成果物をダウンロード → 内蔵 minisign 公開鍵で検証 → その場で置換 → *再起動して適用*。**設定と API キーには一切手を触れません**（アンインストール/再インストール不要）。リリースフロー + 署名鍵のバックアップは [`../docs/release-and-update.md`](../docs/release-and-update.md)。
+更新エンドポイントは本フォーク自身の GitHub リリース（`chunguangwei/LLMWiKi`）を指し、**真のインプレース更新**（`tauri-plugin-updater` + `tauri-plugin-process`）に強化されています：バックグラウンドチェック → バナー / 設定 → バージョン情報 → *今すぐ更新* → 署名済み成果物をダウンロード → 内蔵 minisign 公開鍵で検証 → その場で置換 → *再起動して適用*。**設定と API キーには一切手を触れません**（アンインストール/再インストール不要）。リリースフロー + 署名鍵のバックアップは [`docs/release-and-update.md`](docs/release-and-update.md)。
 
 ### 25. 暗号化された設定バックアップ / 移行（API キーを失わない）
 
@@ -433,7 +433,7 @@ refresh-queries:                  # 任意。省略時は LLM が自動生成
 - **エクスポート / インポート**（マシン間）: パスフレーズを設定 → 暗号化ファイル `.llmwiki-config` をエクスポート（Argon2id + AES-256-GCM）。新しいマシンで同じパスフレーズでインポート。パスフレーズが唯一の鍵で、バイナリ内には復号可能なものは存在しません。
 - **起動時自動バックアップ**（同一マシンの再インストール）: 起動ごとに設定を `~/Documents/LLMWiki/config-backup.enc` に暗号化（鍵は OS キーチェーン）。新規インストール時に自動復元、パスフレーズ不要。
 
-詳細: [`../docs/features.md §6.4`](../docs/features.md#64-加密配置备份防丢-key)。
+詳細: [`docs/features.md §6.4`](docs/features.md#64-加密配置备份防丢-key)。
 
 ### 26. docx / Office ソースファイルのプレビュー
 
@@ -473,7 +473,7 @@ refresh-queries:                  # 任意。省略時は LLM が自動生成
 | Windows（x64 のみ） | `LLM.Wiki_<バージョン>_x64-setup.exe`（推奨）/ `_x64_en-US.msi` | SmartScreen → **詳細情報 → 実行** |
 | Linux | `.deb` / `.AppImage` / `.rpm`（x64 + arm64） | ディストリに応じてインストール |
 
-> 配布物はプラットフォーム商用コード署名なし（OSS では一般的で、機能・安全性に影響なし。自動更新は独自の minisign 検証あり）。一度インストールすれば再ダウンロード不要——新バージョンはアプリ内でワンクリックのインプレース更新として案内されます。詳細は [`../docs/release-and-update.md §1`](../docs/release-and-update.md#1-下载最新版终端用户视角)。
+> 配布物はプラットフォーム商用コード署名なし（OSS では一般的で、機能・安全性に影響なし。自動更新は独自の minisign 検証あり）。一度インストールすれば再ダウンロード不要——新バージョンはアプリ内でワンクリックのインプレース更新として案内されます。詳細は [`docs/release-and-update.md §1`](docs/release-and-update.md#1-下载最新版终端用户视角)。
 
 ### ソースからビルド
 

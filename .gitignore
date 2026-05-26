@@ -25,8 +25,7 @@ src-tauri/gen/
 # for local testing — chats and conversations must never be committed.
 .llm-wiki-local/
 
-# Internal docs (not shipped)
-docs/
+# Internal agent notes (not shipped)
 AGENTS.md
 
 # Benchmark and test data (local only)

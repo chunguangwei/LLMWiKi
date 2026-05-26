@@ -32,7 +32,7 @@
 > **`.llmwiki` 一键导入/导出**、**页面级定时联网刷新**、**云盘 + 团队部署友好的本地状态分离**、
 > **中文 i18n 补全 + 一键切换语言**、**34 类综合 schema + 智能拆分**、
 > **自建就地自动更新**、**加密配置备份**、**docx/Office 源文件预览**、**页面类型选择器**。
-> 详见外层 [`UPSTREAM.md`](../UPSTREAM.md) 与 [`docs/features.md`](../docs/features.md)，日常使用看 [`docs/user-manual.md`](../docs/user-manual.md)，自定义分类/规则看 [`docs/user-rules.md`](../docs/user-rules.md)。
+> 详见外层 [`UPSTREAM.md`](UPSTREAM.md) 与 [`docs/features.md`](docs/features.md)，日常使用看 [`docs/user-manual.md`](docs/user-manual.md)，自定义分类/规则看 [`docs/user-rules.md`](docs/user-rules.md)。
 > 此 README 大部分内容来自 upstream；fork 新增功能见下方第 19–27 节。
 
 ## 功能亮点
@@ -359,7 +359,7 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 
 ---
 
-> 以下是 **LLMWiKi fork** 在 nashsu/llm_wiki 之上的新增功能。完整使用文档见 [`../docs/features.md`](../docs/features.md)。
+> 以下是 **LLMWiKi fork** 在 nashsu/llm_wiki 之上的新增功能。完整使用文档见 [`docs/features.md`](docs/features.md)。
 
 ### 19. `.llmwiki` 一键导入/导出
 
@@ -396,7 +396,7 @@ refresh-queries:                  # 可选；不填则 LLM 自动生成
 - `.llm-wiki/` —— **项目共享**：ingest 缓存、审核队列、page history、project.json
 - `.llm-wiki-local/` —— **个人私密**：聊天对话、conversations 列表
 
-旧用户首次启动自动迁移。云盘部署详见 [`../docs/cloud-sharing.md`](../docs/cloud-sharing.md)（含 iCloud / OneDrive / Dropbox / Git 各自如何排除 `.llm-wiki-local/`）。
+旧用户首次启动自动迁移。云盘部署详见 [`docs/cloud-sharing.md`](docs/cloud-sharing.md)（含 iCloud / OneDrive / Dropbox / Git 各自如何排除 `.llm-wiki-local/`）。
 
 API Key 一直在 OS 应用数据目录，从不在项目目录里。
 
@@ -413,11 +413,11 @@ API Key 一直在 OS 应用数据目录，从不在项目目录里。
 - **单页模式** —— 一份源文档 → 一份页面，不拆：旅游方案、用户手册、项目文档、教程、书籍、食谱、笔记、报告、文章、会议、决策、影视、音乐、游戏、菜单、购物清单、合同、发票、医疗记录、代码片段、API 文档、错误日志……
 - **可拆分模式** —— 源摘要 + 概念/工具/人物子页：论文、概念、工具、数据集、人物、公司、法规
 
-新建项目默认用它；存量项目走 **设置 → Schema 升级**（备份 `schema.md` → `.bak`、按 UI 语言写入综合 schema、预创建 34 个目录；旧页面保留原位）。分类只是起点——改 `schema.md` 即可增删类型。详见 [`../docs/features.md §5`](../docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型) 与 [`../docs/user-rules.md`](../docs/user-rules.md)。
+新建项目默认用它；存量项目走 **设置 → Schema 升级**（备份 `schema.md` → `.bak`、按 UI 语言写入综合 schema、预创建 34 个目录；旧页面保留原位）。分类只是起点——改 `schema.md` 即可增删类型。详见 [`docs/features.md §5`](docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型) 与 [`docs/user-rules.md`](docs/user-rules.md)。
 
 ### 24. 自建 GitHub 就地自动更新
 
-更新源指向本 fork 自己的 GitHub release（`chunguangwei/LLMWiKi`），并升级为**真正的就地更新**（`tauri-plugin-updater` + `tauri-plugin-process`）：后台检查 → 顶部横幅 / 设置 → 关于 →「立即更新」→ 下载签名产物 → 用内置 minisign 公钥验签 → 就地替换 →「重启以应用」。**配置与 API Key 全程不动**（不卸载重装）。发版流程 + 签名密钥备份见 [`../docs/release-and-update.md`](../docs/release-and-update.md)。
+更新源指向本 fork 自己的 GitHub release（`chunguangwei/LLMWiKi`），并升级为**真正的就地更新**（`tauri-plugin-updater` + `tauri-plugin-process`）：后台检查 → 顶部横幅 / 设置 → 关于 →「立即更新」→ 下载签名产物 → 用内置 minisign 公钥验签 → 就地替换 →「重启以应用」。**配置与 API Key 全程不动**（不卸载重装）。发版流程 + 签名密钥备份见 [`docs/release-and-update.md`](docs/release-and-update.md)。
 
 ### 25. 加密配置备份 / 迁移（防丢 API Key）
 
@@ -426,7 +426,7 @@ API Key 一直在 OS 应用数据目录，从不在项目目录里。
 - **导出 / 导入**（换机器）：设口令 → 导出加密文件 `.llmwiki-config`（Argon2id + AES-256-GCM）；新机输同口令导入。口令是唯一解钥，二进制里不含任何可解密内容。
 - **启动自动备份**（同机重装）：每次启动把配置加密备份到 `~/Documents/LLMWiki/config-backup.enc`（密钥存系统钥匙串）；全新安装自动恢复，无需口令。
 
-详见 [`../docs/features.md §6.4`](../docs/features.md#64-加密配置备份防丢-key)。
+详见 [`docs/features.md §6.4`](docs/features.md#64-加密配置备份防丢-key)。
 
 ### 26. docx / Office 源文件预览
 
@@ -466,7 +466,7 @@ API Key 一直在 OS 应用数据目录，从不在项目目录里。
 | Windows（仅 x64） | `LLM.Wiki_<版本>_x64-setup.exe`（推荐）/ `_x64_en-US.msi` | SmartScreen → **更多信息 → 仍要运行** |
 | Linux | `.deb` / `.AppImage` / `.rpm`（x64 + arm64） | 按发行版常规安装 |
 
-> 安装包未做平台级商业代码签名（OSS 常态，不影响功能/安全；自动更新另有 minisign 验签）。装过一次后无需再手动下载——新版本会在 app 内提示一键就地更新。详细下载/安装说明见 [`../docs/release-and-update.md §1`](../docs/release-and-update.md#1-下载最新版终端用户视角)。
+> 安装包未做平台级商业代码签名（OSS 常态，不影响功能/安全；自动更新另有 minisign 验签）。装过一次后无需再手动下载——新版本会在 app 内提示一键就地更新。详细下载/安装说明见 [`docs/release-and-update.md §1`](docs/release-and-update.md#1-下载最新版终端用户视角)。
 
 ### 从源码构建
 

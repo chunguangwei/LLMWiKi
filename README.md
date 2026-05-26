@@ -35,9 +35,9 @@
 > splitting**, **self-hosted in-place auto-update**, **encrypted config
 > backup**, **docx/Office source preview**, and an **editable page-type
 > selector**.
-> See the outer [`UPSTREAM.md`](../UPSTREAM.md) and [`docs/features.md`](../docs/features.md);
-> for day-to-day usage check [`docs/user-manual.md`](../docs/user-manual.md),
-> for custom categories/rules see [`docs/user-rules.md`](../docs/user-rules.md).
+> See the outer [`UPSTREAM.md`](UPSTREAM.md) and [`docs/features.md`](docs/features.md);
+> for day-to-day usage check [`docs/user-manual.md`](docs/user-manual.md),
+> for custom categories/rules see [`docs/user-rules.md`](docs/user-rules.md).
 > Most of this README comes from upstream; the fork additions are in sections 19–27 below.
 
 ## Features
@@ -364,7 +364,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 
 ---
 
-> The sections below are **LLMWiKi fork** additions on top of nashsu/llm_wiki. Full user docs in [`../docs/features.md`](../docs/features.md).
+> The sections below are **LLMWiKi fork** additions on top of nashsu/llm_wiki. Full user docs in [`docs/features.md`](docs/features.md).
 
 ### 19. `.llmwiki` One-Click Import / Export
 
@@ -401,7 +401,7 @@ Originally `.llm-wiki/` mixed project-shared metadata with private chats — bad
 - `.llm-wiki/` — **project-shared**: ingest cache, review queue, page history, project.json
 - `.llm-wiki-local/` — **per-user private**: chat conversations, conversations.json
 
-Existing users auto-migrate on first launch. Deployment guide in [`../docs/cloud-sharing.md`](../docs/cloud-sharing.md) (covers iCloud / OneDrive / Dropbox / Git rules for excluding `.llm-wiki-local/`).
+Existing users auto-migrate on first launch. Deployment guide in [`docs/cloud-sharing.md`](docs/cloud-sharing.md) (covers iCloud / OneDrive / Dropbox / Git rules for excluding `.llm-wiki-local/`).
 
 API keys have always lived in the OS app-data dir, never inside the project dir.
 
@@ -418,11 +418,11 @@ Upstream hard-coded every source into entity/concept pages — a travel plan exp
 - **Single-page** — one source → one page, no splitting: travel plans, manuals, project docs, tutorials, books, recipes, notes, reports, articles, meetings, decisions, films, music, games, menus, shopping lists, contracts, invoices, medical records, code snippets, API docs, error logs …
 - **Splittable** — source summary + concept/tool/person subpages: papers, concepts, tools, datasets, people, companies, regulations
 
-New projects default to it. Existing projects upgrade via **Settings → Schema Upgrade** (backs up `schema.md` → `.bak`, writes the comprehensive schema in the UI language, pre-creates the 34 dirs; old pages stay put). Categories are just a starting point — edit `schema.md` to add/rename types. Full docs: [`../docs/features.md §5`](../docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型) and [`../docs/user-rules.md`](../docs/user-rules.md).
+New projects default to it. Existing projects upgrade via **Settings → Schema Upgrade** (backs up `schema.md` → `.bak`, writes the comprehensive schema in the UI language, pre-creates the 34 dirs; old pages stay put). Categories are just a starting point — edit `schema.md` to add/rename types. Full docs: [`docs/features.md §5`](docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型) and [`docs/user-rules.md`](docs/user-rules.md).
 
 ### 24. Self-Hosted In-Place Auto-Update
 
-The updater endpoint points at this fork's own GitHub releases (`chunguangwei/LLMWiKi`), upgraded to a **true in-place update** (`tauri-plugin-updater` + `tauri-plugin-process`): background check → banner / Settings → About → *Update now* → download signed artifact → verify with the built-in minisign pubkey → swap in place → *Restart to apply*. **Config and API keys are never touched** (no uninstall/reinstall). Release flow + signing-key backup in [`../docs/release-and-update.md`](../docs/release-and-update.md).
+The updater endpoint points at this fork's own GitHub releases (`chunguangwei/LLMWiKi`), upgraded to a **true in-place update** (`tauri-plugin-updater` + `tauri-plugin-process`): background check → banner / Settings → About → *Update now* → download signed artifact → verify with the built-in minisign pubkey → swap in place → *Restart to apply*. **Config and API keys are never touched** (no uninstall/reinstall). Release flow + signing-key backup in [`docs/release-and-update.md`](docs/release-and-update.md).
 
 ### 25. Encrypted Config Backup / Migration (never lose your API keys)
 
@@ -431,7 +431,7 @@ The updater endpoint points at this fork's own GitHub releases (`chunguangwei/LL
 - **Export / Import** (cross-machine): set a passphrase → export an encrypted `.llmwiki-config` (Argon2id + AES-256-GCM); import with the same passphrase on the new machine. The passphrase is the only key — nothing decryptable lives in the binary.
 - **Startup auto-backup** (same-machine reinstall): each launch encrypts config to `~/Documents/LLMWiki/config-backup.enc` (key in the OS keychain); a fresh install auto-restores, no passphrase needed.
 
-Details: [`../docs/features.md §6.4`](../docs/features.md#64-加密配置备份防丢-key).
+Details: [`docs/features.md §6.4`](docs/features.md#64-加密配置备份防丢-key).
 
 ### 26. docx / Office Source Preview
 
@@ -471,7 +471,7 @@ Download the latest from **[chunguangwei/LLMWiKi releases](https://github.com/ch
 | Windows (x64 only) | `LLM.Wiki_<version>_x64-setup.exe` (recommended) / `_x64_en-US.msi` | SmartScreen → **More info → Run anyway** |
 | Linux | `.deb` / `.AppImage` / `.rpm` (x64 + arm64) | Install per distro |
 
-> Artifacts aren't commercially code-signed (OSS norm; doesn't affect function/security — auto-update has its own minisign verification). After installing once, you don't need to download again: new versions are offered in-app as a one-click in-place update. Full download/install notes: [`../docs/release-and-update.md §1`](../docs/release-and-update.md#1-下载最新版终端用户视角).
+> Artifacts aren't commercially code-signed (OSS norm; doesn't affect function/security — auto-update has its own minisign verification). After installing once, you don't need to download again: new versions are offered in-app as a one-click in-place update. Full download/install notes: [`docs/release-and-update.md §1`](docs/release-and-update.md#1-下载最新版终端用户视角).
 
 ### Build from Source
 
