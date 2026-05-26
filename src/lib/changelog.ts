@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.19",
+    date: "2026-05-26",
+    highlights: {
+      en: [
+        "The left knowledge tree now remembers which type groups you expanded or collapsed (per project), so they no longer snap back to a fixed default on reload or relaunch.",
+      ],
+      zh: [
+        "左侧知识树现在会记住你展开/收起了哪些分类分组（按项目记忆），重新加载或重启应用后不再回到固定的默认状态。",
+      ],
+    },
+  },
+  {
     version: "0.4.18",
     date: "2026-05-26",
     highlights: {
