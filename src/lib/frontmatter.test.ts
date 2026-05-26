@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { parseFrontmatter } from "./frontmatter"
+import { parseFrontmatter, setFrontmatterType } from "./frontmatter"
 
 describe("parseFrontmatter", () => {
   it("returns null + full body when content has no frontmatter", () => {
@@ -212,5 +212,42 @@ describe("parseFrontmatter", () => {
       "[[digital-twin-wastewater]]",
     ])
     expect(r.body).toBe("# Body")
+  })
+})
+
+describe("setFrontmatterType", () => {
+  it("replaces an existing type line, preserving other keys and the body", () => {
+    const content = `---\ntype: entity\ntitle: "Foo"\n---\n\n# Body`
+    const out = setFrontmatterType(content, "book")
+    const r = parseFrontmatter(out)
+    expect(r.frontmatter).toEqual({ type: "book", title: "Foo" })
+    expect(r.body).toBe("# Body")
+  })
+
+  it("inserts a type line after the opening fence when absent", () => {
+    const content = `---\ntitle: "Foo"\n---\n\n# Body`
+    const out = setFrontmatterType(content, "concept")
+    expect(out).toBe(`---\ntype: concept\ntitle: "Foo"\n---\n\n# Body`)
+  })
+
+  it("prepends a frontmatter block when the file has none", () => {
+    const out = setFrontmatterType("# Just a body", "note")
+    const r = parseFrontmatter(out)
+    expect(r.frontmatter).toEqual({ type: "note" })
+    expect(r.body).toBe("# Just a body")
+  })
+
+  it("does not touch a type:-looking line in the body", () => {
+    const content = `---\ntype: entity\n---\n\n# Body\n\n\`\`\`yaml\ntype: should-not-change\n\`\`\`\n`
+    const out = setFrontmatterType(content, "tool")
+    expect(out).toContain("type: tool")
+    expect(out).toContain("type: should-not-change")
+    expect(parseFrontmatter(out).frontmatter).toEqual({ type: "tool" })
+  })
+
+  it("preserves indentation of the replaced type line", () => {
+    const content = `---\n  type: entity\n---\n\nbody`
+    const out = setFrontmatterType(content, "paper")
+    expect(out).toContain("  type: paper")
   })
 })

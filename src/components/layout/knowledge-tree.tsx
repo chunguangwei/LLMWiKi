@@ -87,6 +87,7 @@ export function KnowledgeTree() {
   const fileTree = useWikiStore((s) => s.fileTree)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
+  const dataVersion = useWikiStore((s) => s.dataVersion)
   const [pages, setPages] = useState<WikiPageInfo[]>([])
   const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["overview", "entity", "concept", "source"]))
   // Two-stage delete: first click arms the row, second click executes.
@@ -125,10 +126,12 @@ export function KnowledgeTree() {
     }
   }, [project])
 
-  // Reload when file tree changes (after ingest writes new pages)
+  // Reload when the file tree changes (after ingest writes new pages) or
+  // when dataVersion bumps (e.g. a page's type was reassigned from the
+  // preview panel, which changes grouping without changing the file list).
   useEffect(() => {
     loadPages()
-  }, [loadPages, fileTree])
+  }, [loadPages, fileTree, dataVersion])
 
   const handleDeleteClick = useCallback(
     async (pagePath: string) => {

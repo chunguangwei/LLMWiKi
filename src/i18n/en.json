@@ -706,6 +706,10 @@
     "selectFile": "Select a file to preview",
     "notAvailable": "Preview not available for this file type"
   },
+  "frontmatter": {
+    "changeType": "Change page type — updates the left sidebar group",
+    "typeUnset": "Set type…"
+  },
   "activity": {
     "processing": "Processing: {{title}}",
     "done": "Done: {{title}}",

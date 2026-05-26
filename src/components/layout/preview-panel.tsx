@@ -4,15 +4,17 @@ import { X } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile } from "@/commands/fs"
 import { getFileCategory, isBinary } from "@/lib/file-types"
+import { setFrontmatterType } from "@/lib/frontmatter"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
-import { getFileName } from "@/lib/path-utils"
+import { getFileName, normalizePath } from "@/lib/path-utils"
 
 export function PreviewPanel() {
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const fileContent = useWikiStore((s) => s.fileContent)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
+  const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
   const { t } = useTranslation()
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Snapshot of what was most recently loaded from disk. Milkdown re-emits
@@ -70,6 +72,27 @@ export function PreviewPanel() {
     [selectedFile]
   )
 
+  // Reassign the page's frontmatter `type:` straight from the preview's
+  // type chip. Writes immediately (no debounce — it's a deliberate single
+  // action), updates the in-memory content + last-loaded snapshot so the
+  // editor's auto-save doesn't fight it, and bumps dataVersion so the
+  // left knowledge tree regroups the page.
+  const handleChangeType = useCallback(
+    (newType: string) => {
+      if (!selectedFile) return
+      const next = setFrontmatterType(fileContent, newType)
+      if (next === fileContent) return
+      writeFile(selectedFile, next)
+        .then(() => {
+          lastLoadedRef.current = next
+          setFileContent(next)
+          bumpDataVersion()
+        })
+        .catch((err) => console.error("Failed to change page type:", err))
+    },
+    [selectedFile, fileContent, setFileContent, bumpDataVersion],
+  )
+
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -86,6 +109,13 @@ export function PreviewPanel() {
 
   const category = getFileCategory(selectedFile)
   const fileName = getFileName(selectedFile)
+  // The type selector only makes sense for wiki pages the left tree groups
+  // by type — not project-root docs (purpose.md/schema.md) or the
+  // auto-managed index.md / log.md.
+  const isTypeableWikiPage =
+    normalizePath(selectedFile).includes("/wiki/") &&
+    fileName !== "index.md" &&
+    fileName !== "log.md"
 
   return (
     <div className="flex h-full flex-col">
@@ -106,6 +136,7 @@ export function PreviewPanel() {
             key={selectedFile}
             content={fileContent}
             onSave={handleSave}
+            onChangeType={isTypeableWikiPage ? handleChangeType : undefined}
           />
         ) : (
           <FilePreview

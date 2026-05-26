@@ -706,6 +706,10 @@
     "selectFile": "选择文件以预览",
     "notAvailable": "该文件类型暂不支持预览"
   },
+  "frontmatter": {
+    "changeType": "修改页面类型 —— 会同步更新左侧分组",
+    "typeUnset": "设置类型…"
+  },
   "activity": {
     "processing": "处理中：{{title}}",
     "done": "已完成：{{title}}",

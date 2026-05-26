@@ -58,6 +58,8 @@ function WikiEditorInner({ content, onSave }: WikiEditorInnerProps) {
 interface WikiEditorProps {
   content: string
   onSave: (markdown: string) => void
+  /** When set, the frontmatter panel shows an editable page-type selector. */
+  onChangeType?: (newType: string) => void
 }
 
 function wrapBareMathBlocks(text: string): string {
@@ -67,7 +69,7 @@ function wrapBareMathBlocks(text: string): string {
   )
 }
 
-export function WikiEditor({ content, onSave }: WikiEditorProps) {
+export function WikiEditor({ content, onSave, onChangeType }: WikiEditorProps) {
   // Default to read mode (ReactMarkdown render). Edit mode swaps
   // in Milkdown WYSIWYG. We default to read because:
   //   1. Milkdown's commonmark/gfm preset has no wikilink schema,
@@ -114,14 +116,14 @@ export function WikiEditor({ content, onSave }: WikiEditorProps) {
       {mode === "read" ? (
         <div className="px-6 py-6">
           {frontmatter && <RefreshControls frontmatter={frontmatter} />}
-          {frontmatter && <FrontmatterPanel data={frontmatter} />}
+          {frontmatter && <FrontmatterPanel data={frontmatter} onChangeType={onChangeType} />}
           <WikiReader body={body} />
         </div>
       ) : (
         <MilkdownProvider>
           <div className="prose prose-invert min-w-0 max-w-none overflow-hidden p-6">
             {frontmatter && <RefreshControls frontmatter={frontmatter} />}
-            {frontmatter && <FrontmatterPanel data={frontmatter} />}
+            {frontmatter && <FrontmatterPanel data={frontmatter} onChangeType={onChangeType} />}
             <WikiEditorInner content={processedBody} onSave={handleSave} />
           </div>
         </MilkdownProvider>

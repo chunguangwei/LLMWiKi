@@ -14,8 +14,10 @@ import {
   Calendar,
   Tag as TagIcon,
 } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import type { FrontmatterValue } from "@/lib/frontmatter"
 import { getWikiTypeStyle } from "@/lib/wiki-type-style"
+import { WIKI_TYPE_OPTIONS } from "@/lib/wiki-type-options"
 import {
   resolveRelatedSlug,
   resolveSourceName,
@@ -26,6 +28,13 @@ import { normalizePath } from "@/lib/path-utils"
 
 interface FrontmatterPanelProps {
   data: Record<string, FrontmatterValue>
+  /**
+   * When provided, the type chip becomes an editable selector that
+   * writes the chosen slug back to the page's `type:` frontmatter (which
+   * drives the left knowledge-tree grouping). Omitted for read-only
+   * contexts (e.g. non-markdown file previews).
+   */
+  onChangeType?: (newType: string) => void
 }
 
 const TOP_LEVEL_KEYS = new Set([
@@ -39,7 +48,7 @@ const TOP_LEVEL_KEYS = new Set([
   "origin",
 ])
 
-export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
+export function FrontmatterPanel({ data, onChangeType }: FrontmatterPanelProps) {
   const project = useWikiStore((s) => s.project)
   const fileTree = useWikiStore((s) => s.fileTree)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
@@ -75,7 +84,9 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
   const hasRelations = sources.length > 0 || related.length > 0
   const hasContent =
     hasIdentity || description || origin || hasRelations || extras.length > 0
-  if (!hasContent) return null
+  // Still render when an editable type selector is wired, so a page that
+  // only has frontmatter but no `type:` yet can be assigned one.
+  if (!hasContent && !onChangeType) return null
 
   function handleNavigate(path: string | null) {
     if (!path) return
@@ -99,12 +110,16 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
             </div>
           )}
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
-            {type && (
-              <span
-                className={`rounded px-1.5 py-0.5 font-medium uppercase tracking-wide ${typeStyle.chipClass}`}
-              >
-                {typeStyle.label}
-              </span>
+            {onChangeType ? (
+              <TypeSelect type={type} chipClass={typeStyle.chipClass} onChangeType={onChangeType} />
+            ) : (
+              type && (
+                <span
+                  className={`rounded px-1.5 py-0.5 font-medium uppercase tracking-wide ${typeStyle.chipClass}`}
+                >
+                  {typeStyle.label}
+                </span>
+              )
             )}
             {created && (
               <span className="inline-flex items-center gap-1 text-muted-foreground">
@@ -342,6 +357,50 @@ function iconForSource(name: string) {
     default:
       return FileIcon
   }
+}
+
+/**
+ * Editable type chip: a compact native select listing the canonical wiki
+ * types. Picking one writes the English slug back to the page's `type:`
+ * frontmatter (via `onChangeType`), which regroups the page in the left
+ * knowledge tree. Keeps an unknown current value selectable so a custom
+ * or legacy slug isn't silently dropped.
+ */
+function TypeSelect({
+  type,
+  chipClass,
+  onChangeType,
+}: {
+  type: string | null
+  chipClass: string
+  onChangeType: (newType: string) => void
+}) {
+  const { t } = useTranslation()
+  const current = type ? type.trim().toLowerCase() : ""
+  const known = WIKI_TYPE_OPTIONS.some((o) => o.value === current)
+  return (
+    <select
+      value={current}
+      onChange={(e) => {
+        const v = e.target.value
+        if (v && v !== current) onChangeType(v)
+      }}
+      title={t("frontmatter.changeType", {
+        defaultValue: "Change page type — updates the left sidebar group",
+      })}
+      className={`rounded px-1.5 py-0.5 font-medium uppercase tracking-wide focus:outline-none focus:ring-1 focus:ring-ring ${chipClass}`}
+    >
+      {current === "" && (
+        <option value="">{t("frontmatter.typeUnset", { defaultValue: "Set type…" })}</option>
+      )}
+      {!known && current !== "" && <option value={current}>{current}</option>}
+      {WIKI_TYPE_OPTIONS.map((o) => (
+        <option key={o.value} value={o.value}>
+          {t(o.labelKey)}
+        </option>
+      ))}
+    </select>
+  )
 }
 
 function stringValue(v: FrontmatterValue | undefined): string | null {

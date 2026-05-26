@@ -65,6 +65,35 @@ export function parseFrontmatter(content: string): FrontmatterParseResult {
 }
 
 /**
+ * Return `content` with its frontmatter `type:` set to `newType`.
+ *
+ * - Replaces an existing `type:` line **inside the frontmatter block**
+ *   (indentation preserved), leaving every other YAML key untouched.
+ * - Inserts a `type:` line right after the opening `---` fence when the
+ *   block has no `type:` yet.
+ * - Prepends a minimal frontmatter block when the file has none.
+ *
+ * The body is preserved verbatim — we only rewrite the literal
+ * `rawBlock` reported by `parseFrontmatter`, so a `type:`-looking line
+ * deeper in the body (e.g. inside a code block) is never touched.
+ */
+export function setFrontmatterType(content: string, newType: string): string {
+  const typeLine = `type: ${newType}`
+  const { rawBlock, body } = parseFrontmatter(content)
+
+  if (!rawBlock) {
+    return `---\n${typeLine}\n---\n\n${content}`
+  }
+
+  const typeLineRe = /^([ \t]*)type:[ \t]*.*$/m
+  const newBlock = typeLineRe.test(rawBlock)
+    ? rawBlock.replace(typeLineRe, `$1${typeLine}`)
+    : rawBlock.replace(/^(---[ \t]*\r?\n)/, `$1${typeLine}\n`)
+
+  return newBlock + body
+}
+
+/**
  * Find the first `---…---` frontmatter block. Strict (top-of-file)
  * match is preferred; if it fails we scan a small window for an
  * unanchored block, which lets us recover from common LLM-corrupted
