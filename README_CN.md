@@ -28,11 +28,12 @@
   <img src="assets/overview.jpg" width="100%" alt="概览">
 </p>
 
-> 📦 **这是 LLMWiKi fork** —— 在 nashsu/llm_wiki 之上新增了四项能力：
+> 📦 **这是 LLMWiKi fork** —— 在 nashsu/llm_wiki 之上新增了多项能力：
 > **`.llmwiki` 一键导入/导出**、**页面级定时联网刷新**、**云盘 + 团队部署友好的本地状态分离**、
-> **中文 i18n 补全 + 一键切换语言**。
+> **中文 i18n 补全 + 一键切换语言**、**34 类综合 schema + 智能拆分**、
+> **自建就地自动更新**、**加密配置备份**、**docx/Office 源文件预览**。
 > 详见外层 [`UPSTREAM.md`](../UPSTREAM.md) 与 [`docs/features.md`](../docs/features.md)，日常使用看 [`docs/user-manual.md`](../docs/user-manual.md)，自定义分类/规则看 [`docs/user-rules.md`](../docs/user-rules.md)。
-> 此 README 大部分内容来自 upstream；新增功能见下方第 19/20/21/22 节。
+> 此 README 大部分内容来自 upstream；fork 新增功能见下方第 19–26 节。
 
 ## 功能亮点
 
@@ -405,6 +406,32 @@ API Key 一直在 OS 应用数据目录，从不在项目目录里。
 - **一键切换**：上游切语言要先选再点 Save。本 fork 在 *设置 → 界面* 点击「中文 / English」按钮**立刻 `i18n.changeLanguage()` + 持久化**，所有 `useTranslation()` 组件即刻重渲染，免去保存动作
 - 加新语言：复制 `en.json` → 翻译 → 在 `i18n/index.ts` 与 `interface-section.tsx::UI_LANGUAGES` 注册；`i18n-parity` 测试会强制键集合对齐
 
+### 23. 智能拆分 + 综合 schema（34 类，中文目录）
+
+上游把每份资料都硬拆成实体/概念页——一份旅游方案散成 20 个景点页，一本书散成 50 个人物页。本 fork 把分类从代码硬编码改为**完全由 `schema.md` 决定**，并新增**综合模板（34 类、中文优先目录）**覆盖日常文档。LLM 摄入时自动二选一：
+
+- **单页模式** —— 一份源文档 → 一份页面，不拆：旅游方案、用户手册、项目文档、教程、书籍、食谱、笔记、报告、文章、会议、决策、影视、音乐、游戏、菜单、购物清单、合同、发票、医疗记录、代码片段、API 文档、错误日志……
+- **可拆分模式** —— 源摘要 + 概念/工具/人物子页：论文、概念、工具、数据集、人物、公司、法规
+
+新建项目默认用它；存量项目走 **设置 → Schema 升级**（备份 `schema.md` → `.bak`、按 UI 语言写入综合 schema、预创建 34 个目录；旧页面保留原位）。分类只是起点——改 `schema.md` 即可增删类型。详见 [`../docs/features.md §5`](../docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型) 与 [`../docs/user-rules.md`](../docs/user-rules.md)。
+
+### 24. 自建 GitHub 就地自动更新
+
+更新源指向本 fork 自己的 GitHub release（`chunguangwei/LLMWiKi`），并升级为**真正的就地更新**（`tauri-plugin-updater` + `tauri-plugin-process`）：后台检查 → 顶部横幅 / 设置 → 关于 →「立即更新」→ 下载签名产物 → 用内置 minisign 公钥验签 → 就地替换 →「重启以应用」。**配置与 API Key 全程不动**（不卸载重装）。发版流程 + 签名密钥备份见 [`../docs/release-and-update.md`](../docs/release-and-update.md)。
+
+### 25. 加密配置备份 / 迁移（防丢 API Key）
+
+**设置 → 配置备份**，两种模式：
+
+- **导出 / 导入**（换机器）：设口令 → 导出加密文件 `.llmwiki-config`（Argon2id + AES-256-GCM）；新机输同口令导入。口令是唯一解钥，二进制里不含任何可解密内容。
+- **启动自动备份**（同机重装）：每次启动把配置加密备份到 `~/Documents/LLMWiki/config-backup.enc`（密钥存系统钥匙串）；全新安装自动恢复，无需口令。
+
+详见 [`../docs/features.md §6.4`](../docs/features.md#64-加密配置备份防丢-key)。
+
+### 26. docx / Office 源文件预览
+
+原始 Word/Office 源文件（`.docx` `.xlsx` `.pptx` `.odt` `.ods` `.odp`）现在在预览面板里直接渲染**提取出的文本**，而不再提示「Preview not available for this file type」。前端把它们归为 `office` 类，预览面板像读 PDF 一样读取（后端用 `docx-rs` / `calamine` 提取）。
+
 ## 技术栈
 
 | 层级 | 技术 |
@@ -425,19 +452,24 @@ API Key 一直在 OS 应用数据目录，从不在项目目录里。
 
 ## 安装
 
-### 预编译二进制文件
+### 预编译安装包（本 fork）
 
-从 [Releases](https://github.com/nashsu/llm_wiki/releases) 下载：
-- **macOS**：`.dmg`（Apple Silicon + Intel）
-- **Windows**：`.msi`
-- **Linux**：`.deb` / `.AppImage`
+从 **[chunguangwei/LLMWiKi releases](https://github.com/chunguangwei/LLMWiKi/releases/latest)** 下载最新版：
+
+| 平台 | 文件 | 首次启动 |
+|---|---|---|
+| macOS（Apple Silicon） | `LLM.Wiki_<版本>_aarch64.dmg` | 提示「已损坏」时执行 `xattr -dr com.apple.quarantine "/Applications/LLM Wiki.app"` |
+| Windows（仅 x64） | `LLM.Wiki_<版本>_x64-setup.exe`（推荐）/ `_x64_en-US.msi` | SmartScreen → **更多信息 → 仍要运行** |
+| Linux | `.deb` / `.AppImage` / `.rpm`（x64 + arm64） | 按发行版常规安装 |
+
+> 安装包未做平台级商业代码签名（OSS 常态，不影响功能/安全；自动更新另有 minisign 验签）。装过一次后无需再手动下载——新版本会在 app 内提示一键就地更新。详细下载/安装说明见 [`../docs/release-and-update.md §1`](../docs/release-and-update.md#1-下载最新版终端用户视角)。
 
 ### 从源码构建
 
 ```bash
 # 前置条件：Node.js 20+, Rust 1.70+
-git clone https://github.com/nashsu/llm_wiki.git
-cd llm_wiki
+git clone https://github.com/chunguangwei/LLMWiKi.git
+cd LLMWiKi
 npm install
 npm run tauri dev      # 开发模式
 npm run tauri build    # 生产构建
@@ -493,22 +525,20 @@ npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm_wiki_ski
 ```
 my-wiki/
 ├── purpose.md              # 目标、关键问题、研究范围
-├── schema.md               # Wiki 结构规则、页面类型
+├── schema.md               # 页面类型与命名约定（综合模板 = 34 类）
 ├── raw/
 │   ├── sources/            # 上传的文档（不可变）
 │   └── assets/             # 本地图片
-├── wiki/
+├── wiki/                   # LLM 写的页面，按 schema.md 分目录
 │   ├── index.md            # 内容目录
 │   ├── log.md              # 操作历史
 │   ├── overview.md         # 全局概要（自动更新）
-│   ├── entities/           # 人物、组织、产品
-│   ├── concepts/           # 理论、方法、技术
-│   ├── sources/            # 资料摘要
-│   ├── queries/            # 保存的聊天回答 + 研究
-│   ├── synthesis/          # 跨资料分析
-│   └── comparisons/        # 并列对比
+│   ├── 旅游方案/ 用户手册/ 书籍/ 食谱/ 合同/ ...   # 单页类型：整篇保留
+│   └── 论文/ 概念/ 工具/ 数据集/ 人物/ ...        # 可拆分：源摘要 + 子页
+│                           # （英文 UI 创建时是 ASCII slug：travel-plans/ books/ papers/ ...）
 ├── .obsidian/              # Obsidian 仓库配置（自动生成）
-└── .llm-wiki/              # 应用配置、聊天历史、审核项
+├── .llm-wiki/              # 项目共享元数据（云盘可同步）
+└── .llm-wiki-local/        # 个人私密（聊天记录，必须排除云盘同步）
 ```
 
 ## Star History

@@ -28,14 +28,16 @@
   <img src="assets/overview.jpg" width="100%" alt="Overview">
 </p>
 
-> 📦 **This is the LLMWiKi fork** — four additions on top of nashsu/llm_wiki:
+> 📦 **This is the LLMWiKi fork** — additions on top of nashsu/llm_wiki:
 > **`.llmwiki` one-click import/export**, **per-page scheduled web refresh**,
-> **cloud-share-friendly local state split**, and **complete Chinese i18n with
-> one-click language switching**.
+> **cloud-share-friendly local state split**, **complete Chinese i18n with
+> one-click language switching**, **34-type comprehensive schema + smart
+> splitting**, **self-hosted in-place auto-update**, **encrypted config
+> backup**, and **docx/Office source preview**.
 > See the outer [`UPSTREAM.md`](../UPSTREAM.md) and [`docs/features.md`](../docs/features.md);
 > for day-to-day usage check [`docs/user-manual.md`](../docs/user-manual.md),
 > for custom categories/rules see [`docs/user-rules.md`](../docs/user-rules.md).
-> Most of this README comes from upstream; the new features are in sections 19/20/21/22 below.
+> Most of this README comes from upstream; the fork additions are in sections 19–26 below.
 
 ## Features
 
@@ -408,6 +410,32 @@ API keys have always lived in the OS app-data dir, never inside the project dir.
 - **One-click switch**: upstream's flow required selecting a language then clicking Save. In this fork, clicking *Settings → Interface → 中文 / English* **immediately calls `i18n.changeLanguage()` + persists** — every `useTranslation()` component re-renders instantly without a Save step.
 - Adding a language: copy `en.json` → translate → register in `i18n/index.ts` and `interface-section.tsx::UI_LANGUAGES`; the `i18n-parity` test enforces key alignment.
 
+### 23. Comprehensive Schema (34 types) + Smart Splitting
+
+Upstream hard-coded every source into entity/concept pages — a travel plan exploded into 20 attraction pages, a book into 50 character pages. This fork makes page categorization **fully `schema.md`-driven** and ships a **Comprehensive template (34 types, CJK-first directories)** covering everyday documents. The LLM picks one of two behaviors per source:
+
+- **Single-page** — one source → one page, no splitting: travel plans, manuals, project docs, tutorials, books, recipes, notes, reports, articles, meetings, decisions, films, music, games, menus, shopping lists, contracts, invoices, medical records, code snippets, API docs, error logs …
+- **Splittable** — source summary + concept/tool/person subpages: papers, concepts, tools, datasets, people, companies, regulations
+
+New projects default to it. Existing projects upgrade via **Settings → Schema Upgrade** (backs up `schema.md` → `.bak`, writes the comprehensive schema in the UI language, pre-creates the 34 dirs; old pages stay put). Categories are just a starting point — edit `schema.md` to add/rename types. Full docs: [`../docs/features.md §5`](../docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型) and [`../docs/user-rules.md`](../docs/user-rules.md).
+
+### 24. Self-Hosted In-Place Auto-Update
+
+The updater endpoint points at this fork's own GitHub releases (`chunguangwei/LLMWiKi`), upgraded to a **true in-place update** (`tauri-plugin-updater` + `tauri-plugin-process`): background check → banner / Settings → About → *Update now* → download signed artifact → verify with the built-in minisign pubkey → swap in place → *Restart to apply*. **Config and API keys are never touched** (no uninstall/reinstall). Release flow + signing-key backup in [`../docs/release-and-update.md`](../docs/release-and-update.md).
+
+### 25. Encrypted Config Backup / Migration (never lose your API keys)
+
+**Settings → Config Backup.** Two modes:
+
+- **Export / Import** (cross-machine): set a passphrase → export an encrypted `.llmwiki-config` (Argon2id + AES-256-GCM); import with the same passphrase on the new machine. The passphrase is the only key — nothing decryptable lives in the binary.
+- **Startup auto-backup** (same-machine reinstall): each launch encrypts config to `~/Documents/LLMWiki/config-backup.enc` (key in the OS keychain); a fresh install auto-restores, no passphrase needed.
+
+Details: [`../docs/features.md §6.4`](../docs/features.md#64-加密配置备份防丢-key).
+
+### 26. docx / Office Source Preview
+
+Raw Word/Office source files (`.docx` `.xlsx` `.pptx` `.odt` `.ods` `.odp`) now render their **extracted text** in the preview panel instead of "Preview not available for this file type". They're categorized as `office` on the frontend so the panel reads them like PDFs (backend extraction via `docx-rs` / `calamine`).
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -428,19 +456,24 @@ API keys have always lived in the OS app-data dir, never inside the project dir.
 
 ## Installation
 
-### Pre-built Binaries
+### Pre-built Binaries (this fork)
 
-Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
-- **macOS**: `.dmg` (Apple Silicon + Intel)
-- **Windows**: `.msi`
-- **Linux**: `.deb` / `.AppImage`
+Download the latest from **[chunguangwei/LLMWiKi releases](https://github.com/chunguangwei/LLMWiKi/releases/latest)**:
+
+| Platform | File | First launch |
+|---|---|---|
+| macOS (Apple Silicon) | `LLM.Wiki_<version>_aarch64.dmg` | If "damaged": `xattr -dr com.apple.quarantine "/Applications/LLM Wiki.app"` |
+| Windows (x64 only) | `LLM.Wiki_<version>_x64-setup.exe` (recommended) / `_x64_en-US.msi` | SmartScreen → **More info → Run anyway** |
+| Linux | `.deb` / `.AppImage` / `.rpm` (x64 + arm64) | Install per distro |
+
+> Artifacts aren't commercially code-signed (OSS norm; doesn't affect function/security — auto-update has its own minisign verification). After installing once, you don't need to download again: new versions are offered in-app as a one-click in-place update. Full download/install notes: [`../docs/release-and-update.md §1`](../docs/release-and-update.md#1-下载最新版终端用户视角).
 
 ### Build from Source
 
 ```bash
 # Prerequisites: Node.js 20+, Rust 1.70+
-git clone https://github.com/nashsu/llm_wiki.git
-cd llm_wiki
+git clone https://github.com/chunguangwei/LLMWiKi.git
+cd LLMWiKi
 npm install
 npm run tauri dev      # Development
 npm run tauri build    # Production build
@@ -496,22 +529,20 @@ After install, the agent can answer prompts like "what does my LLM Wiki say abou
 ```
 my-wiki/
 ├── purpose.md              # Goals, key questions, research scope
-├── schema.md               # Wiki structure rules, page types
+├── schema.md               # Page types & naming (Comprehensive template = 34 types)
 ├── raw/
 │   ├── sources/            # Uploaded documents (immutable)
 │   └── assets/             # Local images
-├── wiki/
+├── wiki/                   # LLM-written pages, grouped per schema.md
 │   ├── index.md            # Content catalog
 │   ├── log.md              # Operation history
 │   ├── overview.md         # Global summary (auto-updated)
-│   ├── entities/           # People, organizations, products
-│   ├── concepts/           # Theories, methods, techniques
-│   ├── sources/            # Source summaries
-│   ├── queries/            # Saved chat answers + research
-│   ├── synthesis/          # Cross-source analysis
-│   └── comparisons/        # Side-by-side comparisons
+│   ├── travel-plans/ manuals/ books/ recipes/ contracts/ ...   # single-page types
+│   └── papers/ concepts/ tools/ datasets/ people/ ...          # splittable: summary + subpages
+│                           # (Chinese UI creates CJK dir names: 旅游方案/ 书籍/ 论文/ ...)
 ├── .obsidian/              # Obsidian vault config (auto-generated)
-└── .llm-wiki/              # App config, chat history, review items
+├── .llm-wiki/              # Project-shared metadata (cloud-sync friendly)
+└── .llm-wiki-local/        # Per-user private (chats; exclude from cloud sync)
 ```
 
 ## Star History

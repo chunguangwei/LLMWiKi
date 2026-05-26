@@ -28,12 +28,13 @@
   <img src="assets/overview.jpg" width="100%" alt="概要">
 </p>
 
-> 📦 **これは LLMWiKi fork です** — nashsu/llm_wiki に 4 つの機能を追加：
+> 📦 **これは LLMWiKi fork です** — nashsu/llm_wiki に複数の機能を追加：
 > **`.llmwiki` ワンクリック import / export**、**ページ単位の定期 Web リフレッシュ**、
 > **クラウド共有 / チーム配備に対応したローカル状態分離**、
-> **中国語 i18n 完全化 + ワンクリック言語切替**。
+> **中国語 i18n 完全化 + ワンクリック言語切替**、**34 種類の総合スキーマ + スマート分割**、
+> **セルフホスト型インプレース自動更新**、**暗号化された設定バックアップ**、**docx/Office ソースプレビュー**。
 > 詳細は外側の [`UPSTREAM.md`](../UPSTREAM.md) と [`docs/features.md`](../docs/features.md) を参照。
-> 新機能のドキュメントは英語版 [`README.md`](README.md) の §19/20/21/22 にあります。
+> フォークの追加機能は下記 §19〜26 にあります。
 
 ## 主な機能
 
@@ -365,6 +366,79 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **15 分タイムアウト** — 長時間のインジェスト処理が早すぎる段階で失敗しないようにする
 - **dataVersion シグナル** — Wiki コンテンツの変更に合わせてグラフと UI を自動リフレッシュ
 
+---
+
+> 以下のセクションは nashsu/llm_wiki に対する **LLMWiKi フォーク** の追加機能です。ユーザー向けの詳細は [`../docs/features.md`](../docs/features.md) を参照してください。
+
+### 19. `.llmwiki` ワンクリック インポート / エクスポート
+
+プロジェクト全体（`raw/` + `wiki/` + `.llm-wiki/` 共有メタデータ）を 1 つの `.llmwiki` zip にまとめ、デバイス間・チーム間で移行できます。
+
+- **エクスポート** — 設定 → インポート / エクスポート → *パッケージをエクスポート*。SHA256 マニフェスト、アプリバージョン、任意のエクスポート者名を含む
+- **インポート** — *既存ファイルをスキップ* または *すべて上書き* を選択。インポート前にパッケージを *確認* できる
+- **検証** — インポート時に各ファイルの SHA256 をマニフェストと照合
+- **意図的に除外** — チャット履歴（非公開）、API キー（プロジェクト外）、ベクトル DB（再構築）
+
+用途: マルチデバイス同期、チームへの初回配布、定期スナップショット。
+
+### 20. ページ単位のスケジュール Web リフレッシュ
+
+陳腐化しやすいページ（プロジェクト状況、技術動向、人物の役職）にリフレッシュポリシーを付与。バックグラウンドのスケジューラが LLM + Web 検索で陳腐化を検出し、提案をレビューキューに投入します。
+
+ページの frontmatter に追記：
+```yaml
+refresh-enabled: true
+refresh-interval-days: 7
+refresh-queries:                  # 任意。省略時は LLM が自動生成
+  - "mixture of experts 2026"
+```
+
+- **スケジューラ** — 設定 → スケジュール Web リフレッシュ（全体トグル + スキャン頻度）
+- **ランナー** — 対象ページ → マルチプロバイダー検索 → LLM 判定（STATUS=fresh|stale）→ 陳腐化ページはレビューに *提案* を投入
+- **ステータス** — `refresh-last-result: ok / no-change / pending-review / error` を frontmatter に自動書き戻し
+- **ページ単位の即時リフレッシュ** — エディタの frontmatter パネル上部にある *Web リフレッシュ* ボタン
+
+### 21. ローカル / 共有設定の分離（クラウド共有向け）
+
+元々 `.llm-wiki/` はプロジェクト共有メタデータと非公開チャットを混在させており、クラウド同期に不向きでした。現在は分離：
+
+- `.llm-wiki/` — **プロジェクト共有**: インジェストキャッシュ、レビューキュー、ページ履歴、project.json
+- `.llm-wiki-local/` — **ユーザー個別の非公開**: チャット会話、conversations.json
+
+既存ユーザーは初回起動時に自動移行。デプロイ手順は [`../docs/cloud-sharing.md`](../docs/cloud-sharing.md)（iCloud / OneDrive / Dropbox / Git での `.llm-wiki-local/` 除外ルール）。API キーは常に OS のアプリデータディレクトリにあり、プロジェクト内には保存されません。
+
+### 22. 中国語 i18n の完成 + ワンクリック言語切替
+
+- **完成**: フォークで追加した 3 つの UI セクション（`importExport`、`scheduledRefresh`、`editor.refresh`）は以前は英語の `defaultValue` にフォールバックしていました。現在 `app/src/i18n/{en,zh}.json` が完全に整合し、中国語ユーザーはすべて中国語で表示されます
+- **ワンクリック切替**: 上流は言語を選んで Save を押す必要がありました。本フォークでは *設定 → インターフェース → 中文 / English* をクリックすると **即座に `i18n.changeLanguage()` + 永続化** され、すべての `useTranslation()` コンポーネントが Save なしで即再描画されます
+- 言語の追加: `en.json` をコピー → 翻訳 → `i18n/index.ts` と `interface-section.tsx::UI_LANGUAGES` に登録。`i18n-parity` テストがキー整合を強制します
+
+### 23. スマート分割 + 総合スキーマ（34 種類、CJK ディレクトリ）
+
+上流はすべてのソースをエンティティ/コンセプトページに強制分割していました（旅行プランが 20 の観光地ページに、書籍が 50 の人物ページに分散）。本フォークはページ分類を **完全に `schema.md` 駆動** にし、日常文書をカバーする **総合テンプレート（34 種類、CJK 優先ディレクトリ）** を同梱します。LLM はソースごとに 2 つの挙動から自動選択します：
+
+- **単一ページ型** — 1 ソース → 1 ページ、分割なし: 旅行プラン、マニュアル、プロジェクト文書、チュートリアル、書籍、レシピ、ノート、レポート、記事、会議、意思決定、映画、音楽、ゲーム、メニュー、買い物リスト、契約、請求書、医療記録、コードスニペット、API ドキュメント、エラーログ……
+- **分割可能型** — ソースサマリー + コンセプト/ツール/人物のサブページ: 論文、コンセプト、ツール、データセット、人物、企業、規制
+
+新規プロジェクトは既定でこれを使用。既存プロジェクトは **設定 → スキーマアップグレード**（`schema.md` を `.bak` にバックアップ、UI 言語で総合スキーマを書き込み、34 ディレクトリを事前作成。旧ページはそのまま）。分類は出発点に過ぎず、`schema.md` を編集して型を追加・改名できます。詳細: [`../docs/features.md §5`](../docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型)、[`../docs/user-rules.md`](../docs/user-rules.md)。
+
+### 24. セルフホスト型インプレース自動更新
+
+更新エンドポイントは本フォーク自身の GitHub リリース（`chunguangwei/LLMWiKi`）を指し、**真のインプレース更新**（`tauri-plugin-updater` + `tauri-plugin-process`）に強化されています：バックグラウンドチェック → バナー / 設定 → バージョン情報 → *今すぐ更新* → 署名済み成果物をダウンロード → 内蔵 minisign 公開鍵で検証 → その場で置換 → *再起動して適用*。**設定と API キーには一切手を触れません**（アンインストール/再インストール不要）。リリースフロー + 署名鍵のバックアップは [`../docs/release-and-update.md`](../docs/release-and-update.md)。
+
+### 25. 暗号化された設定バックアップ / 移行（API キーを失わない）
+
+**設定 → 設定バックアップ。** 2 つのモード：
+
+- **エクスポート / インポート**（マシン間）: パスフレーズを設定 → 暗号化ファイル `.llmwiki-config` をエクスポート（Argon2id + AES-256-GCM）。新しいマシンで同じパスフレーズでインポート。パスフレーズが唯一の鍵で、バイナリ内には復号可能なものは存在しません。
+- **起動時自動バックアップ**（同一マシンの再インストール）: 起動ごとに設定を `~/Documents/LLMWiki/config-backup.enc` に暗号化（鍵は OS キーチェーン）。新規インストール時に自動復元、パスフレーズ不要。
+
+詳細: [`../docs/features.md §6.4`](../docs/features.md#64-加密配置备份防丢-key)。
+
+### 26. docx / Office ソースファイルのプレビュー
+
+生の Word/Office ソースファイル（`.docx` `.xlsx` `.pptx` `.odt` `.ods` `.odp`）が、「Preview not available for this file type」ではなく **抽出したテキスト** をプレビューパネルに表示するようになりました。フロントエンドで `office` として分類し、PDF と同様にパネルが読み込みます（バックエンドは `docx-rs` / `calamine` で抽出）。
+
 ## 技術スタック
 
 | レイヤー | 技術 |
@@ -385,20 +459,24 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 
 ## インストール
 
-### ビルド済みバイナリ
+### ビルド済みバイナリ（本フォーク）
 
-[Releases](https://github.com/nashsu/llm_wiki/releases) からダウンロードできます。
+**[chunguangwei/LLMWiKi releases](https://github.com/chunguangwei/LLMWiKi/releases/latest)** から最新版をダウンロードします。
 
-- **macOS**: `.dmg`（Apple Silicon + Intel）
-- **Windows**: `.msi`
-- **Linux**: `.deb` / `.AppImage`
+| プラットフォーム | ファイル | 初回起動 |
+|---|---|---|
+| macOS（Apple Silicon） | `LLM.Wiki_<バージョン>_aarch64.dmg` | 「壊れている」と出たら `xattr -dr com.apple.quarantine "/Applications/LLM Wiki.app"` |
+| Windows（x64 のみ） | `LLM.Wiki_<バージョン>_x64-setup.exe`（推奨）/ `_x64_en-US.msi` | SmartScreen → **詳細情報 → 実行** |
+| Linux | `.deb` / `.AppImage` / `.rpm`（x64 + arm64） | ディストリに応じてインストール |
+
+> 配布物はプラットフォーム商用コード署名なし（OSS では一般的で、機能・安全性に影響なし。自動更新は独自の minisign 検証あり）。一度インストールすれば再ダウンロード不要——新バージョンはアプリ内でワンクリックのインプレース更新として案内されます。詳細は [`../docs/release-and-update.md §1`](../docs/release-and-update.md#1-下载最新版终端用户视角)。
 
 ### ソースからビルド
 
 ```bash
 # 前提条件: Node.js 20+, Rust 1.70+
-git clone https://github.com/nashsu/llm_wiki.git
-cd llm_wiki
+git clone https://github.com/chunguangwei/LLMWiKi.git
+cd LLMWiKi
 npm install
 npm run tauri dev      # 開発モード
 npm run tauri build    # 本番ビルド
@@ -454,22 +532,20 @@ npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm_wiki_ski
 ```
 my-wiki/
 ├── purpose.md              # 目標、主要な問い、調査範囲
-├── schema.md               # Wiki 構造ルール、ページタイプ
+├── schema.md               # ページタイプと命名規則（総合テンプレート = 34 種類）
 ├── raw/
 │   ├── sources/            # アップロードされた文書（不変）
 │   └── assets/             # ローカル画像
-├── wiki/
+├── wiki/                   # LLM が書いたページ。schema.md に沿って分類
 │   ├── index.md            # コンテンツ目録
 │   ├── log.md              # 操作履歴
 │   ├── overview.md         # 全体概要（自動更新）
-│   ├── entities/           # 人物、組織、製品
-│   ├── concepts/           # 理論、手法、技術
-│   ├── sources/            # 資料サマリー
-│   ├── queries/            # 保存されたチャット回答 + リサーチ
-│   ├── synthesis/          # 資料横断の分析
-│   └── comparisons/        # 比較ページ
+│   ├── travel-plans/ manuals/ books/ recipes/ contracts/ ...   # 単一ページ型
+│   └── papers/ concepts/ tools/ datasets/ people/ ...          # 分割可能: サマリー + サブページ
+│                           # （中国語 UI では CJK ディレクトリ名: 旅游方案/ 书籍/ 论文/ ...）
 ├── .obsidian/              # Obsidian vault 設定（自動生成）
-└── .llm-wiki/              # アプリ設定、チャット履歴、レビュー項目
+├── .llm-wiki/              # プロジェクト共有メタデータ（クラウド同期向け）
+└── .llm-wiki-local/        # ユーザー個別の非公開（チャット。クラウド同期から除外）
 ```
 
 ## Star History
