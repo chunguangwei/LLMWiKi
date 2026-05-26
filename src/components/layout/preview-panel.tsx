@@ -4,10 +4,56 @@ import { X } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile } from "@/commands/fs"
 import { getFileCategory, isBinary } from "@/lib/file-types"
-import { setFrontmatterType } from "@/lib/frontmatter"
+import { parseFrontmatter, setFrontmatterType } from "@/lib/frontmatter"
+import { recategorizeIndexEntry } from "@/lib/index-recategorize"
+import { WIKI_TYPE_OPTIONS } from "@/lib/wiki-type-options"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
 import { getFileName, normalizePath } from "@/lib/path-utils"
+
+type TFn = (key: string, opts?: { lng?: string }) => string
+
+/**
+ * Best-effort sync of `wiki/index.md` after a page's type changes: move
+ * its catalog bullet to the section matching the new type. Resolves the
+ * index path from the page path, computes localized + English heading
+ * aliases so it matches whatever the LLM wrote, and no-ops on any failure
+ * (missing index, unknown type) — the type change itself already stuck.
+ */
+async function syncIndexForType(pagePath: string, pageContent: string, newType: string, t: TFn) {
+  const marker = "/wiki/"
+  const norm = normalizePath(pagePath)
+  const at = norm.indexOf(marker)
+  if (at === -1) return
+  const indexPath = norm.slice(0, at + marker.length) + "index.md"
+
+  let indexContent: string
+  try {
+    indexContent = await readFile(indexPath)
+  } catch {
+    return
+  }
+
+  const opt = WIKI_TYPE_OPTIONS.find((o) => o.value === newType)
+  if (!opt) return
+  const dedup = (xs: string[]) => [...new Set(xs.filter(Boolean))]
+  const srcKey = "knowledgeTree.types.source"
+  const slug = getFileName(pagePath).replace(/\.md$/, "")
+  const { frontmatter } = parseFrontmatter(pageContent)
+  const desc =
+    (typeof frontmatter?.description === "string" && frontmatter.description) ||
+    (typeof frontmatter?.title === "string" && frontmatter.title) ||
+    ""
+
+  const next = recategorizeIndexEntry(indexContent, {
+    slug,
+    targetLabel: t(opt.labelKey),
+    targetAliases: dedup([t(opt.labelKey), t(opt.labelKey, { lng: "en" }), t(opt.labelKey, { lng: "zh" })]),
+    sourcesAliases: dedup(["Sources", "Source", t(srcKey), t(srcKey, { lng: "en" }), t(srcKey, { lng: "zh" })]),
+    fallbackDescription: desc,
+  })
+  if (next !== indexContent) await writeFile(indexPath, next)
+}
 
 export function PreviewPanel() {
   const selectedFile = useWikiStore((s) => s.selectedFile)
@@ -80,17 +126,24 @@ export function PreviewPanel() {
   const handleChangeType = useCallback(
     (newType: string) => {
       if (!selectedFile) return
-      const next = setFrontmatterType(fileContent, newType)
-      if (next === fileContent) return
-      writeFile(selectedFile, next)
-        .then(() => {
+      const pagePath = selectedFile
+      const before = fileContent
+      const next = setFrontmatterType(before, newType)
+      const run = async () => {
+        if (next !== before) {
+          await writeFile(pagePath, next)
           lastLoadedRef.current = next
           setFileContent(next)
-          bumpDataVersion()
-        })
-        .catch((err) => console.error("Failed to change page type:", err))
+        }
+        // Keep index.md's catalog in step (best-effort; uses the
+        // pre-change content for the page's title/description).
+        await syncIndexForType(pagePath, before, newType, t)
+        // Regroup the left knowledge tree.
+        bumpDataVersion()
+      }
+      run().catch((err) => console.error("Failed to change page type:", err))
     },
-    [selectedFile, fileContent, setFileContent, bumpDataVersion],
+    [selectedFile, fileContent, setFileContent, bumpDataVersion, t],
   )
 
   useEffect(() => {
