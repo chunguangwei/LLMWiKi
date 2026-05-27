@@ -26,6 +26,24 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.20",
+    date: "2026-05-27",
+    highlights: {
+      en: [
+        "Long sources are no longer silently truncated: documents that exceed the model's context budget are now analyzed in overlapping semantic chunks with a resumable checkpoint, so nothing past the old cutoff is dropped. Generation output limits also scale with the model's context window.",
+        "Ingest now runs a dedicated follow-up pass that surfaces more high-value review items (knowledge gaps, missing pages, contradictions) for substantial sources.",
+        "New provider: Xiaomi MiMo (synced from upstream) — endpoint detection, request-body adaptation, and Anthropic-gateway auth.",
+        "Launching a second copy of the app now focuses the existing window instead of starting a rival process — this avoids the \"Port 19827 in use / Web Clipper unavailable\" conflict that could appear when a previous instance was still running (e.g. left behind by an abnormal exit). The clip-server status hint now explains the likely cause and how to recover.",
+      ],
+      zh: [
+        "超长资料不再被静默截断：超出模型上下文预算的文档现在会按语义分块、带重叠地分析，并带可恢复的断点，旧版被截断丢弃的内容不再丢失。生成阶段的输出上限也会随模型上下文窗口自动放大。",
+        "摄入新增一次专门的后续分析：对篇幅较大的资料能产出更多高价值的审核项（知识缺口、缺失页面、矛盾点）。",
+        "新增 Provider：小米 MiMo（同步自上游）——端点识别、请求体适配、Anthropic 网关鉴权。",
+        "再次启动应用时会聚焦已打开的窗口，而不是另起一个进程——避免了上一个实例仍在运行时（例如异常退出后残留）出现的「端口 19827 被占用 / Web Clipper 不可用」冲突。剪藏服务的状态提示现在也会说明可能原因和恢复方法。",
+      ],
+    },
+  },
+  {
     version: "0.4.19",
     date: "2026-05-26",
     highlights: {
