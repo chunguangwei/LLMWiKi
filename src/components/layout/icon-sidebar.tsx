@@ -133,7 +133,7 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
             <TooltipContent side="right">
               {daemonStatus === "running" && "Clip server running"}
               {daemonStatus === "starting" && "Clip server starting..."}
-              {daemonStatus === "port_conflict" && "Port 19827 is occupied. Web Clipper unavailable."}
+              {daemonStatus === "port_conflict" && "Port 19827 is in use — a previous LLM Wiki instance may still be running after an abnormal exit. Fully quit all copies (or restart your machine) and relaunch to restore the Web Clipper."}
               {daemonStatus === "error" && "Clip server error. Restarting..."}
             </TooltipContent>
           </Tooltip>

@@ -77,6 +77,13 @@ sha2 = "0.10"
 md-5 = "0.10"
 notify = "8"
 walkdir = "2"
+# Desktop single-instance guard: when a second copy of the app is
+# launched, focus the already-running window instead of spinning up a
+# rival process that would fight over the clip/API server ports
+# (19827/19828). Must be registered as the FIRST plugin. Desktop-only —
+# the crate doesn't build for mobile targets.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
 # Used by commands/storage.rs for statfs-based network-mount detection
 # on macOS and Linux. Windows path takes a different code path that
 # does not need libc.

@@ -56,9 +56,28 @@ fn set_proxy_env(config: proxy::ProxyConfig) -> String {
 // and decryption key. Do NOT change it. Locked since 0.4.10.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    clip_server::start_clip_server();
+    let mut builder = tauri::Builder::default();
 
-    tauri::Builder::default()
+    // Single-instance guard MUST be the first plugin registered. When a
+    // second copy launches (e.g. the user relaunches after an abnormal
+    // exit left an orphaned process still holding ports 19827/19828),
+    // the secondary exits inside this plugin's setup — before it ever
+    // reaches start_clip_server() in .setup() below — and the primary's
+    // window is shown/focused instead. This stops two instances from
+    // fighting over the clip/API server ports.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -75,6 +94,11 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .setup(|app| {
             use tauri::Manager;
+            // Start the web-clip server here (not before the builder) so a
+            // secondary instance — which the single-instance plugin exits
+            // before reaching this setup hook — never tries to bind the
+            // clip port out from under the primary.
+            clip_server::start_clip_server();
             // Config safety net — runs BEFORE anything reads
             // app-state.json (proxy config below, and the frontend's
             // first store load). On a fresh/empty install, restore the
