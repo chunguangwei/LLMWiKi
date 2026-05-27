@@ -50,7 +50,7 @@
 - **Deep Research** — LLM が検索トピックを最適化生成し、Tavily / SerpApi / SearXNG によるマルチクエリ Web 検索結果を自動で Wiki 化
 - **非同期レビューシステム** — LLM が人間の判断を要する項目を作成し、定義済みアクションと事前生成された検索クエリを付与
 - **Chrome Web Clipper** — Web ページをワンクリックで取り込み、知識ベースへ自動インジェスト
-- **ローカル HTTP API + AI Agent Skill** — `127.0.0.1:19828` の JSON API（Token 認証）でハイブリッド検索、ファイル読み取り、グラフ探索、ソース再スキャンを提供。専用の [agent skill](https://github.com/nashsu/llm_wiki_skill) はワンコマンドで Claude Code / Codex に追加可能（`npx skills add …`）
+- **ローカル HTTP API + AI Agent Skill** — `127.0.0.1:19828` の JSON API（Token 認証）でハイブリッド検索、ファイル読み取り、グラフ探索、ソース再スキャンを提供。専用の [agent skill](https://github.com/chunguangwei/llm_wiki_skill) はワンコマンドで Claude Code / Codex に追加可能（`npx skills add …`）
 
 ## これは何ですか？
 
@@ -523,12 +523,12 @@ LLM Wiki は組み込みのローカル HTTP API（`http://127.0.0.1:19828` で�
 LLM Wiki 用の **agent skill** は別リポジトリで管理されています。Claude Code / Codex / skills 互換のランタイムにインストールできます。
 
 ```bash
-npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm_wiki_skill
+npx skills add https://github.com/chunguangwei/llm_wiki_skill.git --skill llm_wiki_skill
 ```
 
 インストール後、エージェントは「自分の LLM Wiki に X について何が書かれている？」「自分の知識ベースで Y を検索して」「自分の Wiki グラフで Z の近傍を表示して」「ソースを再スキャンして」といった依頼に対し、ローカルで動いているアプリと直接通信して応答します。デフォルトは読み取り専用で、アプリ内で確認できるよう Wiki ページのパスを引用します。
 
-- **Skill リポジトリ**: <https://github.com/nashsu/llm_wiki_skill>
+- **Skill リポジトリ**: <https://github.com/chunguangwei/llm_wiki_skill>
 - **トリガー制約**: 「ノートを検索して」「Obsidian / Notion / Logseq を見て」のような汎用的な依頼には**意図的に反応しません**。LLM Wiki / `my wiki` / `知識庫` / `知識ベース` を明示した場合のみ起動します。
 
 ## プロジェクト構成
@@ -554,11 +554,11 @@ my-wiki/
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=nashsu%2Fllm_wiki&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=chunguangwei%2FLLMWiKi&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=chunguangwei/LLMWiKi&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=chunguangwei/LLMWiKi&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=chunguangwei/LLMWiKi&type=date&legend=top-left" />
  </picture>
 </a>
 

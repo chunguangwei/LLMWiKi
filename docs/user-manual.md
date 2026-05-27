@@ -363,6 +363,30 @@ LLMWiki 默认带 **34 种**页面类型（综合模板，覆盖日常生活 + �
 
 `wiki/*.md` 都是普通 markdown 文件，你可以直接编辑（在 LLMWiki 里、Obsidian 里、或任何编辑器里）。下次 LLM 工作时会基于你的修改继续。
 
+### 8.5 把知识库接入外部 Agent（OpenClaw / Claude Code / Codex）
+
+LLMWiki 内置一个**本地 HTTP API**（`http://127.0.0.1:19828`，Token 鉴权，仅本机可达），让外部 AI Agent **实时查询**你的知识库——Hybrid 检索、读取页面、遍历知识图谱、重新扫描源资料。这样你在别的 Agent 体系里就能复用这套知识，而不用把内容复制一份出去。
+
+**1）开启 API**
+
+设置 → **API 服务** → 勾选启用 → 复制生成的 Token（用于鉴权）。API 只在 app 运行时可用。
+
+**2）一行接入现成的 Agent Skill**
+
+配套的 agent skill 单独维护在 [`chunguangwei/llm_wiki_skill`](https://github.com/chunguangwei/llm_wiki_skill)，装进 Claude Code / Codex / OpenClaw 等任何兼容 skills 的 runtime：
+
+```bash
+npx skills add https://github.com/chunguangwei/llm_wiki_skill.git --skill llm_wiki_skill
+```
+
+装好后，对应 Agent 就能直接问你的知识库（它会带 Token 调用上面的 19828 API）。
+
+**3）或者直接发 HTTP 请求**
+
+任何能发 HTTP 的脚本 / 工具都能直接查，无需 skill。接口清单见 skill 仓库的 [`api-reference.md`](https://github.com/chunguangwei/llm_wiki_skill/blob/main/api-reference.md)。
+
+> **实时 vs 快照**：这条路线是**实时**的——Agent 每次都查当前运行的 app，永远最新，但需要 app 在跑且开了 API。如果你要的是**离线快照**（把 wiki 内容打包带走、不依赖 app 运行），那是另一种思路，目前用 §5.1 的 `.llmwiki` 导出 + 手动转换，暂未内置一键导出 skill 包。
+
 ---
 
 ## 9. 故障排查速查
