@@ -7,6 +7,15 @@ export interface ProviderTestResult {
   message: string
 }
 
+// Reasoning-native models (MiniMax M-series, DeepSeek-R1, QwQ, …) often
+// emit chain-of-thought before any answer and may not honor a
+// reasoning-off request. A tiny cap (e.g. 32) gets fully consumed by
+// thinking, so the model returns no `content` and the test wrongly reads
+// as "empty content". Give enough headroom for a thinking model to reach
+// its (short) answer; if it still only thinks, llm-client's reasoning
+// diagnostic fires with a clear message instead of a vague empty result.
+const CONNECTION_TEST_MAX_TOKENS = 512
+
 export async function testEmbeddingConnection(cfg: EmbeddingConfig): Promise<ProviderTestResult> {
   if (!cfg.endpoint.trim()) {
     return { ok: false, message: "Embedding endpoint is empty." }
@@ -77,7 +86,7 @@ export async function testLlmConnection(cfg: LlmConfig): Promise<ProviderTestRes
       onError: (err) => { errorMessage = err.message },
     },
     undefined,
-    { max_tokens: 32, reasoning: { mode: "off" } },
+    { max_tokens: CONNECTION_TEST_MAX_TOKENS, reasoning: { mode: "off" } },
   )
 
   if (errorMessage) return { ok: false, message: errorMessage }
@@ -107,7 +116,7 @@ export async function testLlmFunction(cfg: LlmConfig): Promise<ProviderTestResul
       onError: (err) => { errorMessage = err.message },
     },
     undefined,
-    { max_tokens: 32, reasoning: { mode: "off" } },
+    { max_tokens: CONNECTION_TEST_MAX_TOKENS, reasoning: { mode: "off" } },
   )
 
   if (errorMessage) return { ok: false, message: errorMessage }

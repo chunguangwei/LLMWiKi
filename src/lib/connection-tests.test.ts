@@ -92,7 +92,7 @@ describe("provider connection tests", () => {
       expect.any(Array),
       expect.any(Object),
       undefined,
-      { max_tokens: 32, reasoning: { mode: "off" } },
+      { max_tokens: 512, reasoning: { mode: "off" } },
     )
   })
 })
