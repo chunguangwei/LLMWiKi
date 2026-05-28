@@ -38,7 +38,14 @@ function parsePositiveInteger(value: string): number | undefined {
   return Math.floor(n)
 }
 
-const RESERVED_HEADER_NAMES = new Set(["authorization", "content-type", "host", "content-length"])
+const RESERVED_HEADER_NAMES = new Set([
+  "authorization",
+  "content-type",
+  "host",
+  "content-length",
+  "x-goog-api-key",
+])
+const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 
 function headersToText(headers: Record<string, string>): string {
   return Object.entries(headers)
@@ -55,7 +62,7 @@ function parseHeadersText(text: string): Record<string, string> {
     if (idx <= 0) continue
     const name = line.slice(0, idx).trim()
     const value = line.slice(idx + 1).trim()
-    if (!name || RESERVED_HEADER_NAMES.has(name.toLowerCase())) continue
+    if (!name || !value || !HTTP_HEADER_NAME_RE.test(name) || RESERVED_HEADER_NAMES.has(name.toLowerCase())) continue
     out[name] = value
   }
   return out

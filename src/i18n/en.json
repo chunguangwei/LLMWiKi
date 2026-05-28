@@ -318,7 +318,7 @@
         "outputDimensionality": "Output dimensionality (Gemini only)",
         "outputDimensionalityHint": "Optional. Sent only for Gemini native embedContent endpoints as `output_dimensionality`; OpenAI-compatible endpoints ignore this field. Leave empty for the model default. Rebuild embeddings after changing model or dimension.",
         "extraHeaders": "Custom request headers",
-        "extraHeadersHint": "Optional. One per line, formatted `Header-Name: value`. Used for gateways that route by request header — e.g. mify needs `X-Model-Provider-Id: siliconflow`. Authorization, Content-Type, Host, and Content-Length are managed by the client and will be ignored.",
+        "extraHeadersHint": "Optional. One per line, formatted `Header-Name: value`. Used for gateways that route by request header — e.g. mify needs `X-Model-Provider-Id: siliconflow`. Authorization, Content-Type, Host, Content-Length, and x-goog-api-key are managed by the client and will be ignored.",
         "chunking": "Chunking",
         "maxChunkChars": "Max chunk size (characters)",
         "maxChunkCharsHint": "Target size of each chunk. Lower this (e.g. 500) when your endpoint's context is small (llama.cpp n_ctx=512, mxbai-embed-large, etc.).",
