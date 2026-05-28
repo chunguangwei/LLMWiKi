@@ -375,13 +375,12 @@ function App() {
       // ignore, start fresh
     }
     // Load persisted lint items
+    useLintStore.getState().setItems([])
     try {
       const savedLint = await loadLintItems(proj.path)
-      if (savedLint.length > 0) {
-        useLintStore.getState().setItems(savedLint)
-      }
+      useLintStore.getState().setItems(savedLint)
     } catch {
-      // ignore, start fresh
+      useLintStore.getState().setItems([])
     }
     // Load persisted chat history
     try {

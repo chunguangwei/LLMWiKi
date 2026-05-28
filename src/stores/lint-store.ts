@@ -23,6 +23,17 @@ function lintResultToItem(result: LintResult): LintItem {
   }
 }
 
+function syncCounterFromItems(items: readonly LintItem[]): void {
+  for (const item of items) {
+    const match = /^lint-(\d+)$/.exec(item.id)
+    if (!match) continue
+    const idNumber = Number(match[1])
+    if (Number.isFinite(idNumber) && idNumber > counter) {
+      counter = idNumber
+    }
+  }
+}
+
 interface LintState {
   items: LintItem[]
   setItems: (items: LintItem[]) => void
@@ -36,7 +47,10 @@ let counter = 0
 export const useLintStore = create<LintState>((set) => ({
   items: [],
 
-  setItems: (items) => set({ items }),
+  setItems: (items) => {
+    syncCounterFromItems(items)
+    set({ items })
+  },
 
   addItems: (results) =>
     set((state) => ({

@@ -22,11 +22,11 @@ export function setupAutoSave(): void {
 
   // Auto-save lint items (debounced 1s)
   useLintStore.subscribe((state) => {
+    const projectPath = useWikiStore.getState().project?.path
     if (lintTimer) clearTimeout(lintTimer)
     lintTimer = setTimeout(() => {
-      const project = useWikiStore.getState().project
-      if (project) {
-        saveLintItems(project.path, state.items).catch(() => {})
+      if (projectPath) {
+        saveLintItems(projectPath, state.items).catch(() => {})
       }
     }, 1000)
   })

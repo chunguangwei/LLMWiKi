@@ -39,6 +39,10 @@ export function groupLintResultsForDisplay(results: readonly LintItem[]): {
   return { warnings, infos }
 }
 
+export function shouldShowLintResults(hasRun: boolean, itemCount: number): boolean {
+  return hasRun || itemCount > 0
+}
+
 export function LintView() {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
@@ -228,13 +232,14 @@ export function LintView() {
     () => groupLintResultsForDisplay(items),
     [items],
   )
+  const showResults = shouldShowLintResults(hasRun, items.length)
 
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold">{t("lint.title")}</h2>
-          {hasRun && items.length > 0 && (
+          {showResults && items.length > 0 && (
             <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
               {items.length === 1 ? t("lint.issues", { count: items.length }) : t("lint.issues_plural", { count: items.length })}
             </span>
@@ -262,7 +267,7 @@ export function LintView() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {!hasRun ? (
+        {!showResults ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
             <p>{t("lint.runLintHint")}</p>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { groupLintResultsForDisplay } from "./lint-view"
+import { groupLintResultsForDisplay, shouldShowLintResults } from "./lint-view"
 import type { LintItem } from "@/stores/lint-store"
 
 function makeLintItem(
@@ -36,5 +36,19 @@ describe("groupLintResultsForDisplay", () => {
       "info-a.md",
       "info-c.md",
     ])
+  })
+})
+
+describe("shouldShowLintResults", () => {
+  it("shows restored persisted lint items before a new run in the current view", () => {
+    expect(shouldShowLintResults(false, 2)).toBe(true)
+  })
+
+  it("keeps the first-run empty prompt when no run has happened and nothing was restored", () => {
+    expect(shouldShowLintResults(false, 0)).toBe(false)
+  })
+
+  it("shows the all-clear state after a run with no items", () => {
+    expect(shouldShowLintResults(true, 0)).toBe(true)
   })
 })

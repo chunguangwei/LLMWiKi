@@ -73,6 +73,18 @@ describe("lint-store setItems", () => {
     useLintStore.getState().setItems([])
     expect(useLintStore.getState().items).toHaveLength(0)
   })
+
+  it("keeps generated ids unique after restoring persisted items", () => {
+    useLintStore.getState().setItems([
+      { id: "lint-100", type: "orphan", severity: "info", page: "old.md", detail: "d", createdAt: 999 },
+    ])
+    useLintStore.getState().addItems([makeLintResult({ page: "new.md" })])
+
+    const ids = useLintStore.getState().items.map((item) => item.id)
+    expect(ids[0]).toBe("lint-100")
+    expect(ids[1]).toMatch(/^lint-\d+$/)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
 })
 
 describe("lint-store removeItem", () => {
