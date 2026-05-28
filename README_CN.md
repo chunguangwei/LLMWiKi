@@ -50,6 +50,8 @@
 - **异步审核系统** — LLM 在摄入时标记需人工判断的项，预定义操作，预生成搜索查询
 - **Chrome 网页剪藏** — 一键捕获网页内容，自动摄入知识库
 - **本地 HTTP API + AI Agent Skill** — 内置 `127.0.0.1:19828` JSON API（Token 鉴权），支持 Hybrid 检索、文件读取、知识图谱遍历、源资料重新扫描；配套 [agent skill](https://github.com/chunguangwei/llm_wiki_skill) 一行命令接入 Claude Code / Codex（`npx skills add …`）
+- **对话内修补 wiki** — 在对话里让 LLM 纠正/更新某页，它以带 diff 的改动卡片提议，一键应用（先自动备份到 `.llm-wiki/page-history/`、保留创建日期）；LLM 判断不出该改哪一页时，自动转入审核队列由你裁决
+- **超长资料分块摄入** — 超出模型上下文预算的长文档按语义分块、带重叠地分析并可断点续传，不再静默截断；生成输出上限随上下文窗口自适应
 
 ## 这是什么？
 

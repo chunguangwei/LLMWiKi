@@ -55,6 +55,8 @@
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 - **Local HTTP API + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API (token-protected) for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/chunguangwei/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
+- **Patch the wiki from chat** — ask the assistant to correct/update a page and it proposes the change as a diff card you Apply in one click (auto-backup to `.llm-wiki/page-history/` first, created date preserved); when it can't tell which page to edit, the suggestion routes to the Review queue
+- **Chunked long-source ingest** — sources exceeding the model's context budget are analyzed in overlapping semantic chunks with a resumable checkpoint instead of being silently truncated; generation output limits scale with the context window
 
 ## What is this?
 
