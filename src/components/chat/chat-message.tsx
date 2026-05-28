@@ -25,6 +25,10 @@ import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
+import { parseFileBlocks, isSafeIngestPath } from "@/lib/ingest"
+import { applyPageEdit } from "@/lib/apply-page-edit"
+import { diffLines, diffStats, isUnchanged } from "@/lib/text-diff"
+import { useReviewStore } from "@/stores/review-store"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -102,6 +106,7 @@ export function ChatMessage({ message, isLastAssistant, onRegenerate }: ChatMess
             <MarkdownContent content={message.content} />
           )}
         </div>
+        {isAssistant && <ProposedEdits content={message.content} />}
         {isAssistant && <CitedReferencesPanel content={message.content} savedReferences={message.references} />}
         {isAssistant && hovered && (
           <div className="flex items-center gap-1">
@@ -640,9 +645,224 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
   )
 }
 
+// ── Proposed wiki edits surfaced from the chat answer ─────────────
+// When the assistant proposes a wiki correction it emits a FILE block
+// (apply to an existing page) or, when unsure which page, a REVIEW block
+// (route to the manual review queue). We render those as actionable
+// cards instead of letting the raw block show as text.
+
+interface ProposedReview { kind: string; title: string; body: string }
+
+function parseProposedReviews(content: string): ProposedReview[] {
+  const re = /---REVIEW:\s*([\w-]+)\s*\|\s*(.+?)\s*---\n([\s\S]*?)---END REVIEW---/g
+  const out: ProposedReview[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(content)) !== null) {
+    out.push({ kind: m[1].trim(), title: m[2].trim(), body: m[3].trim() })
+  }
+  return out
+}
+
+function ProposedEdits({ content }: { content: string }) {
+  const fileBlocks = useMemo(
+    () => parseFileBlocks(content).blocks.filter((b) => /^wiki\/.+\.md$/i.test(b.path) && isSafeIngestPath(b.path)),
+    [content],
+  )
+  const reviews = useMemo(() => parseProposedReviews(content), [content])
+  if (fileBlocks.length === 0 && reviews.length === 0) return null
+  return (
+    <div className="flex flex-col gap-2">
+      {fileBlocks.map((b, i) => (
+        <EditCard key={`edit-${i}`} path={b.path} newContent={b.content} />
+      ))}
+      {reviews.map((r, i) => (
+        <ReviewSuggestionCard key={`rev-${i}`} kind={r.kind} title={r.title} body={r.body} />
+      ))}
+    </div>
+  )
+}
+
+function EditCard({ path, newContent }: { path: string; newContent: string }) {
+  const project = useWikiStore((s) => s.project)
+  const selectedFile = useWikiStore((s) => s.selectedFile)
+  const [oldContent, setOldContent] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [showDiff, setShowDiff] = useState(false)
+  const [status, setStatus] = useState<"idle" | "applying" | "applied" | "error">("idle")
+  const [errorMsg, setErrorMsg] = useState("")
+
+  const pp = project ? normalizePath(project.path) : ""
+  const fullPath = pp ? `${pp}/${path}` : ""
+
+  useEffect(() => {
+    let cancelled = false
+    if (!fullPath) return
+    readFile(fullPath)
+      .then((c) => { if (!cancelled) setOldContent(c) })
+      .catch(() => { if (!cancelled) setOldContent(null) })
+      .finally(() => { if (!cancelled) setLoaded(true) })
+    return () => { cancelled = true }
+  }, [fullPath])
+
+  const isNew = loaded && oldContent === null
+  const diff = useMemo(
+    () => (oldContent !== null ? diffLines(oldContent, newContent) : null),
+    [oldContent, newContent],
+  )
+  const stats = useMemo(() => (diff ? diffStats(diff) : null), [diff])
+  const unchanged = oldContent !== null && isUnchanged(oldContent, newContent)
+
+  const handleApply = useCallback(async () => {
+    if (!project || status === "applying" || status === "applied") return
+    setStatus("applying")
+    try {
+      await applyPageEdit(project.path, path, newContent)
+      // Refresh the tree + dependent views, and the open preview if this
+      // is the page being viewed.
+      try {
+        const tree = await listDirectory(pp)
+        useWikiStore.getState().setFileTree(tree)
+      } catch { /* ignore */ }
+      useWikiStore.getState().bumpDataVersion()
+      if (selectedFile && normalizePath(selectedFile) === normalizePath(fullPath)) {
+        useWikiStore.getState().setFileContent(newContent)
+      }
+      setStatus("applied")
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err))
+      setStatus("error")
+    }
+  }, [project, status, path, newContent, pp, selectedFile, fullPath])
+
+  return (
+    <div className="rounded-md border border-amber-300/60 bg-amber-50/60 dark:border-amber-800/60 dark:bg-amber-950/30 p-2 text-xs">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <GitMerge className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+        <span className="font-medium text-foreground">
+          {isNew ? "Proposed new page" : "Proposed edit"}
+        </span>
+        <code className="rounded bg-muted px-1 py-0.5 text-[10px] break-all">{path}</code>
+        {stats && (
+          <span className="text-[10px] text-muted-foreground">
+            <span className="text-emerald-600 dark:text-emerald-400">+{stats.added}</span>{" "}
+            <span className="text-red-600 dark:text-red-400">−{stats.removed}</span>
+          </span>
+        )}
+      </div>
+
+      {unchanged ? (
+        <p className="mt-1 text-muted-foreground">No changes — the proposed content matches the current page.</p>
+      ) : (
+        <>
+          <div className="mt-1.5 flex items-center gap-2">
+            {!isNew && diff && (
+              <button
+                type="button"
+                onClick={() => setShowDiff((v) => !v)}
+                className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary"
+              >
+                {showDiff ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                {showDiff ? "Hide diff" : "Show diff"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleApply}
+              disabled={status === "applying" || status === "applied" || !loaded}
+              className="inline-flex items-center gap-1 rounded bg-amber-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+              title={isNew ? "Create this page" : "Back up the current page and apply this edit"}
+            >
+              {status === "applied" ? <Check className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+              {status === "applied"
+                ? "Applied"
+                : status === "applying"
+                  ? "Applying…"
+                  : isNew
+                    ? "Create page"
+                    : "Apply edit"}
+            </button>
+            {!isNew && status !== "applied" && (
+              <span className="text-[10px] text-muted-foreground">a backup is saved first</span>
+            )}
+          </div>
+
+          {showDiff && diff && (
+            <pre className="mt-1.5 max-h-72 overflow-auto rounded bg-background/70 p-2 font-mono text-[11px] leading-snug">
+              {diff.map((line, i) => (
+                <div
+                  key={i}
+                  className={
+                    line.type === "add"
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : line.type === "del"
+                        ? "bg-red-500/10 text-red-700 dark:text-red-300"
+                        : "text-muted-foreground"
+                  }
+                >
+                  <span className="select-none opacity-60">{line.type === "add" ? "+ " : line.type === "del" ? "− " : "  "}</span>
+                  {line.text || " "}
+                </div>
+              ))}
+            </pre>
+          )}
+
+          {status === "error" && (
+            <p className="mt-1 text-red-600 dark:text-red-400">Apply failed: {errorMsg}</p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function ReviewSuggestionCard({ kind, title, body }: { kind: string; title: string; body: string }) {
+  const [sent, setSent] = useState(false)
+  const handleSend = useCallback(() => {
+    const type = (["contradiction", "duplicate", "missing-page", "confirm", "suggestion"].includes(kind)
+      ? kind
+      : "suggestion") as "contradiction" | "duplicate" | "missing-page" | "confirm" | "suggestion"
+    useReviewStore.getState().addItem({
+      type,
+      title: title || "Suggested wiki change",
+      description: body,
+      options: [{ label: "Mark handled", action: "ack" }],
+    })
+    setSent(true)
+  }, [kind, title, body])
+
+  return (
+    <div className="rounded-md border border-sky-300/60 bg-sky-50/60 dark:border-sky-800/60 dark:bg-sky-950/30 p-2 text-xs">
+      <div className="flex items-center gap-1.5">
+        <HelpCircle className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
+        <span className="font-medium text-foreground">Suggested change (needs review)</span>
+      </div>
+      {title && <p className="mt-1 font-medium text-foreground">{title}</p>}
+      {body && <p className="mt-0.5 whitespace-pre-wrap text-muted-foreground">{body}</p>}
+      <button
+        type="button"
+        onClick={handleSend}
+        disabled={sent}
+        className="mt-1.5 inline-flex items-center gap-1 rounded bg-sky-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-sky-700 disabled:opacity-60"
+      >
+        {sent ? <Check className="h-3 w-3" /> : <BookmarkPlus className="h-3 w-3" />}
+        {sent ? "Sent to Review" : "Send to Review"}
+      </button>
+    </div>
+  )
+}
+
 function MarkdownContent({ content }: { content: string }) {
-  // Strip hidden comments
-  const cleaned = content.replace(/<!--.*?-->/gs, "").trimEnd()
+  // Strip hidden comments and any proposed-edit FILE/REVIEW blocks — those
+  // are rendered separately as Apply/Review cards (see ProposedEdits), not
+  // as raw markdown. The trailing-open variants keep a half-streamed block
+  // from flashing as plain text mid-response.
+  const cleaned = content
+    .replace(/<!--.*?-->/gs, "")
+    .replace(/---FILE:[\s\S]*?---END FILE---/g, "")
+    .replace(/---REVIEW:[\s\S]*?---END REVIEW---/g, "")
+    .replace(/---FILE:[\s\S]*$/g, "")
+    .replace(/---REVIEW:[\s\S]*$/g, "")
+    .trimEnd()
 
   // Project path for resolving wiki-relative image src in chat
   // replies (LLM may surface images that came in via retrieved

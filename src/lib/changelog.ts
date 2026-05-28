@@ -26,6 +26,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.21",
+    date: "2026-05-28",
+    highlights: {
+      en: [
+        "Fix wiki knowledge straight from chat: when you ask the assistant to correct or update a page, it now proposes the change as an editable card with a diff and an Apply button — no more copy-pasting into the .md file. Applying backs up the old version first (recoverable under .llm-wiki/page-history) and preserves the page's created date. If the assistant isn't sure which page to edit, it routes the suggestion to the Review queue instead. The page you're viewing is now passed into the chat as context.",
+        "Connection / functional model tests no longer falsely report \"empty content\" for reasoning-native models (MiniMax M-series, DeepSeek-R1, …): the token budget was raised so a thinking model can reach its answer.",
+      ],
+      zh: [
+        "在对话里直接修补 wiki 知识:让助手纠正/更新某页时,它会以一张可操作卡片给出改动(带 diff + 一键应用),不用再手动复制回 .md。应用前会自动备份旧版本(可在 .llm-wiki/page-history 恢复)并保留页面的创建日期;若助手不确定该改哪一页,则把建议送入「审核」队列。当前正在查看的页面也会作为上下文传给对话。",
+        "连接/功能模型测试不再对推理型模型(MiniMax M 系列、DeepSeek-R1 等)误报「empty content」:已调大 token 预算,让思考型模型有空间产出正文。",
+      ],
+    },
+  },
+  {
     version: "0.4.20",
     date: "2026-05-27",
     highlights: {

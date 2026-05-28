@@ -266,20 +266,37 @@ export function ChatPanel() {
         let usedChars = 0
         type PageEntry = { title: string; path: string; content: string; priority: number }
         const relevantPages: PageEntry[] = []
+        const addedPaths = new Set<string>()
 
         const tryAddPage = async (title: string, filePath: string, priority: number): Promise<boolean> => {
           if (usedChars >= PAGE_BUDGET) return false
           try {
             const raw = await readFile(filePath)
             const relativePath = getRelativePath(filePath, pp)
+            if (addedPaths.has(relativePath)) return false
             const truncated = raw.length > MAX_PAGE_SIZE
               ? raw.slice(0, MAX_PAGE_SIZE) + "\n\n[...truncated...]"
               : raw
             if (usedChars + truncated.length > PAGE_BUDGET) return false
             usedChars += truncated.length
+            addedPaths.add(relativePath)
             relevantPages.push({ title, path: relativePath, content: truncated, priority })
             return true
           } catch { return false }
+        }
+
+        // P-1: The page the user currently has open in the preview.
+        // Injecting it (highest priority) lets "fix this page" / "correct
+        // X here" work, and gives the LLM the exact target path to edit.
+        let currentPageRel = ""
+        const openFile = useWikiStore.getState().selectedFile
+        if (openFile && /\/wiki\/.+\.md$/i.test(normalizePath(openFile))) {
+          const base = getFileName(openFile)
+          if (base !== "index.md" && base !== "log.md") {
+            if (await tryAddPage("Currently open page", openFile, -1)) {
+              currentPageRel = getRelativePath(openFile, pp)
+            }
+          }
         }
 
         // P0: Title matches
@@ -330,6 +347,30 @@ export function ChatPanel() {
             index ? `## Wiki Index\n${index}` : "",
             relevantPages.length > 0 ? `## Page List\n${pageList}` : "",
             `## Wiki Pages\n\n${pagesContext}`,
+            "",
+            relevantPages.length > 0
+              ? [
+                  "## Editing wiki pages",
+                  "If — and ONLY if — the user explicitly asks you to correct, fix, update, rewrite, or patch wiki content, propose the change as a FILE block AFTER your normal explanation:",
+                  "",
+                  "```",
+                  "---FILE: <exact wiki/...md path from the Page List above>---",
+                  "<the COMPLETE corrected page, including frontmatter>",
+                  "---END FILE---",
+                  "```",
+                  "",
+                  "Rules for the FILE block:",
+                  "- Target ONE existing page by its exact `Path` shown above. Never invent a path that isn't listed.",
+                  "- Output the WHOLE page, not a fragment or diff. Keep everything you are not changing; preserve the frontmatter `type`, `title`, and `created`.",
+                  currentPageRel ? `- The user is currently viewing \`${currentPageRel}\` — prefer it when the request is about \"this page\".` : "",
+                  "- At most ONE FILE block per response.",
+                  "- If you CANNOT confidently pick one existing target page (the request is ambiguous, spans multiple pages, or no matching page exists), DO NOT emit a FILE block. Instead emit a REVIEW block so a human can decide:",
+                  "  ---REVIEW: suggestion | <short title>---",
+                  "  <what should change and why; name candidate pages>",
+                  "  ---END REVIEW---",
+                  "- For ordinary questions where no edit was requested, do NOT emit FILE or REVIEW blocks.",
+                ].filter(Boolean).join("\n")
+              : "",
             "",
             "---",
             "",
