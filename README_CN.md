@@ -39,6 +39,7 @@
 
 - **两步思维链摄入** — LLM 先分析再生成 Wiki 页面，来源可追溯，支持增量缓存
 - **多模态图片摄入** — 自动提取 PDF 内嵌图片，调用视觉模型生成事实性描述，搜索结果按图文分区，支持 lightbox 预览与跳转到原始文档对应位置
+- **图片上传 → Wiki（v0.4.22 新增）** — 在 chat 里粘贴截图、拖入图片文件、或从 sources 工具栏挑选；视觉 LLM 把图片内容提取成 markdown（描述 + 原文 OCR + 结构），然后走正常 ingest 流程进入 wiki。在 webview 内 IPC-safe 自动缩图，4K 截图不会撑爆 Tauri IPC 通道
 - **四信号知识图谱** — 直接链接、来源重叠、Adamic-Adar、类型亲和四维关联度模型
 - **Louvain 社区检测** — 自动发现知识聚类，内聚度评分
 - **图谱洞察** — 惊奇连接与知识空白检测，一键触发 Deep Research
@@ -437,6 +438,30 @@ API Key 一直在 OS 应用数据目录，从不在项目目录里。
 ### 27. 页面类型选择器（即时调整左侧分组）
 
 左侧知识树按每页 frontmatter 的 `type:` slug 分组。现在这个 slug 可以**直接在预览面板里改**:类型徽章变成了**下拉框**(显示本地化标签,复用 `knowledgeTree.types.*` 文案)。选一个分类,程序就把该页 `type:` 写回并**实时把它挪到左侧对应分组**——不用再手改 YAML,也不必记 34 个英文 slug。原有的未知/旧 slug 会保留可选,不会被悄悄丢掉;仅对 `wiki/` 下页面生效(不含 `index.md` / `log.md` / 项目根文档)。实现:`lib/frontmatter.ts` 的 `setFrontmatterType()` 只改 frontmatter 块,`preview-panel.tsx` 写回并 `bumpDataVersion()` 触发树重载。
+
+### 28. 图片上传 → 视觉 LLM → Wiki（v0.4.22 新增）
+
+把截图粘进 chat、把图片文件拖进窗口，或从 sources 工具栏选图——视觉 LLM 把图片内容提取为 wiki-ready 的 markdown（描述 + 原文 OCR + 结构），然后走正常的 smart-split + 34-type ingest 流程进 wiki。
+
+三个入口，一条管线：
+
+| 入口 | 位置 | 行为 |
+|---|---|---|
+| **粘贴截图** | Chat 输入框 (Cmd+V / Ctrl+V) | 图片字节 → in-memory base64 → 输入栏出现绿色 🖼️ chip |
+| **拖拽** | 应用窗口任意位置 | Tauri `onDragDropEvent` 按扩展名分流：图片扩展名进 `stagedImages`，其它走原有文件 ingest |
+| **Sources 工具栏** | sources 视图顶栏 🖼️ Image 按钮 | 原生文件选择器（限定图片扩展名），选完立即 ingest（不走 chat） |
+
+发送/ingest 时 `addImagesToRawWithContext()` 做这几件事：
+
+1. **先 downsize，再 IPC。** Tauri 在 macOS 上的 IPC custom-protocol 对 2 MB+ payload 容易崩（典型错误 `Error: The resource id <n> is invalid.`），失败后降级到 postMessage 也撑不住请求体。所以**在 webview 内**（Canvas，零 IPC）先把图片缩到长边 1280 px 的 JPEG q=0.85——典型 1.5 MB PNG 截图缩成 ~200 KB JPEG。这份小尺寸字节既存盘，也发给视觉 LLM，IPC 不会经手大 payload。拖入的图片用 `convertFileSrc`，原图字节也不过 IPC。
+2. **视觉调用** 走 `extractImageAsMarkdown()`（`vision-caption.ts`），用 `multimodalConfig`（独立视觉端点 / 退回主 LLM）。输出是完整 markdown——描述 + 原文 OCR + markdown 结构——不是 2-4 句的 alt-text caption。
+3. **「看不见」启发检测。** 当配置的模型其实看不到图（纯文本 LLM，或 Anthropic-compat 代理把 image block 吃掉了），`looksLikeNoImageRefusal()` 匹配典型的 "no image visible" / "看不到" / "cannot see" 回复，把模型瞎说的内容替换成清晰提示，指引用户去 **Settings → Multimodal**。chat 回复和 sources 弹窗也会上浮失败计数，让你一眼看到模型配错了。
+4. **同名 `.md` 伴生文件**写在图片旁边，含 frontmatter（`source_image`、`media_type`、`captured_at`）、chat-context 块、图片引用、提取出的 markdown。图片引用用**绝对路径**——wiki 的 `markdown-image-resolver` 把相对路径按 wiki/ 根解析，对 `raw/sources/images/` 路径会 404，所以必须绝对。
+5. **入 ingest 队列。** 进队列的是 `.md`（不是图本身），走正常的 smart-split + 34-type 生成 wiki 页面。
+
+**跨平台**：macOS、Windows、Linux 都支持。Canvas downsize 是 webview 原生 API；新增的 `write_binary_file` Rust 命令（base64 → 字节 → 文件）三个平台通用；拖拽走的是 Tauri 跨平台 API。
+
+Settings → **视觉 / 图片识别**（从「图片描述」改名）同时控制这个新流程**和**原有的 PDF/DOCX caption 流程。主开关用 emerald 绿，ON 状态一目了然。
 
 ## 示例：一份完整的 schema.md（可参考 / 复制）
 

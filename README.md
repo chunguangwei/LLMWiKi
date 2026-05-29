@@ -44,6 +44,7 @@
 
 - **Two-Step Chain-of-Thought Ingest** — LLM analyzes first, then generates wiki pages with source traceability and incremental cache
 - **Multimodal Image Ingestion** — extract embedded images from PDFs, generate factual captions with a vision LLM, surface them in image-aware search results with lightbox preview and jump-to-source
+- **Image Upload → Wiki (v0.4.22)** — paste a screenshot, drag an image file, or pick one from the sources toolbar; vision LLM extracts content as markdown (description + verbatim OCR + structure) → smart-split + 34-type ingest → wiki page. IPC-safe in-webview downsize so 4K screenshots don't blow up Tauri's IPC channel
 - **4-Signal Knowledge Graph** — relevance model with direct links, source overlap, Adamic-Adar, and type affinity
 - **Louvain Community Detection** — automatic knowledge cluster discovery with cohesion scoring
 - **Graph Insights** — surprising connections and knowledge gaps with one-click Deep Research
@@ -442,6 +443,30 @@ Raw Word/Office source files (`.docx` `.xlsx` `.pptx` `.odt` `.ods` `.odp`) now 
 ### 27. Editable Page-Type Selector
 
 The left knowledge tree groups pages by their frontmatter `type:` slug. That slug is now editable straight from the preview panel: the type chip is a **dropdown** (localized labels, reusing the `knowledgeTree.types.*` strings). Pick a category and the page's `type:` is rewritten and it **instantly regroups** in the sidebar — no more hand-editing YAML or memorizing the 34 English slugs. An unknown/legacy current slug is kept selectable so it's never silently dropped; enabled for `wiki/` pages only (not `index.md` / `log.md` / project docs). Implementation: `setFrontmatterType()` in `lib/frontmatter.ts` rewrites only the frontmatter block; `preview-panel.tsx` writes + bumps `dataVersion` so the tree reloads.
+
+### 28. Image Upload → Vision-LLM → Wiki (v0.4.22)
+
+Paste, drag, or pick standalone images into chat or sources — the vision LLM extracts the image's content as wiki-ready markdown (description + verbatim OCR + structure) which then runs through the normal smart-split + 34-type ingest into the wiki.
+
+Three entry points, one pipeline:
+
+| Entry point | Where | What happens |
+|---|---|---|
+| **Clipboard paste** | Chat input (Cmd+V / Ctrl+V) | Image bytes → in-memory base64 → green 🖼️ chip in input bar |
+| **Drag-drop** | Anywhere in the app window | Tauri's `onDragDropEvent` splits image extensions to `stagedImages`, everything else keeps going through file ingest |
+| **Sources Picker** | Sources view toolbar → 🖼️ Image button | Native file picker scoped to image extensions, ingests immediately (no chat round-trip) |
+
+What `addImagesToRawWithContext` does on send / ingest:
+
+1. **Downsize first, IPC last.** Tauri's IPC custom-protocol on macOS collapses on 2 MB+ payloads (the dreaded `Error: The resource id <n> is invalid.`) and silently falls back to `postMessage` which can't carry the request body either. The image is downsized **inside the webview** (Canvas, zero IPC) to 1280 px on the long side @ JPEG quality 0.85 — a 1.5 MB PNG screenshot shrinks to ~200 KB JPEG. The shrunk bytes are what gets written to disk AND sent to the vision LLM, so no large payload ever crosses IPC. Drag-drop uses `convertFileSrc` so the original bytes don't cross IPC either.
+2. **Vision call** via `extractImageAsMarkdown()` (`vision-caption.ts`). Uses `multimodalConfig` from `wiki-store` (dedicated multimodal endpoint when configured, falls back to main LLM otherwise). Output is full markdown — description + verbatim OCR + structural markdown — not a 2-4 sentence alt-text caption.
+3. **Refusal heuristic.** When the configured model can't actually see the image (text-only LLM, or Anthropic-compat proxy that strips image blocks), `looksLikeNoImageRefusal()` matches the typical "no image visible" / "看不到" / "cannot see" replies and swaps the LLM's confused output for an actionable placeholder pointing the user at **Settings → Multimodal**. The chat assistant reply and the sources alert also surface a count of refusals so users see the bad-config signal up front.
+4. **Companion `.md`** is written next to the image with frontmatter (`source_image`, `media_type`, `captured_at`), the chat-context block, the image reference, and the extracted markdown. Image reference uses the **absolute filesystem path** so the wiki's `markdown-image-resolver` (which treats relative paths as wiki-root-relative) doesn't 404 on `raw/sources/images/` paths.
+5. **Ingest queue.** The `.md` (not the image) enqueues for normal smart-split + 34-type processing.
+
+Cross-platform: works on macOS, Windows, and Linux. The Canvas downsize is webview-native (no platform-specific code). The new `write_binary_file` Rust command (base64 → bytes → file) handles clipboard images on all three. The drag-drop event surface is Tauri's cross-platform API.
+
+Settings → **Vision / Image OCR** (renamed from "Image Captioning") controls both this new flow AND the existing PDF/DOCX caption flow. Master toggle uses emerald green for an unambiguous ON state.
 
 ## Tech Stack
 
