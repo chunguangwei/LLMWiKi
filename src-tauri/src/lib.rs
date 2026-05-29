@@ -154,6 +154,7 @@ pub fn run() {
             commands::fs::read_file,
             commands::fs::write_file,
             commands::fs::write_file_atomic,
+            commands::fs::write_binary_file,
             commands::fs::list_directory,
             commands::fs::copy_file,
             commands::fs::copy_directory,

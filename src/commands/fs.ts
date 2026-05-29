@@ -20,6 +20,17 @@ export async function writeFileAtomic(path: string, contents: string): Promise<v
   return invoke<void>("write_file_atomic", { path, contents })
 }
 
+/**
+ * Decode a base64 payload on the Rust side and write the raw bytes to
+ * `path`. The clipboard-paste image flow uses this — the pasted image
+ * arrives as an in-memory ArrayBuffer, we base64-encode it, and persist
+ * to `raw/sources/images/` so the rest of the ingest pipeline sees a
+ * normal file on disk.
+ */
+export async function writeBinaryFile(path: string, base64: string): Promise<void> {
+  return invoke<void>("write_binary_file", { path, base64 })
+}
+
 export async function listDirectory(path: string): Promise<FileNode[]> {
   return invoke<FileNode[]>("list_directory", { path })
 }

@@ -46,13 +46,13 @@ export function MultimodalSection({ draft, setDraft }: Props) {
       <div
         className={`flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
           draft.multimodalEnabled
-            ? "border-primary/40 bg-primary/5"
+            ? "border-emerald-500/60 bg-emerald-500/10 dark:border-emerald-400/50 dark:bg-emerald-400/10"
             : "border-border bg-background"
         }`}
       >
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">
-            {t("settings.sections.multimodal.enableLabel", "Enable captioning at ingest")}
+            {t("settings.sections.multimodal.enableLabel", "Enable vision LLM")}
           </div>
           <div className="text-xs text-muted-foreground">
             {t(
@@ -66,12 +66,14 @@ export function MultimodalSection({ draft, setDraft }: Props) {
           onClick={() => setDraft("multimodalEnabled", !draft.multimodalEnabled)}
           role="switch"
           aria-checked={draft.multimodalEnabled}
-          aria-label={t("settings.sections.multimodal.enableLabel", "Enable captioning at ingest")}
+          aria-label={t("settings.sections.multimodal.enableLabel", "Enable vision LLM")}
           className="ml-3 flex shrink-0 items-center gap-2"
         >
           <span
             className={`text-xs font-semibold ${
-              draft.multimodalEnabled ? "text-primary" : "text-muted-foreground"
+              draft.multimodalEnabled
+                ? "text-emerald-700 dark:text-emerald-300"
+                : "text-muted-foreground"
             }`}
           >
             {draft.multimodalEnabled
@@ -80,7 +82,9 @@ export function MultimodalSection({ draft, setDraft }: Props) {
           </span>
           <span
             className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-              draft.multimodalEnabled ? "bg-primary" : "bg-muted"
+              draft.multimodalEnabled
+                ? "bg-emerald-500 dark:bg-emerald-400"
+                : "bg-muted"
             }`}
           >
             <span
@@ -130,7 +134,9 @@ export function MultimodalSection({ draft, setDraft }: Props) {
                 "Use main LLM for captions",
               )}
               className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                draft.multimodalUseMainLlm ? "bg-primary" : "bg-muted"
+                draft.multimodalUseMainLlm
+                  ? "bg-emerald-500 dark:bg-emerald-400"
+                  : "bg-muted"
               }`}
             >
               <span

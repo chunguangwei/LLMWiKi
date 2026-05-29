@@ -1,10 +1,18 @@
 import { useRef, useState, useCallback } from "react"
-import { Send, Square, X, Paperclip, Link as LinkIcon, Search } from "lucide-react"
+import { Send, Square, X, Paperclip, Link as LinkIcon, Search, Image as ImageIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import { getFileName } from "@/lib/path-utils"
 import { isLikelyUrl } from "@/lib/web-fetch"
 import { looksLikeSearchTrigger } from "@/lib/search-trigger"
+
+/** Display-only shape for image chips. Full base64 / path lives in the parent. */
+export interface StagedImageChip {
+  id: string
+  displayName: string
+  /** "clipboard" | "file" — drives icon + tooltip label only. */
+  source: "clipboard" | "file"
+}
 
 interface ChatInputProps {
   onSend: (text: string) => void
@@ -16,6 +24,14 @@ interface ChatInputProps {
   stagedUrls?: string[]
   onAddUrl?: (url: string) => void
   onRemoveUrl?: (url: string) => void
+  /**
+   * Image inputs (clipboard paste / drag-drop / picker). Display
+   * chips with an image icon. Removal callback removes the
+   * corresponding full payload in the parent's state.
+   */
+  stagedImages?: StagedImageChip[]
+  onAddImage?: (base64: string, mediaType: string, displayName?: string) => void
+  onRemoveImage?: (id: string) => void
   /**
    * When supplied, the 🔍 button is rendered. Click pre-fills the
    * textarea with `/search ` so the user can type the query and press
@@ -31,6 +47,26 @@ interface ChatInputProps {
    */
   searchIntent?: string | null
   onClearSearchIntent?: () => void
+}
+
+/**
+ * Encode an ArrayBuffer to base64 without blowing the stack on large
+ * pastes. `String.fromCharCode(...arr)` apply-spreads the entire array
+ * onto the stack, which throws RangeError above ~120k elements — a
+ * 1MB screenshot easily blows past that. Chunked 32KB-at-a-time
+ * conversion keeps us safe up to multi-MB images.
+ */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ""
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(
+      null,
+      Array.from(bytes.subarray(i, i + CHUNK)),
+    )
+  }
+  return btoa(binary)
 }
 
 function hostnameOf(url: string): string {
@@ -51,6 +87,9 @@ export function ChatInput({
   stagedUrls,
   onAddUrl,
   onRemoveUrl,
+  stagedImages,
+  onAddImage,
+  onRemoveImage,
   onSearchClick,
   searchIntent,
   onClearSearchIntent,
@@ -94,7 +133,8 @@ export function ChatInput({
 
   const hasFiles = (stagedFiles?.length ?? 0) > 0
   const hasUrls = (stagedUrls?.length ?? 0) > 0
-  const hasStaged = hasFiles || hasUrls
+  const hasImages = (stagedImages?.length ?? 0) > 0
+  const hasStaged = hasFiles || hasUrls || hasImages
   const hasAnyContext = hasStaged || hasSearchIntent
   const canSend = !isStreaming && (value.trim().length > 0 || hasStaged)
 
@@ -122,21 +162,53 @@ export function ChatInput({
     [handleSend],
   )
 
-  // Paste-detection for URLs: if the user pastes a single URL with nothing
-  // else in the clipboard text, intercept it and route to staged URLs so
-  // it becomes a chip — much faster than typing into the box and asking
-  // the model to "fetch this". Anything else (multi-line, URL inside a
-  // sentence, plain text) is left alone.
+  // Paste-detection: image bytes win over URL detection. Order matters
+  // because a clipboard with both image data AND text (e.g. macOS
+  // Preview "Copy Image" can carry both) should route to the image
+  // chip, not a stringified URL.
+  //
+  //   1. Look for `image/*` items first → read as ArrayBuffer → base64
+  //      → onAddImage. This covers Cmd+Shift+4 screenshots, "Copy
+  //      Image" from browsers, and clipboard tools like Snipaste.
+  //   2. Otherwise fall back to the existing URL paste fast-path.
+  //   3. Otherwise let the textarea handle the paste natively.
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      if (!onAddUrl) return
-      const txt = e.clipboardData.getData("text/plain")
-      if (txt && isLikelyUrl(txt)) {
-        e.preventDefault()
-        onAddUrl(txt.trim())
+      // Image branch
+      if (onAddImage) {
+        const items = Array.from(e.clipboardData.items ?? [])
+        const imageItems = items.filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+        if (imageItems.length > 0) {
+          e.preventDefault()
+          for (const it of imageItems) {
+            const file = it.getAsFile()
+            if (!file) continue
+            // Async read; UI shows the chip the moment readAsArrayBuffer
+            // resolves. We don't await here because handlePaste itself
+            // can't be async (React synthetic events would be pooled).
+            file.arrayBuffer().then((buf) => {
+              const b64 = arrayBufferToBase64(buf)
+              const displayName = file.name && file.name !== "image.png"
+                ? file.name
+                : `screenshot-${new Date().toISOString().slice(11, 19).replace(/:/g, "")}.${file.type === "image/png" ? "png" : "img"}`
+              onAddImage(b64, file.type || "image/png", displayName)
+            }).catch((err) => {
+              console.warn("[chat-input] failed to read pasted image:", err)
+            })
+          }
+          return
+        }
+      }
+      // URL branch (existing behaviour)
+      if (onAddUrl) {
+        const txt = e.clipboardData.getData("text/plain")
+        if (txt && isLikelyUrl(txt)) {
+          e.preventDefault()
+          onAddUrl(txt.trim())
+        }
       }
     },
-    [onAddUrl],
+    [onAddImage, onAddUrl],
   )
 
   return (
@@ -163,6 +235,26 @@ export function ChatInput({
               )}
             </div>
           )}
+          {stagedImages?.map((img) => (
+            <div
+              key={`image:${img.id}`}
+              className="flex max-w-[240px] items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs"
+              title={`${img.source === "clipboard" ? "Pasted image" : "Image file"}: ${img.displayName}`}
+            >
+              <ImageIcon className="h-3 w-3 shrink-0 text-emerald-700 dark:text-emerald-400" />
+              <span className="truncate text-emerald-700 dark:text-emerald-300">{img.displayName}</span>
+              {onRemoveImage && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveImage(img.id)}
+                  className="shrink-0 rounded p-0.5 text-emerald-700/70 hover:bg-background hover:text-emerald-700 dark:text-emerald-400/70 dark:hover:text-emerald-300"
+                  title="Remove"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          ))}
           {stagedFiles?.map((path) => (
             <div
               key={`file:${path}`}

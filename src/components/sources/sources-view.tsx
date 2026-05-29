@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
-import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Wand2 } from "lucide-react"
+import { Plus, FileText, RefreshCw, Trash2, Folder, ChevronRight, ChevronDown, Wand2, Image as ImageIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -19,6 +19,7 @@ import {
   importSourceFolder,
   isIngestableSourcePath,
 } from "@/lib/source-lifecycle"
+import { addImagesToRawWithContext } from "@/lib/raw-from-chat"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
@@ -34,6 +35,7 @@ export function SourcesView() {
   const dataVersion = useWikiStore((s) => s.dataVersion)
   const [sources, setSources] = useState<FileNode[]>([])
   const [importing, setImporting] = useState(false)
+  const [importingImages, setImportingImages] = useState(false)
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
   const [reingestingAll, setReingestingAll] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -164,6 +166,68 @@ export function SourcesView() {
       console.error(`Failed to import folder:`, err)
     } finally {
       setImporting(false)
+    }
+  }
+
+  /**
+   * Image import — separate from handleImport because images don't go
+   * through `importSourceFiles` (their extensions aren't in
+   * INGESTABLE_SOURCE_EXTENSIONS — vision-LLM extracts markdown into
+   * a sibling `.md`, and the `.md` is what gets ingested).
+   */
+  async function handleImportImages() {
+    if (!project || importingImages) return
+    const selected = await open({
+      multiple: true,
+      title: t("sources.importImages", { defaultValue: "Import images" }),
+      filters: [
+        {
+          name: "Images",
+          extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg"],
+        },
+      ],
+    })
+    if (!selected || (Array.isArray(selected) && selected.length === 0)) return
+    const paths = Array.isArray(selected) ? selected : [selected]
+    setImportingImages(true)
+    try {
+      const result = await addImagesToRawWithContext(
+        project,
+        paths.map((p) => ({ sourcePath: p })),
+        "",
+        llmConfig,
+      )
+      if (result.visionRefusals > 0) {
+        const where = result.usedDedicatedVisionLlm
+          ? t("sources.visionRefusedDedicated", {
+              defaultValue:
+                "The vision model configured in Settings → Multimodal ({{model}}) doesn't appear to support image input.",
+              model: result.attemptedVisionModel,
+            })
+          : t("sources.visionRefusedMainLlm", {
+              defaultValue:
+                "The current chat LLM ({{model}}) is text-only — it can't process images.",
+              model: result.attemptedVisionModel,
+            })
+        const fix = t("sources.visionRefusedFix", {
+          defaultValue:
+            "Open Settings → Multimodal and configure a vision-capable model (Gemini 2.5 Flash / Claude Haiku / GPT-4o), then re-ingest the images.",
+        })
+        window.alert(
+          `${where}\n\n${fix}\n\n(${result.visionRefusals}/${paths.length} images affected)`,
+        )
+      }
+      await loadSources()
+    } catch (err) {
+      console.error("Failed to import images:", err)
+      window.alert(
+        t("sources.importImagesFailed", {
+          defaultValue: "Failed to import images: {{error}}",
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      )
+    } finally {
+      setImportingImages(false)
     }
   }
 
@@ -340,6 +404,30 @@ export function SourcesView() {
             <Plus className="mr-1 h-4 w-4" />
             {t("sources.importFolder", "Folder")}
           </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleImportImages}
+                  disabled={importingImages}
+                  aria-label={t("sources.importImages", { defaultValue: "Import images" })}
+                />
+              }
+            >
+              <ImageIcon className={`mr-1 h-4 w-4 ${importingImages ? "animate-pulse" : ""}`} />
+              {importingImages
+                ? t("sources.importingImages", { defaultValue: "Extracting..." })
+                : t("sources.importImages", { defaultValue: "Image" })}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end" className="max-w-80 whitespace-normal leading-relaxed">
+              {t("sources.importImagesTooltip", {
+                defaultValue:
+                  "Pick image files. A vision-capable LLM extracts each image's content as markdown, then ingest runs on the extracted markdown.",
+              })}
+            </TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -620,11 +708,13 @@ function SourceTree({
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0"
-              title={t("sources.ingest")}
+              title={t("sources.reingestOne", {
+                defaultValue: "Re-ingest this file",
+              })}
               disabled={ingestingPath === node.path}
               onClick={() => onIngest(node)}
             >
-              <BookOpen className="h-4 w-4" />
+              <Wand2 className={`h-4 w-4 ${ingestingPath === node.path ? "animate-pulse" : ""}`} />
             </Button>
             <DeleteButton
               isPending={isPendingDelete}

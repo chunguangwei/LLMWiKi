@@ -1196,6 +1196,34 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
     .map_err(|e| format!("write_file_atomic blocking task join error: {e}"))?
 }
 
+/// Decode a base64 payload and write the raw bytes to `path`. Needed for
+/// clipboard-pasted images (which arrive as in-memory base64) and any
+/// other binary data the frontend wants to persist without round-tripping
+/// through string-only `write_file`.
+#[tauri::command]
+pub async fn write_binary_file(path: String, base64: String) -> Result<(), String> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("write_binary_file", || {
+            let bytes = B64
+                .decode(base64.as_bytes())
+                .map_err(|e| format!("Invalid base64 for '{}': {}", path, e))?;
+            let p = Path::new(&path);
+            if let Some(parent) = p.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
+            }
+            file_sync::mark_app_write_path(p);
+            fs::write(&path, &bytes)
+                .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
+            file_sync::mark_app_write_path(p);
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|e| format!("write_binary_file blocking task join error: {e}"))?
+}
+
 #[tauri::command]
 pub async fn list_directory(path: String) -> Result<Vec<FileNode>, String> {
     tauri::async_runtime::spawn_blocking(move || {

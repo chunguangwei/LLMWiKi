@@ -212,3 +212,136 @@ export async function captionImage(
 
   return tokens.join("").trim()
 }
+
+/**
+ * Standalone-image extraction prompt — used when a user uploads / pastes
+ * / drags a single image into chat or sources and we want the FULL
+ * content of the image as wiki-ready markdown, not a 2-4 sentence alt
+ * text. The caption pipeline above optimises for "preserve the figure
+ * through summarisation"; this optimises for "this image IS the source,
+ * extract everything in it so the ingest LLM has real text to chunk".
+ *
+ * Why a separate prompt instead of stretching CAPTION_PROMPT:
+ *   - CAPTION_PROMPT caps at 4 sentences plain text. A full screenshot
+ *     of a document / receipt / whiteboard would lose 80% of its OCR
+ *     content under that cap.
+ *   - "no markdown" makes sense for alt text (it breaks the parent
+ *     `![]()`), but for standalone extraction we WANT markdown — the
+ *     downstream wiki ingest LLM consumes markdown structure (headings,
+ *     lists, tables) as native input.
+ */
+export const STANDALONE_IMAGE_EXTRACT_PROMPT = [
+  "Extract everything visible in this image as detailed markdown for a knowledge base.",
+  "",
+  "Include all of the following that applies:",
+  "  - A short factual description of what the image shows (1-2 sentences) as the opening paragraph.",
+  "  - All visible text VERBATIM (OCR). Preserve original line breaks for things like code, addresses, receipts.",
+  "  - Use markdown headings, lists, and tables where the visual structure suggests it (e.g. a slide with bullets → markdown bullets; a tabular chart → markdown table).",
+  "  - For charts/graphs: list axes, units, and notable values; describe the trend.",
+  "  - For diagrams: enumerate nodes, edges, and labels.",
+  "  - For screenshots of software: name the visible UI elements and any displayed data.",
+  "",
+  "Do NOT invent text or values not present in the image. Do NOT add commentary like \"this image shows\" beyond the opening sentence. Output markdown only — no code fences around the whole reply, no preamble.",
+].join("\n")
+
+/**
+ * Read an image and ask the vision LLM to return the image's full
+ * content as markdown — description + verbatim OCR + structural
+ * markdown where appropriate. Used by the standalone-image ingest
+ * pipeline (paste / drag-drop / sources Import image). The returned
+ * markdown is what becomes the wiki source — the image file itself
+ * is preserved alongside for preview but does NOT go through ingest
+ * directly (image bytes have no chunkable text).
+ *
+ * `imageBase64` MUST be raw base64, not a `data:` URL — same constraint
+ * as `captionImage`.
+ *
+ * Errors propagate the same way as `captionImage`.
+ */
+export async function extractImageAsMarkdown(
+  imageBase64: string,
+  mediaType: string,
+  llmConfig: LlmConfig,
+  signal?: AbortSignal,
+  options?: { maxTokens?: number; temperature?: number; userNote?: string },
+): Promise<string> {
+  // If the user attached a note ("/screenshot of the API error from
+  // staging"), pass it through so the vision model can use it as
+  // disambiguating context — same role as the surrounding text in
+  // buildCaptionPromptWithContext, just user-provided rather than
+  // sliced from a document.
+  const note = options?.userNote?.trim() ?? ""
+  const promptText =
+    note.length > 0
+      ? [
+          STANDALONE_IMAGE_EXTRACT_PROMPT,
+          "",
+          "Additional user-provided context about this image (use to anchor your description if relevant; ignore if it doesn't match what's visible):",
+          note,
+        ].join("\n")
+      : STANDALONE_IMAGE_EXTRACT_PROMPT
+
+  const messages: ChatMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: promptText },
+        { type: "image", mediaType, dataBase64: imageBase64 },
+      ],
+    },
+  ]
+
+  const tokens: string[] = []
+  let streamError: Error | null = null
+
+  // Devtools-visible breadcrumb so the user can confirm what's
+  // being sent to the vision endpoint (which model, which provider,
+  // image size). Without this, a model that silently ignores image
+  // blocks (some Anthropic-compat proxies don't pipe images through)
+  // looks identical to a model that genuinely "didn't see" the image.
+  // base64 length × 0.75 ≈ raw bytes.
+  console.info(
+    "[vision-caption] extractImageAsMarkdown",
+    {
+      provider: llmConfig.provider,
+      model: llmConfig.model,
+      apiMode: llmConfig.apiMode,
+      mediaType,
+      bytesApprox: Math.round(imageBase64.length * 0.75),
+      userNote: note ? note.slice(0, 60) + (note.length > 60 ? "…" : "") : "(none)",
+    },
+  )
+
+  await streamChat(
+    llmConfig,
+    messages,
+    {
+      onToken: (t) => tokens.push(t),
+      onDone: () => {},
+      onError: (e) => {
+        streamError = e
+      },
+    },
+    signal,
+    {
+      // Standalone images can carry a screen of text — allow much more
+      // budget than CaptionOptions' default (which targets 2-4
+      // sentences). 8k tokens covers a full document screenshot
+      // (~3000 OCR words) with margin for reasoning-mode `<think>`.
+      temperature: options?.temperature ?? 0,
+      max_tokens: options?.maxTokens ?? 8192,
+    },
+  )
+
+  if (streamError) {
+    console.warn("[vision-caption] stream error:", streamError)
+    throw streamError as Error
+  }
+
+  const reply = tokens.join("").trim()
+  console.info(
+    "[vision-caption] reply preview:",
+    reply.length > 400 ? reply.slice(0, 400) + "…" : reply,
+  )
+  return reply
+}

@@ -16,7 +16,14 @@ import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
 import { getOutputLanguage, buildLanguageReminder } from "@/lib/output-language"
 import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
-import { addFilesToRawWithContext, addUrlsToRawWithContext } from "@/lib/raw-from-chat"
+import {
+  addFilesToRawWithContext,
+  addImagesToRawWithContext,
+  addUrlsToRawWithContext,
+  isImageSourcePath,
+  type ChatImageItem,
+} from "@/lib/raw-from-chat"
+import type { StagedImageChip } from "./chat-input"
 import { isLikelyUrl } from "@/lib/web-fetch"
 import { detectSearchTrigger } from "@/lib/search-trigger"
 import {
@@ -166,6 +173,13 @@ export function ChatPanel() {
   // paths (HTML5 drop in Tauri loses these — File objects, no `path`).
   const [stagedFiles, setStagedFiles] = useState<string[]>([])
   const [stagedUrls, setStagedUrls] = useState<string[]>([])
+  // Images live in their own staged queue because they go through a
+  // different ingest path (vision-LLM → markdown companion → ingest).
+  // Each entry carries the full payload (sourcePath for drag-drop,
+  // base64 for clipboard paste) plus display metadata for the chip.
+  const [stagedImages, setStagedImages] = useState<
+    Array<ChatImageItem & { id: string; chipName: string; chipSource: "clipboard" | "file" }>
+  >([])
   const [isDropTargeted, setIsDropTargeted] = useState(false)
 
   // Inline web-search state. `searchQuery` non-null = the search-
@@ -200,17 +214,47 @@ export function ChatPanel() {
       if (p.type === "drop") {
         setIsDropTargeted(false)
         if (!p.paths || p.paths.length === 0) return
-        setStagedFiles((prev) => {
-          const seen = new Set(prev)
-          const next = [...prev]
-          for (const path of p.paths) {
-            if (!seen.has(path)) {
-              seen.add(path)
-              next.push(path)
+        // Split images vs everything else — images go through the
+        // vision-LLM extraction pipeline, other files go through
+        // the existing copy-to-raw flow.
+        const imagePaths: string[] = []
+        const otherPaths: string[] = []
+        for (const path of p.paths) {
+          if (isImageSourcePath(path)) imagePaths.push(path)
+          else otherPaths.push(path)
+        }
+        if (otherPaths.length > 0) {
+          setStagedFiles((prev) => {
+            const seen = new Set(prev)
+            const next = [...prev]
+            for (const path of otherPaths) {
+              if (!seen.has(path)) {
+                seen.add(path)
+                next.push(path)
+              }
             }
-          }
-          return next
-        })
+            return next
+          })
+        }
+        if (imagePaths.length > 0) {
+          setStagedImages((prev) => {
+            const seenPaths = new Set(prev.filter((i) => i.sourcePath).map((i) => i.sourcePath!))
+            const next = [...prev]
+            for (const path of imagePaths) {
+              if (seenPaths.has(path)) continue
+              seenPaths.add(path)
+              const name = path.split("/").pop() || path
+              next.push({
+                id: `img-${Date.now()}-${Math.floor(Math.random() * 1e9).toString(36)}-${name}`,
+                sourcePath: path,
+                displayName: name,
+                chipName: name,
+                chipSource: "file",
+              })
+            }
+            return next
+          })
+        }
       } else if (p.type === "enter" || p.type === "over") {
         setIsDropTargeted(true)
       } else if (p.type === "leave") {
@@ -239,6 +283,37 @@ export function ChatPanel() {
   const removeStagedUrl = useCallback((url: string) => {
     setStagedUrls((prev) => prev.filter((u) => u !== url))
   }, [])
+
+  const addStagedImage = useCallback(
+    (base64: string, mediaType: string, displayName?: string) => {
+      const name = displayName ?? `pasted-image-${stagedImages.length + 1}`
+      setStagedImages((prev) => [
+        ...prev,
+        {
+          id: `img-${Date.now()}-${Math.floor(Math.random() * 1e9).toString(36)}`,
+          base64,
+          mediaType,
+          displayName: name,
+          chipName: name,
+          chipSource: "clipboard",
+        },
+      ])
+    },
+    [stagedImages.length],
+  )
+
+  const removeStagedImage = useCallback((id: string) => {
+    setStagedImages((prev) => prev.filter((img) => img.id !== id))
+  }, [])
+
+  // Display-only chip data passed to ChatInput. Full base64 / sourcePath
+  // payloads stay in chat-panel's state — keeps the chip lightweight
+  // and avoids re-rendering the input on every staged-image change.
+  const imageChips: StagedImageChip[] = stagedImages.map((img) => ({
+    id: img.id,
+    displayName: img.chipName,
+    source: img.chipSource,
+  }))
 
   /**
    * Run a web search via the configured provider and populate the
@@ -661,8 +736,9 @@ export function ChatPanel() {
 
       const filesNow = stagedFiles
       const urlsNow = stagedUrls
+      const imagesNow = stagedImages
       const intentNow = searchIntent
-      if (filesNow.length === 0 && urlsNow.length === 0) {
+      if (filesNow.length === 0 && urlsNow.length === 0 && imagesNow.length === 0) {
         handleSend(text)
         return
       }
@@ -670,6 +746,7 @@ export function ChatPanel() {
         addMessage("assistant", "Open a wiki project first — nothing can be added without one.")
         setStagedFiles([])
         setStagedUrls([])
+        setStagedImages([])
         setSearchIntent(null)
         return
       }
@@ -688,15 +765,17 @@ export function ChatPanel() {
       const userLines: string[] = []
       if (intentNow) userLines.push(`🔍 Searched: ${intentNow}`)
       if (text.trim()) userLines.push(text.trim())
-      const stagedCount = filesNow.length + urlsNow.length
+      const stagedCount = filesNow.length + urlsNow.length + imagesNow.length
       userLines.push(
         `📎 Added to wiki (${stagedCount} item${stagedCount === 1 ? "" : "s"}):`,
       )
       for (const p of filesNow) userLines.push(`- 📄 \`${getFileName(p)}\``)
       for (const u of urlsNow) userLines.push(`- 🔗 ${u}`)
+      for (const img of imagesNow) userLines.push(`- 🖼️ \`${img.chipName}\``)
       addMessage("user", userLines.join("\n"))
       setStagedFiles([])
       setStagedUrls([])
+      setStagedImages([])
       setSearchIntent(null)
 
       const lines: string[] = []
@@ -736,6 +815,46 @@ export function ChatPanel() {
         }
       }
 
+      if (imagesNow.length > 0) {
+        try {
+          const result = await addImagesToRawWithContext(
+            project,
+            imagesNow.map(({ id: _id, chipName: _cn, chipSource: _cs, ...rest }) => rest),
+            composedContext,
+            llmConfig,
+          )
+          if (result.imported.length > 0) {
+            lines.push(
+              `Extracted ${result.imported.length} image${result.imported.length === 1 ? "" : "s"} into \`raw/sources/images/\` via vision LLM.`,
+            )
+          }
+          if (result.visionRefusals > 0) {
+            // Heuristic detection (`looksLikeNoImageRefusal`) caught the
+            // LLM saying "no image visible" etc. Surface this as a
+            // prominent ⚠️ block in the assistant reply so the user
+            // doesn't have to open the .md to discover the model
+            // can't actually see images. The two phrasings match the
+            // two failure modes — dedicated multimodal LLM is misconfigured
+            // vs. user is reusing a text-only main LLM for vision.
+            const where = result.usedDedicatedVisionLlm
+              ? `**Settings → Multimodal** 里配置的视觉模型 \`${result.attemptedVisionModel}\` 似乎不支持图像输入`
+              : `当前 chat LLM \`${result.attemptedVisionModel}\` 不支持多模态输入`
+            const fix = result.usedDedicatedVisionLlm
+              ? "换一个支持 vision 的模型（如 Gemini 2.5 Flash / Claude Haiku / GPT-4o），保存后对图片执行「重新提取这一个文件」"
+              : "去 **Settings → Multimodal** 开启并配置一个支持 vision 的模型（如 Gemini 2.5 Flash / Claude Haiku / GPT-4o），保存后对图片执行「重新提取这一个文件」"
+            lines.push(
+              `⚠️ **图片识别失败** (${result.visionRefusals}/${imagesNow.length})：${where}。\n\n${fix}。`,
+            )
+          }
+          if (result.failed.length > 0) {
+            const detail = result.failed.map((f) => `\`${f.item}\` — ${f.error}`).join("; ")
+            lines.push(`❌ Image import failed: ${detail}`)
+          }
+        } catch (err) {
+          lines.push(`❌ Failed to process images: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+
       if (lines.some((l) => !l.startsWith("❌"))) {
         lines.push("Ingest queued — pages will appear in the wiki once analysis completes.")
       }
@@ -750,7 +869,7 @@ export function ChatPanel() {
         // non-fatal
       }
     },
-    [stagedFiles, stagedUrls, searchIntent, project, llmConfig, handleSend, addMessage, createConversation, setFileTree, runSearch],
+    [stagedFiles, stagedUrls, stagedImages, searchIntent, project, llmConfig, handleSend, addMessage, createConversation, setFileTree, runSearch],
   )
 
   const handleRegenerate = useCallback(async () => {
@@ -877,6 +996,9 @@ export function ChatPanel() {
           stagedUrls={stagedUrls}
           onAddUrl={addStagedUrl}
           onRemoveUrl={removeStagedUrl}
+          stagedImages={imageChips}
+          onAddImage={addStagedImage}
+          onRemoveImage={removeStagedImage}
           onSearchClick={() => { /* prefill handled in ChatInput */ }}
           searchIntent={searchIntent}
           onClearSearchIntent={clearSearchIntent}
