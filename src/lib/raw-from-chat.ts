@@ -630,7 +630,6 @@ export async function addImagesToRawWithContext(
       // doesn't have an "original" file anyway; the downsized JPEG
       // IS the wiki archive.
       let savedBase64: string  // bytes that end up on disk
-      let savedMediaType: string
       let visionBase64: string  // bytes that get sent to vision LLM
       let visionMediaType: string
       let savedExt = ext
@@ -666,7 +665,6 @@ export async function addImagesToRawWithContext(
         }
         // Disk version stays original — copyFile already did it.
         savedBase64 = ""
-        savedMediaType = ""
       } else {
         // Clipboard input. Downsize from the in-memory base64 via
         // blob URL → Image → canvas. Save the downsized JPEG to
@@ -686,7 +684,6 @@ export async function addImagesToRawWithContext(
         }
         if (shrunk && shrunk.downsized) {
           savedBase64 = shrunk.base64
-          savedMediaType = shrunk.mediaType
           visionBase64 = shrunk.base64
           visionMediaType = shrunk.mediaType
           savedExt = "jpg"
@@ -702,7 +699,6 @@ export async function addImagesToRawWithContext(
         } else {
           // No downsize needed OR downsize failed. Use original.
           savedBase64 = item.base64
-          savedMediaType = origMediaType
           visionBase64 = item.base64
           visionMediaType = origMediaType
         }
