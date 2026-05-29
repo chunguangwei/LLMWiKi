@@ -26,6 +26,28 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.22",
+    date: "2026-05-29",
+    highlights: {
+      en: [
+        "Paste, drag, or pick images directly into chat or sources — the configured vision LLM extracts the image's content as markdown (description + verbatim OCR + structure) which then runs through normal ingest into the wiki. Image bytes are auto-downsized in the webview (Canvas) before any Tauri IPC hop, so 4K screenshots no longer blow up the IPC channel.",
+        "Settings → Vision / Image OCR (renamed from Image Captioning) now clearly controls both the new image upload feature AND the PDF/DOCX caption flow. Master toggle uses emerald green for an unambiguous ON state.",
+        "When the configured vision model can't actually see the image (text-only LLM, or a model whose Anthropic-compat proxy strips image blocks), a warning surfaces in the chat reply / sources alert pointing you at Settings → Multimodal — instead of silently writing the model's confused 'I don't see an image' reply into the wiki.",
+        "Azure OpenAI's newer /openai/v1 endpoint is now supported as a custom provider — model field takes the SKU directly (gpt-4o, o3-mini, …) instead of the deployment name. Strict-completion params (max_completion_tokens) auto-apply on v1.",
+        "Cmd+R / Ctrl+R reload binding restored. External links in wiki pages, file preview, and research panel now open in the OS browser instead of navigating the webview off the app shell.",
+        "Per-file re-ingest button (the 🪄 wand next to each source) is now visually distinct from 'open' and clearly labelled 'Re-ingest this file'.",
+      ],
+      zh: [
+        "图片可以直接粘贴 / 拖入 / 选择导入 chat 或 sources — 由配置的视觉 LLM 提取内容为 markdown（描述 + 原文 OCR + 结构），然后走正常 ingest 流程进 wiki。图片在 webview 内（Canvas）自动缩到 ≤1280px、再压成 JPEG，所有 IPC 都只传小 payload，4K 截图不再撑爆 Tauri IPC。",
+        "Settings → 视觉 / 图片识别（从「图片描述」改名）现在明确控制 两个 用途：新增的图片上传 + 原有的 PDF/DOCX caption。主开关用 emerald 绿色，激活状态一目了然。",
+        "如果配置的视觉模型实际上看不到图（纯文本 LLM，或 Anthropic-compat 代理把 image block 吃掉了），会在 chat 回复或 sources 弹窗里明确提示「换个支持 vision 的模型」并指向 Settings → Multimodal，不再把模型瞎说的「我没看到图」当 OCR 写进 wiki。",
+        "支持 Azure OpenAI 新版 /openai/v1 端点（custom provider 配置）— model 字段直接填 SKU（gpt-4o、o3-mini 等）而不是 deployment 名。v1 路径自动适配 max_completion_tokens 等严格参数。",
+        "恢复 Cmd+R / Ctrl+R 重载快捷键。wiki 页面、文件预览、研究面板里的外链现在用系统浏览器打开，不会再把 webview 跳走、回不到应用本体。",
+        "单文件「重新提取」按钮（每个源文件旁边的 🪄 魔棒）视觉上跟「打开」明确区分，tooltip 也清楚写明「重新提取这一个文件」。",
+      ],
+    },
+  },
+  {
     version: "0.4.21",
     date: "2026-05-28",
     highlights: {
