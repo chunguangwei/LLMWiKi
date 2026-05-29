@@ -58,9 +58,29 @@ interface ChatState {
 
 let messageCounter = 0
 
+/**
+ * Globally-unique message id.
+ *
+ * History (and why we don't just `String(messageCounter++)`):
+ *   The old impl returned bare "1"/"2"/"3"… seeded from a module-level
+ *   counter. On app start `loadChatHistory` restored persisted messages
+ *   whose ids were ALREADY "1"/"2"/"3"…, but the in-process counter
+ *   stayed at 0. The very first new message minted "1" — duplicating
+ *   an existing message id and triggering React's "two children with
+ *   the same key" warning on every render of the conversation
+ *   (chat-panel.tsx renders with `key={msg.id}`).
+ *
+ * Fix: prefix with the load-time epoch so we can't collide with stored
+ * ids from a previous run, and add a tiny random suffix so two messages
+ * written in the same millisecond (assistant + user in the same tick)
+ * stay distinct. The counter is kept for readable ordering within one
+ * session — ids look like `m_<ts>_<rand>_<n>`.
+ */
+const MESSAGE_ID_SESSION = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+
 function nextId(): string {
   messageCounter += 1
-  return String(messageCounter)
+  return `m_${MESSAGE_ID_SESSION}_${messageCounter}`
 }
 
 function generateConversationId(): string {

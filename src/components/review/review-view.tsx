@@ -37,6 +37,20 @@ export function ReviewView() {
   const handleResolve = useCallback(async (id: string, action: string) => {
     const pp = project ? normalizePath(project.path) : ""
     const item = items.find((i) => i.id === id)
+
+    // Dismissal — Skip / 跳过 / Dismiss / Ignore / Approve — short-circuit
+    // BEFORE the create-page heuristic. The prompt locks the LLM to
+    // OPTIONS: "Create Page | Skip", but models occasionally produce
+    // localized or padded variants ("Skip this contradiction", "跳过 - 忽略",
+    // "Skip and confirm"). Those used to slip through actionIsDismissal
+    // (exact equality) and silently triggered the create-page branch,
+    // which from the user's POV looked like "Skip did nothing" because
+    // the page write happens in the background with no immediate UI shift.
+    if (actionIsDismissal(action)) {
+      resolveItem(id, action)
+      return
+    }
+
     // Deep Research — must be checked FIRST before any fuzzy matching
     if (action === "__deep_research__" && project) {
       const searchConfig = useWikiStore.getState().searchApiConfig
@@ -384,15 +398,31 @@ function actionLooksLikeOpen(action: string): boolean {
   )
 }
 
-/** Detect if an action is a dismissal (no-op) or should create a page */
+/** Detect if an action is a dismissal (no-op) or should create a page.
+ *
+ * Match policy: STARTSWITH (prefix) rather than equality. The OPTIONS-line
+ * prompt locks the LLM to the literal "Skip" label, but live models
+ * occasionally produce localized or padded forms ("Skip this", "Skip —
+ * keep as is", "跳过 - 忽略此项"). Exact-equality matching missed those
+ * and silently dropped the click into the create-page branch, which
+ * created a wiki page from the review's description text — the opposite
+ * of what the user clicked Skip to do.
+ *
+ * "approve" / "no" / "keep existing" intentionally stay as equality
+ * matches: substring would over-trigger ("approve and document fully"
+ * is a create-page intent, not a dismissal). */
 function actionIsDismissal(action: string): boolean {
-  const lower = action.toLowerCase()
+  const lower = action.trim().toLowerCase()
+  if (
+    lower.startsWith("skip") ||
+    lower.startsWith("dismiss") ||
+    lower.startsWith("ignore") ||
+    lower.startsWith("跳过") ||
+    lower.startsWith("忽略")
+  ) {
+    return true
+  }
   return (
-    lower === "skip" ||
-    lower === "dismiss" ||
-    lower === "ignore" ||
-    lower === "跳过" ||
-    lower === "忽略" ||
     lower === "approve" ||
     lower === "keep existing" ||
     lower === "no"

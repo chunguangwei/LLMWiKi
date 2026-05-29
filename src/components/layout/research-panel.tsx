@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
+import { openUrl } from "@tauri-apps/plugin-opener"
 import {
   Search, Loader2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, X,
   FileText, Send,
@@ -179,6 +180,30 @@ function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStrea
             remarkPlugins={[remarkGfm, remarkMath]}
             rehypePlugins={[rehypeKatex]}
             components={{
+              // Route external links through the OS browser — without
+              // this the Tauri webview navigates the panel away from
+              // the research view with no back button.
+              a: ({ href, children, ...props }) => {
+                const h = typeof href === "string" ? href : ""
+                const isExternal = /^https?:\/\//i.test(h)
+                return (
+                  <a
+                    href={h || undefined}
+                    onClick={(e) => {
+                      if (isExternal) {
+                        e.preventDefault()
+                        void openUrl(h).catch((err) => {
+                          console.error("[research-panel] openUrl failed:", err)
+                        })
+                      }
+                    }}
+                    className="text-primary underline underline-offset-2"
+                    {...props}
+                  >
+                    {children}
+                  </a>
+                )
+              },
               table: ({ children, ...props }) => (
                 <div className="my-2 overflow-x-auto rounded border border-border">
                   <table className="w-full border-collapse text-xs" {...props}>{children}</table>

@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
+import { openUrl } from "@tauri-apps/plugin-opener"
 import { transformWikilinks } from "@/lib/wikilink-transform"
 import { resolveRelatedSlug } from "@/lib/wiki-page-resolver"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
@@ -70,10 +71,26 @@ export function WikiReader({ body }: WikiReaderProps) {
           a: ({ href, children, ...props }) => {
             const h = typeof href === "string" ? href : ""
             const isWikilink = h.startsWith("#")
+            // External http(s) links — without intercept, the Tauri
+            // webview navigates AWAY from the app and there's no back
+            // button to return to the wiki. preventDefault + openUrl
+            // routes the link through the OS default browser instead.
+            const isExternal = /^https?:\/\//i.test(h)
             return (
               <a
                 href={h || undefined}
-                onClick={(e) => isWikilink && handleAnchorClick(e, h)}
+                onClick={(e) => {
+                  if (isWikilink) {
+                    handleAnchorClick(e, h)
+                    return
+                  }
+                  if (isExternal) {
+                    e.preventDefault()
+                    void openUrl(h).catch((err) => {
+                      console.error("[wiki-reader] openUrl failed:", err)
+                    })
+                  }
+                }}
                 className={
                   isWikilink
                     ? "cursor-pointer text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"

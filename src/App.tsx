@@ -31,6 +31,25 @@ function App() {
     startClipWatcher()
   }, [])
 
+  // Cmd+R / Ctrl+R — reload the webview. Tauri's webview does NOT
+  // bind this by default (the OS chrome that normally hosts reload
+  // doesn't exist in a Tauri window), so users get stuck whenever a
+  // markdown link or an external nav takes the webview away from the
+  // app shell. We intercept the keystroke at the document level and
+  // call window.location.reload(). preventDefault stops any focus-
+  // dependent default that the underlying webview might still emit.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const isMeta = e.metaKey || e.ctrlKey
+      if (isMeta && (e.key === "r" || e.key === "R")) {
+        e.preventDefault()
+        window.location.reload()
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [])
+
   // Dev-only helper for visually testing the update-banner UX.
   // Open dev tools and run:
   //   __llmwiki_testUpdateBanner()

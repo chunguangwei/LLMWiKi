@@ -390,8 +390,46 @@ function parsePageInfo(path: string, fileName: string, content: string): WikiPag
   const tags: string[] = []
   let origin: string | undefined
 
+  // Tolerate two common LLM-side malformations of the YAML
+  // frontmatter that used to drop the page into "other":
+  //
+  //   1. Code-fenced wrap — the model emits
+  //        ```yaml
+  //        ---
+  //        type: report
+  //        ---
+  //        ```
+  //      Strip the leading ``` fence so the inner ---...--- block
+  //      parses normally.
+  //
+  //   2. Missing `---` opener — the model writes `type:` / `title:`
+  //      lines straight at the top with no opener at all. Detect
+  //      that shape and synthesize the opener so the regex below
+  //      can still match the leading key-value block.
+  //
+  // Without these, well-typed pages (e.g. `type: report`) silently
+  // fell into the catch-all "other" group in the knowledge tree.
+  let normalized = content
+  const fenceMatch = normalized.match(/^```\s*ya?ml\s*\n/i)
+  if (fenceMatch) {
+    normalized = normalized.slice(fenceMatch[0].length)
+    // Drop the matching closing fence right after the closing ---.
+    normalized = normalized.replace(/(---\s*\n)```\s*\n/, "$1")
+  }
+  if (!normalized.startsWith("---")) {
+    // Heuristic: the first ~10 lines look like YAML frontmatter
+    // (key: value at start of line) AND we eventually see a `---`
+    // closer. If so, prepend a synthetic opener.
+    const firstLines = normalized.split("\n", 12)
+    const looksLikeYaml = firstLines.slice(0, 5).filter((l) => /^[a-z_]+:\s/i.test(l)).length >= 2
+    const hasCloser = /^---\s*$/m.test(normalized)
+    if (looksLikeYaml && hasCloser) {
+      normalized = `---\n${normalized}`
+    }
+  }
+
   // Parse YAML frontmatter
-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/)
+  const fmMatch = normalized.match(/^---\n([\s\S]*?)\n---/)
   if (fmMatch) {
     const fm = fmMatch[1]
     const typeMatch = fm.match(/^type:\s*(.+)$/m)
