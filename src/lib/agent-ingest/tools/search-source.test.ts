@@ -51,6 +51,10 @@ function mockCtx(opts: {
       }),
     },
     llmConfig: {} as AgentContext["llmConfig"],
+    wikiAccess: {
+      listPages: async () => [],
+      readPage: async () => null,
+    },
     signal: controller.signal,
   }
 }

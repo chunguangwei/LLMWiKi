@@ -49,6 +49,55 @@ export interface WikiPageFull {
   body: string
 }
 
+/**
+ * Abstraction over the wiki filesystem that the inspection / mutation
+ * tools use. The runner wires this to real `commands/fs` calls; tests
+ * provide a fake so tools can be exercised without touching disk.
+ *
+ * Why this rather than tools calling `commands/fs` directly:
+ *
+ *   - Testability — vi.mock("@/commands/fs") works but every test
+ *     file would re-stub the same surface. A per-context dependency
+ *     keeps the seam visible.
+ *   - Sandboxing — every wiki access is scoped to the AgentContext's
+ *     project. If a future agent runs across multiple projects, the
+ *     wiki access is the natural place to enforce isolation.
+ *   - Phase E checkpoint replay — recording WikiAccess calls is
+ *     enough to deterministically replay an agent turn for the
+ *     recorded-transcript test (docs/agent-ingest-design.md §10).
+ *
+ * Slug semantics: a slug is the wiki-relative path WITHOUT the .md
+ * extension. Examples:
+ *
+ *   wiki/concepts/foo.md         → "concepts/foo"
+ *   wiki/Books/原则-读书笔记.md   → "Books/原则-读书笔记"
+ *   wiki/index.md                → "index"
+ */
+export interface WikiAccess {
+  /**
+   * Return summaries of every wiki page under the project's `wiki/`
+   * directory. Skips index.md, log.md, overview.md (the wiki's
+   * structural pages, not knowledge pages). If `filter.type` is
+   * set, only pages with matching frontmatter `type:` are returned.
+   *
+   * Order: stable but unspecified — callers should sort if they
+   * need a specific order.
+   */
+  listPages(filter?: { type?: string }): Promise<WikiPageSummary[]>
+
+  /**
+   * Read one page in full. Returns `null` when the slug doesn't
+   * resolve to an existing .md file (the runner translates this
+   * into a tool error result; we never throw for "missing").
+   *
+   * The frontmatter object is the parsed YAML — typed as
+   * Record<string, unknown> because frontmatter is user / LLM
+   * authored and can include arbitrary keys beyond the documented
+   * type/title/created/tags/related/sources.
+   */
+  readPage(slug: string): Promise<WikiPageFull | null>
+}
+
 /** Runtime context threaded into every tool call. */
 export interface AgentContext {
   /** All chunks indexed by chunk_id for O(1) lookup. */
@@ -59,6 +108,8 @@ export interface AgentContext {
   vectorIndex: VectorIndex
   /** Active wiki project. Tool implementations write under `project.path`. */
   project: WikiProject
+  /** Wiki filesystem accessor — list / read / (future) write. */
+  wikiAccess: WikiAccess
   /** Coverage tracker — single source of truth for "what's done". */
   tracker: CoverageTracker
   /** LLM config — used by sub-tasks that need their own LLM call (verify pass, future agents). */

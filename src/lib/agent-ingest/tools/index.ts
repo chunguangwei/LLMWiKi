@@ -33,6 +33,8 @@ export interface ToolDefinition<TInput, TOutput> {
 import { readOutlineTool } from "./read-outline"
 import { readChunkTool } from "./read-chunk"
 import { searchSourceTool } from "./search-source"
+import { listWikiPagesTool } from "./list-wiki-pages"
+import { readWikiPageTool } from "./read-wiki-page"
 
 // Phase A — tools register here as they land. Order matches the
 // implementation order in docs/agent-ingest-design.md §9 Phase A.
@@ -43,6 +45,8 @@ export const TOOLS: Array<ToolDefinition<unknown, unknown>> = [
   readOutlineTool as ToolDefinition<unknown, unknown>,
   readChunkTool as ToolDefinition<unknown, unknown>,
   searchSourceTool as ToolDefinition<unknown, unknown>,
+  listWikiPagesTool as ToolDefinition<unknown, unknown>,
+  readWikiPageTool as ToolDefinition<unknown, unknown>,
 ]
 
 /**

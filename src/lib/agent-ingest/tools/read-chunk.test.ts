@@ -49,6 +49,10 @@ function mockCtx(
       }),
     },
     llmConfig: {} as AgentContext["llmConfig"],
+    wikiAccess: {
+      listPages: async () => [],
+      readPage: async () => null,
+    },
     signal: controller.signal,
   }
 }
