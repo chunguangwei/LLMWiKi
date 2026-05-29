@@ -30,10 +30,16 @@ export interface ToolDefinition<TInput, TOutput> {
   execute(input: TInput, ctx: AgentContext): Promise<TOutput>
 }
 
-// Phase A — tool stubs land here as they're implemented.
-// Empty for now so the test harness can grow incrementally without
-// the loop runner needing a complete catalogue.
-export const TOOLS: Array<ToolDefinition<unknown, unknown>> = []
+import { readOutlineTool } from "./read-outline"
+
+// Phase A — tools register here as they land. Order matches the
+// implementation order in docs/agent-ingest-design.md §9 Phase A.
+// The runner iterates this array to build the tool catalogue passed
+// to the LLM API; getTool() (below) is the dispatch on the LLM's
+// chosen tool_use name.
+export const TOOLS: Array<ToolDefinition<unknown, unknown>> = [
+  readOutlineTool as ToolDefinition<unknown, unknown>,
+]
 
 /**
  * Look up a tool by name. Returns undefined for unknown tools — the
