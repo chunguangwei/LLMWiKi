@@ -65,14 +65,14 @@ export async function loadReviewItems(projectPath: string): Promise<ReviewItem[]
 
 export async function saveLintItems(projectPath: string, items: LintItem[]): Promise<void> {
   const pp = normalizePath(projectPath)
-  await ensureDir(pp)
-  await writeFile(`${pp}/.llm-wiki/lint.json`, JSON.stringify(items, null, 2))
+  await ensureSharedDir(pp)
+  await writeFile(`${sharedDir(pp)}/lint.json`, JSON.stringify(items, null, 2))
 }
 
 export async function loadLintItems(projectPath: string): Promise<LintItem[]> {
   const pp = normalizePath(projectPath)
   try {
-    const content = await readFile(`${pp}/.llm-wiki/lint.json`)
+    const content = await readFile(`${sharedDir(pp)}/lint.json`)
     return JSON.parse(content) as LintItem[]
   } catch {
     return []
