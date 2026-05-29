@@ -105,6 +105,8 @@ const EXT_MAP: Record<string, FileCategory> = {
   odt: "office",
   ods: "office",
   odp: "office",
+  // EPUB: text extracted via the `epub` crate (OPF spine walker).
+  epub: "office",
 
   // Documents we can't extract text from yet — show a placeholder.
   doc: "document",
@@ -113,7 +115,6 @@ const EXT_MAP: Record<string, FileCategory> = {
   pages: "document",
   numbers: "document",
   key: "document",
-  epub: "document",
 
   // Data
   json: "data",

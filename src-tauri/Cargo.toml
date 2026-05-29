@@ -50,6 +50,12 @@ tiny_http = "0.12"
 zip = "2"
 calamine = "0.34.0"
 docx-rs = "0.4.20"
+# Reads .epub files: walks the OPF spine and pulls each XHTML chapter
+# in reading order. EPUB is just a zip + XML manifest, but the crate
+# handles the spec corners (container.xml → rootfile → spine, relative
+# href resolution against the OPF's directory, etc.) so we don't have
+# to roll our own.
+epub = "2"
 lancedb = "0.27.2"
 # tokio provided by tauri runtime for async commands
 arrow-array = "57"

@@ -16,6 +16,9 @@ import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
 import { getOutputLanguage, buildLanguageReminder } from "@/lib/output-language"
 import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
+import { addFilesToRawWithContext, addUrlsToRawWithContext } from "@/lib/raw-from-chat"
+import { isLikelyUrl } from "@/lib/web-fetch"
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow"
 
 // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
@@ -148,6 +151,72 @@ export function ChatPanel() {
   const abortRef = useRef<AbortController | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const dropTargetRef = useRef<HTMLDivElement>(null)
+
+  // OS files dragged into the chat — accumulate paths until the user hits
+  // send, at which point we copy them to raw/sources/ with the typed message
+  // as `## Context`. Tauri's webview drag-drop event delivers actual OS
+  // paths (HTML5 drop in Tauri loses these — File objects, no `path`).
+  const [stagedFiles, setStagedFiles] = useState<string[]>([])
+  const [stagedUrls, setStagedUrls] = useState<string[]>([])
+  const [isDropTargeted, setIsDropTargeted] = useState(false)
+
+  useEffect(() => {
+    const w = getCurrentWebviewWindow()
+    let unlisten: (() => void) | null = null
+    let cancelled = false
+
+    // Drop anywhere in the app window goes to the chat input. We used to
+    // hit-test against the chat panel's bounding rect, but that meant
+    // dropping a file onto the right-pane preview (a common reflex when
+    // you're looking at a source) silently did nothing. Keeping the
+    // subscription panel-scoped is still enough containment — the chat
+    // panel is always mounted while you're in chat mode, and no other
+    // surface in the app listens for OS file drops today.
+    w.onDragDropEvent((event) => {
+      const p = event.payload
+      if (p.type === "drop") {
+        setIsDropTargeted(false)
+        if (!p.paths || p.paths.length === 0) return
+        setStagedFiles((prev) => {
+          const seen = new Set(prev)
+          const next = [...prev]
+          for (const path of p.paths) {
+            if (!seen.has(path)) {
+              seen.add(path)
+              next.push(path)
+            }
+          }
+          return next
+        })
+      } else if (p.type === "enter" || p.type === "over") {
+        setIsDropTargeted(true)
+      } else if (p.type === "leave") {
+        setIsDropTargeted(false)
+      }
+    }).then((u) => {
+      if (cancelled) u()
+      else unlisten = u
+    })
+
+    return () => {
+      cancelled = true
+      if (unlisten) unlisten()
+    }
+  }, [])
+
+  const removeStagedFile = useCallback((path: string) => {
+    setStagedFiles((prev) => prev.filter((p) => p !== path))
+  }, [])
+
+  const addStagedUrl = useCallback((url: string) => {
+    if (!isLikelyUrl(url)) return
+    setStagedUrls((prev) => (prev.includes(url) ? prev : [...prev, url]))
+  }, [])
+
+  const removeStagedUrl = useCallback((url: string) => {
+    setStagedUrls((prev) => prev.filter((u) => u !== url))
+  }, [])
 
   // Auto-scroll to bottom when messages change or streaming content updates
   useEffect(() => {
@@ -475,6 +544,100 @@ export function ChatPanel() {
     abortRef.current = null
   }, [])
 
+  // Drag-drop / URL-paste submit path: when the user hits send with staged
+  // OS files OR staged URLs, copy them into raw/sources/ using the typed
+  // text as `## Context`. We post both turns into the chat history so the
+  // user sees what was added; we do NOT invoke the LLM here. The ingest
+  // pipeline analyzes the new sources asynchronously.
+  //
+  //   - files: text-readable get inline context prepend; binaries get a
+  //     sibling sidecar (see raw-from-chat.ts).
+  //   - URLs: fetched via tauri-plugin-http (CORS-free), main content
+  //     extracted by Readability, converted to markdown, saved under
+  //     raw/sources/web/<slug>-<date>.md with the same context block.
+  const handleSubmit = useCallback(
+    async (text: string) => {
+      const filesNow = stagedFiles
+      const urlsNow = stagedUrls
+      if (filesNow.length === 0 && urlsNow.length === 0) {
+        handleSend(text)
+        return
+      }
+      if (!project) {
+        addMessage("assistant", "Open a wiki project first — nothing can be added without one.")
+        setStagedFiles([])
+        setStagedUrls([])
+        return
+      }
+      let convId = useChatStore.getState().activeConversationId
+      if (!convId) convId = createConversation()
+
+      const userLines: string[] = []
+      if (text.trim()) userLines.push(text.trim())
+      const stagedCount = filesNow.length + urlsNow.length
+      userLines.push(
+        `📎 Added to wiki (${stagedCount} item${stagedCount === 1 ? "" : "s"}):`,
+      )
+      for (const p of filesNow) userLines.push(`- 📄 \`${getFileName(p)}\``)
+      for (const u of urlsNow) userLines.push(`- 🔗 ${u}`)
+      addMessage("user", userLines.join("\n"))
+      setStagedFiles([])
+      setStagedUrls([])
+
+      const lines: string[] = []
+
+      if (filesNow.length > 0) {
+        try {
+          const result = await addFilesToRawWithContext(project, filesNow, text, llmConfig)
+          if (result.imported.length > 0) {
+            lines.push(
+              `Copied ${result.imported.length} file${result.imported.length === 1 ? "" : "s"} to \`raw/sources/\`${text.trim() ? " with your note as `## Context`" : ""}.`,
+            )
+          }
+          if (result.failed.length > 0) {
+            lines.push(`❌ Files failed: ${result.failed.map((p) => getFileName(p)).join(", ")}`)
+          }
+        } catch (err) {
+          lines.push(`❌ Failed to add files: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+
+      if (urlsNow.length > 0) {
+        try {
+          const result = await addUrlsToRawWithContext(project, urlsNow, text, llmConfig)
+          if (result.imported.length > 0) {
+            lines.push(
+              `Fetched ${result.imported.length} URL${result.imported.length === 1 ? "" : "s"} into \`raw/sources/web/\`.`,
+            )
+          }
+          if (result.failed.length > 0) {
+            const detail = result.failed
+              .map((f) => `\`${f.url}\` — ${f.error}`)
+              .join("; ")
+            lines.push(`❌ URL fetch failed: ${detail}`)
+          }
+        } catch (err) {
+          lines.push(`❌ Failed to fetch URLs: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+
+      if (lines.some((l) => !l.startsWith("❌"))) {
+        lines.push("Ingest queued — pages will appear in the wiki once analysis completes.")
+      }
+
+      addMessage("assistant", lines.length > 0 ? lines.join("\n\n") : "Nothing was added.")
+
+      // Refresh the file tree so the user sees the new sources appear.
+      try {
+        const tree = await listDirectory(normalizePath(project.path))
+        setFileTree(tree)
+      } catch {
+        // non-fatal
+      }
+    },
+    [stagedFiles, stagedUrls, project, llmConfig, handleSend, addMessage, createConversation, setFileTree],
+  )
+
   const handleRegenerate = useCallback(async () => {
     if (isStreaming) return
     // Find the last user message in active conversation
@@ -523,7 +686,10 @@ export function ChatPanel() {
     <div className="flex h-full flex-row overflow-hidden">
       <ConversationSidebar />
 
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div
+        ref={dropTargetRef}
+        className={`flex flex-1 flex-col overflow-hidden ${isDropTargeted ? "ring-2 ring-inset ring-primary/40" : ""}`}
+      >
         {!activeConversationId ? (
           <div className="flex flex-1 items-center justify-center text-muted-foreground">
             <div className="text-center">
@@ -574,7 +740,7 @@ export function ChatPanel() {
         )}
 
         <ChatInput
-          onSend={handleSend}
+          onSend={handleSubmit}
           onStop={handleStop}
           isStreaming={isStreaming}
           placeholder={
@@ -582,6 +748,11 @@ export function ChatPanel() {
               ? t("chat.ingestPlaceholder")
               : t("chat.typeAMessage")
           }
+          stagedFiles={stagedFiles}
+          onRemoveFile={removeStagedFile}
+          stagedUrls={stagedUrls}
+          onAddUrl={addStagedUrl}
+          onRemoveUrl={removeStagedUrl}
         />
       </div>
     </div>

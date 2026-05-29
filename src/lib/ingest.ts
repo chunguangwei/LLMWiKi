@@ -24,6 +24,7 @@ import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pip
 import type { MultimodalConfig } from "@/stores/wiki-store"
 import { GENERATION_WIKI_TYPES } from "@/lib/wiki-page-types"
 import { computeContextBudget } from "@/lib/context-budget"
+import { readSourceWithSidecar } from "@/lib/raw-from-chat"
 
 /**
  * Resolve the LLM config that the caption pipeline should use.
@@ -330,7 +331,7 @@ async function autoIngestImpl(
   })
 
   const [sourceContent, schema, purpose, index, overview] = await Promise.all([
-    tryReadFile(sp),
+    readSourceWithSidecar(sp),
     tryReadFile(`${pp}/schema.md`),
     tryReadFile(`${pp}/purpose.md`),
     tryReadFile(`${pp}/wiki/index.md`),
@@ -2341,7 +2342,7 @@ export async function startIngest(
   })
 
   const [sourceContent, schema, purpose, index] = await Promise.all([
-    tryReadFile(sp),
+    readSourceWithSidecar(sp),
     tryReadFile(`${pp}/wiki/schema.md`),
     tryReadFile(`${pp}/wiki/purpose.md`),
     tryReadFile(`${pp}/wiki/index.md`),

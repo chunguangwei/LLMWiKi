@@ -19,7 +19,7 @@ const MEDIA_EXTS: &[&str] = &[
     "mp4", "webm", "mov", "avi", "mkv", "flv", "wmv", "m4v", "mp3", "wav", "ogg", "flac", "aac",
     "m4a", "wma",
 ];
-const LEGACY_DOC_EXTS: &[&str] = &["doc", "xls", "ppt", "pages", "numbers", "key", "epub"];
+const LEGACY_DOC_EXTS: &[&str] = &["doc", "xls", "ppt", "pages", "numbers", "key"];
 
 #[tauri::command]
 pub async fn read_file(path: String) -> Result<String, String> {
@@ -47,6 +47,7 @@ pub async fn read_file(path: String) -> Result<String, String> {
 
             match ext.as_str() {
                 "pdf" => extract_pdf_text(&path),
+                "epub" => extract_epub_text(&path),
                 e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e),
                 e if IMAGE_EXTS.contains(&e) => {
                     let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
@@ -98,6 +99,7 @@ pub async fn preprocess_file(path: String) -> Result<String, String> {
 
             let text = match ext.as_str() {
                 "pdf" => extract_pdf_text(&path)?,
+                "epub" => extract_epub_text(&path)?,
                 e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e)?,
                 _ => return Ok("no preprocessing needed".to_string()),
             };
@@ -819,6 +821,200 @@ fn extract_pptx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
 fn extract_xlsx_markdown(_archive: &mut zip::ZipArchive<fs::File>) -> Result<String, String> {
     // calamine needs the file path, not the archive
     Err("Use extract_spreadsheet instead".to_string())
+}
+
+/// Extract EPUB content as plain text in reading order.
+///
+/// The `epub` crate gives us the OPF spine walker; we read each XHTML
+/// chapter and run a tiny tag-stripper to turn it into something the
+/// ingest LLM can consume. We don't try to preserve fancy markdown
+/// (headings, emphasis) — the wiki-generation prompt cares about the
+/// words, not the formatting, and ebook authors use wildly inconsistent
+/// CSS / class soup that would just produce noise.
+fn extract_epub_text(path: &str) -> Result<String, String> {
+    use std::path::PathBuf;
+    let mut doc = epub::doc::EpubDoc::new(PathBuf::from(path))
+        .map_err(|e| format!("Failed to open EPUB '{}': {}", path, e))?;
+
+    let mut result = String::new();
+
+    if let Some(title) = doc.mdata("title") {
+        let title = title.value.trim();
+        if !title.is_empty() {
+            result.push_str("# ");
+            result.push_str(title);
+            result.push_str("\n\n");
+        }
+    }
+    if let Some(creator) = doc.mdata("creator") {
+        let creator = creator.value.trim();
+        if !creator.is_empty() {
+            result.push_str("_by ");
+            result.push_str(creator);
+            result.push_str("_\n\n");
+        }
+    }
+
+    loop {
+        if let Some((content, _mime)) = doc.get_current_str() {
+            let text = xhtml_to_plain_text(&content);
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                result.push_str(trimmed);
+                result.push_str("\n\n");
+            }
+        }
+        if !doc.go_next() {
+            break;
+        }
+    }
+
+    let trimmed = result.trim();
+    if trimmed.is_empty() {
+        return Err(format!(
+            "EPUB '{}' produced no extractable text (DRM-protected, or empty spine)",
+            path
+        ));
+    }
+    Ok(result)
+}
+
+/// Strip XHTML tags and decode common entities. Inserts a single newline
+/// when crossing a block-level element so paragraphs don't run together,
+/// collapses whitespace, and drops `<script>` / `<style>` blocks entirely.
+fn xhtml_to_plain_text(html: &str) -> String {
+    // Phase 1: strip <script>...</script> and <style>...</style>
+    let cleaned = strip_html_blocks(html, &["script", "style"]);
+
+    // Phase 2: walk byte-by-byte, emitting text + newlines on block tags
+    const BLOCK_TAGS: &[&str] = &[
+        "p", "br", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "ul",
+        "ol", "tr", "td", "th", "blockquote", "hr", "section", "article",
+        "header", "footer", "nav", "figure", "figcaption", "pre",
+    ];
+    let bytes = cleaned.as_bytes();
+    let mut out = String::with_capacity(cleaned.len());
+    let mut i = 0;
+    let mut last_was_space = false;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            // Find tag end
+            let rest = &bytes[i..];
+            let end = match rest.iter().position(|&b| b == b'>') {
+                Some(e) => e,
+                None => break,
+            };
+            // Tag name (without leading "/", lowercased, stop at space or />)
+            let inner = &cleaned[i + 1..i + end];
+            let name_end = inner
+                .find(|c: char| c.is_whitespace() || c == '/')
+                .unwrap_or(inner.len());
+            let raw_name = inner[..name_end].trim_start_matches('/');
+            let name_lower = raw_name.to_ascii_lowercase();
+            if BLOCK_TAGS.contains(&name_lower.as_str()) && !out.ends_with('\n') && !out.is_empty() {
+                out.push('\n');
+                last_was_space = true;
+            }
+            i += end + 1;
+            continue;
+        }
+        let c = bytes[i] as char;
+        if c.is_whitespace() {
+            if !last_was_space && !out.is_empty() && !out.ends_with('\n') {
+                out.push(' ');
+                last_was_space = true;
+            }
+            i += 1;
+        } else {
+            out.push(c);
+            last_was_space = false;
+            i += 1;
+        }
+    }
+
+    decode_html_entities(&out)
+}
+
+/// Drop `<tag>...</tag>` regions entirely (case-insensitive on tag name).
+fn strip_html_blocks(html: &str, tags: &[&str]) -> String {
+    let mut out = html.to_string();
+    for tag in tags {
+        let open = format!("<{}", tag);
+        let close = format!("</{}", tag);
+        let mut result = String::with_capacity(out.len());
+        let lower = out.to_ascii_lowercase();
+        let mut cursor = 0;
+        while cursor < out.len() {
+            let remaining_lower = &lower[cursor..];
+            if let Some(start_rel) = remaining_lower.find(&open) {
+                let start = cursor + start_rel;
+                result.push_str(&out[cursor..start]);
+                // Find end of close tag
+                let after_open = &lower[start..];
+                if let Some(close_rel) = after_open.find(&close) {
+                    if let Some(gt_rel) = after_open[close_rel..].find('>') {
+                        cursor = start + close_rel + gt_rel + 1;
+                        continue;
+                    }
+                }
+                // Unclosed — drop rest as junk
+                break;
+            } else {
+                result.push_str(&out[cursor..]);
+                break;
+            }
+        }
+        out = result;
+    }
+    out
+}
+
+/// Decode the named + numeric HTML entities that show up in ebooks.
+/// Not exhaustive — covers everything the ingest LLM actually cares about.
+fn decode_html_entities(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'&' {
+            if let Some(end) = s[i..].find(';') {
+                let entity = &s[i + 1..i + end];
+                let decoded = match entity {
+                    "amp" => Some("&".to_string()),
+                    "lt" => Some("<".to_string()),
+                    "gt" => Some(">".to_string()),
+                    "quot" => Some("\"".to_string()),
+                    "apos" => Some("'".to_string()),
+                    "nbsp" => Some(" ".to_string()),
+                    "mdash" => Some("—".to_string()),
+                    "ndash" => Some("–".to_string()),
+                    "hellip" => Some("…".to_string()),
+                    "lsquo" => Some("‘".to_string()),
+                    "rsquo" => Some("’".to_string()),
+                    "ldquo" => Some("“".to_string()),
+                    "rdquo" => Some("”".to_string()),
+                    e if e.starts_with("#x") || e.starts_with("#X") => {
+                        u32::from_str_radix(&e[2..], 16)
+                            .ok()
+                            .and_then(char::from_u32)
+                            .map(|c| c.to_string())
+                    }
+                    e if e.starts_with('#') => {
+                        e[1..].parse::<u32>().ok().and_then(char::from_u32).map(|c| c.to_string())
+                    }
+                    _ => None,
+                };
+                if let Some(text) = decoded {
+                    out.push_str(&text);
+                    i += end + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
 }
 
 /// Extract spreadsheet to Markdown using calamine (supports xlsx, xls, ods).
