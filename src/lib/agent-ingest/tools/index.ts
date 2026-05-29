@@ -31,6 +31,7 @@ export interface ToolDefinition<TInput, TOutput> {
 }
 
 import { readOutlineTool } from "./read-outline"
+import { readChunkTool } from "./read-chunk"
 
 // Phase A — tools register here as they land. Order matches the
 // implementation order in docs/agent-ingest-design.md §9 Phase A.
@@ -39,6 +40,7 @@ import { readOutlineTool } from "./read-outline"
 // chosen tool_use name.
 export const TOOLS: Array<ToolDefinition<unknown, unknown>> = [
   readOutlineTool as ToolDefinition<unknown, unknown>,
+  readChunkTool as ToolDefinition<unknown, unknown>,
 ]
 
 /**
