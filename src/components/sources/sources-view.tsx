@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
-import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown } from "lucide-react"
+import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Wand2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -17,6 +17,7 @@ import {
   enqueueSourceIngest,
   importSourceFiles,
   importSourceFolder,
+  isIngestableSourcePath,
 } from "@/lib/source-lifecycle"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
@@ -34,6 +35,7 @@ export function SourcesView() {
   const [sources, setSources] = useState<FileNode[]>([])
   const [importing, setImporting] = useState(false)
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
+  const [reingestingAll, setReingestingAll] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   /**
@@ -256,6 +258,56 @@ export function SourcesView() {
     }
   }
 
+  function collectIngestableLeaves(nodes: FileNode[]): string[] {
+    const out: string[] = []
+    const walk = (ns: FileNode[]) => {
+      for (const n of ns) {
+        if (n.is_dir) {
+          if (n.children) walk(n.children)
+        } else if (isIngestableSourcePath(n.path)) {
+          out.push(n.path)
+        }
+      }
+    }
+    walk(nodes)
+    return out
+  }
+
+  async function handleReingestAll() {
+    if (!project || reingestingAll) return
+    const paths = collectIngestableLeaves(sources)
+    if (paths.length === 0) {
+      window.alert(
+        t("sources.reingestAllEmpty", {
+          defaultValue: "No ingestable sources found in raw/sources/.",
+        }),
+      )
+      return
+    }
+    // Confirm before firing — this can spend a non-trivial amount of
+    // LLM tokens (one ingest pipeline per source). The dialog also
+    // surfaces the exact count so the user can sanity-check that
+    // `raw/sources/` isn't accidentally empty / huge.
+    const ok = window.confirm(
+      t("sources.reingestAllConfirm", {
+        defaultValue:
+          "Re-run ingest on {{count}} source file(s)? This will rebuild the wiki and consumes LLM tokens.",
+        count: paths.length,
+      }),
+    )
+    if (!ok) return
+
+    setReingestingAll(true)
+    try {
+      await enqueueSourceIngest(project, paths, llmConfig)
+    } catch (err) {
+      console.error("Failed to enqueue bulk re-ingest:", err)
+      window.alert(`Failed to enqueue bulk re-ingest: ${err}`)
+    } finally {
+      setReingestingAll(false)
+    }
+  }
+
   return (
     <TooltipProvider delay={300}>
       <div className="flex h-full flex-col">
@@ -288,6 +340,30 @@ export function SourcesView() {
             <Plus className="mr-1 h-4 w-4" />
             {t("sources.importFolder", "Folder")}
           </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleReingestAll}
+                  disabled={reingestingAll || sources.length === 0}
+                  aria-label={t("sources.reingestAll", { defaultValue: "Re-ingest all" })}
+                />
+              }
+            >
+              <Wand2 className={`mr-1 h-4 w-4 ${reingestingAll ? "animate-pulse" : ""}`} />
+              {reingestingAll
+                ? t("sources.reingestingAll", { defaultValue: "Queuing..." })
+                : t("sources.reingestAll", { defaultValue: "Re-ingest all" })}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end" className="max-w-80 whitespace-normal leading-relaxed">
+              {t("sources.reingestAllTooltip", {
+                defaultValue:
+                  "Re-run ingest on every file in raw/sources/ to rebuild the wiki. Confirms before firing — uses LLM tokens.",
+              })}
+            </TooltipContent>
+          </Tooltip>
         </div>
       </div>
 

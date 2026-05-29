@@ -1,9 +1,10 @@
 import { useRef, useState, useCallback } from "react"
-import { Send, Square, X, Paperclip, Link as LinkIcon } from "lucide-react"
+import { Send, Square, X, Paperclip, Link as LinkIcon, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import { getFileName } from "@/lib/path-utils"
 import { isLikelyUrl } from "@/lib/web-fetch"
+import { looksLikeSearchTrigger } from "@/lib/search-trigger"
 
 interface ChatInputProps {
   onSend: (text: string) => void
@@ -15,6 +16,21 @@ interface ChatInputProps {
   stagedUrls?: string[]
   onAddUrl?: (url: string) => void
   onRemoveUrl?: (url: string) => void
+  /**
+   * When supplied, the 🔍 button is rendered. Click pre-fills the
+   * textarea with `/search ` so the user can type the query and press
+   * Enter — same code path as if they had typed it manually, which
+   * keeps `onSend` the single funnel for search triggers.
+   */
+  onSearchClick?: () => void
+  /**
+   * After search confirm, the original query lingers as the wiki
+   * Context "intent" — rendered above the URL chips with a 🔍 icon
+   * so the user can see / remove what'll be recorded as the search
+   * angle. On send, chat-panel folds it into the Context block.
+   */
+  searchIntent?: string | null
+  onClearSearchIntent?: () => void
 }
 
 function hostnameOf(url: string): string {
@@ -35,9 +51,39 @@ export function ChatInput({
   stagedUrls,
   onAddUrl,
   onRemoveUrl,
+  onSearchClick,
+  searchIntent,
+  onClearSearchIntent,
 }: ChatInputProps) {
   const [value, setValue] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const isSearching = looksLikeSearchTrigger(value)
+  const hasSearchIntent = Boolean(searchIntent && searchIntent.length > 0)
+
+  const handleSearchClick = useCallback(() => {
+    if (!onSearchClick) return
+    onSearchClick()
+    // Prefill with `/search ` so the user can type the query. If they
+    // already had text, prepend; if it already starts with `/search`
+    // just focus.
+    setValue((prev) => {
+      const trimmed = prev.trim()
+      if (/^\/search/i.test(trimmed)) return prev
+      return `/search ${prev}`.trimEnd() + (prev.trim() ? "" : "")
+    })
+    // Focus + place caret at the end so typing the query is immediate.
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (ta) {
+        ta.focus()
+        const len = ta.value.length
+        ta.setSelectionRange(len, len)
+        ta.style.height = "auto"
+        ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
+      }
+    })
+  }, [onSearchClick])
 
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setValue(e.target.value)
@@ -49,6 +95,7 @@ export function ChatInput({
   const hasFiles = (stagedFiles?.length ?? 0) > 0
   const hasUrls = (stagedUrls?.length ?? 0) > 0
   const hasStaged = hasFiles || hasUrls
+  const hasAnyContext = hasStaged || hasSearchIntent
   const canSend = !isStreaming && (value.trim().length > 0 || hasStaged)
 
   const handleSend = useCallback(() => {
@@ -94,8 +141,28 @@ export function ChatInput({
 
   return (
     <div className="flex flex-col border-t">
-      {hasStaged && (
+      {hasAnyContext && (
         <div className="flex flex-wrap gap-1.5 px-3 pb-1 pt-2">
+          {hasSearchIntent && (
+            <div
+              key={`search-intent:${searchIntent}`}
+              className="flex max-w-[320px] items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs"
+              title={`Search query — recorded as wiki Context: ${searchIntent}`}
+            >
+              <Search className="h-3 w-3 shrink-0 text-primary" />
+              <span className="truncate text-primary">{searchIntent}</span>
+              {onClearSearchIntent && (
+                <button
+                  type="button"
+                  onClick={onClearSearchIntent}
+                  className="shrink-0 rounded p-0.5 text-primary/70 hover:bg-background hover:text-primary"
+                  title="Remove search intent"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          )}
           {stagedFiles?.map((path) => (
             <div
               key={`file:${path}`}
@@ -147,15 +214,28 @@ export function ChatInput({
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder={
-            hasStaged
+            isSearching
+              ? "Type your search query. Enter to run."
+              : hasStaged
               ? "Optional: describe these (becomes wiki context). Enter to add."
-              : placeholder ?? "Type a message... (Enter to send, Shift+Enter for newline. Paste a URL to fetch it.)"
+              : placeholder ?? "Type a message... (Enter to send, Shift+Enter for newline. Paste a URL to fetch it. /search <q> to search the web.)"
           }
           disabled={isStreaming}
           rows={1}
           className="flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           style={{ maxHeight: "120px", overflowY: "auto" }}
         />
+        {!isStreaming && onSearchClick && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleSearchClick}
+            className="shrink-0"
+            title="Search the web (/search)"
+          >
+            <Search className="h-4 w-4" />
+          </Button>
+        )}
         {isStreaming ? (
           <Button
             variant="destructive"
@@ -172,7 +252,7 @@ export function ChatInput({
             onClick={handleSend}
             disabled={!canSend}
             className="shrink-0"
-            title={hasStaged ? "Add to wiki" : "Send message"}
+            title={isSearching ? "Search" : hasStaged ? "Add to wiki" : "Send message"}
           >
             <Send className="h-4 w-4" />
           </Button>

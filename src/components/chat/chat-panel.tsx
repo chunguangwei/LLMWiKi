@@ -18,6 +18,13 @@ import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
 import { addFilesToRawWithContext, addUrlsToRawWithContext } from "@/lib/raw-from-chat"
 import { isLikelyUrl } from "@/lib/web-fetch"
+import { detectSearchTrigger } from "@/lib/search-trigger"
+import {
+  webSearch,
+  hasConfiguredSearchProvider,
+  type WebSearchResult,
+} from "@/lib/web-search"
+import { ChatSearchResults } from "./chat-search-results"
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow"
 
 // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
@@ -161,6 +168,21 @@ export function ChatPanel() {
   const [stagedUrls, setStagedUrls] = useState<string[]>([])
   const [isDropTargeted, setIsDropTargeted] = useState(false)
 
+  // Inline web-search state. `searchQuery` non-null = the search-
+  // results card is visible (loading or showing rows). `searchResults`
+  // null while in-flight, [] when the provider returned nothing, and
+  // populated once results land.
+  const [searchQuery, setSearchQuery] = useState<string | null>(null)
+  const [searchResults, setSearchResults] = useState<WebSearchResult[] | null>(null)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  // After the user confirms search picks, the query lingers as the
+  // "intent" that gets folded into the wiki Context block on send —
+  // ingest then knows WHY the user wanted these pages, not just that
+  // they wanted them. Shown as a removable chip above the URL chips
+  // so the user sees exactly what'll be recorded.
+  const [searchIntent, setSearchIntent] = useState<string | null>(null)
+  const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
+
   useEffect(() => {
     const w = getCurrentWebviewWindow()
     let unlisten: (() => void) | null = null
@@ -217,6 +239,70 @@ export function ChatPanel() {
   const removeStagedUrl = useCallback((url: string) => {
     setStagedUrls((prev) => prev.filter((u) => u !== url))
   }, [])
+
+  /**
+   * Run a web search via the configured provider and populate the
+   * inline results card. The card is rendered above the input so the
+   * user can pick which results to add as URL chips (which then ride
+   * the existing Phase 2 raw/sources/web pipeline on the next send).
+   *
+   * We surface "no provider configured" as the card's error message
+   * rather than silently failing — it's a one-click hint to Settings.
+   */
+  const runSearch = useCallback(
+    async (query: string) => {
+      setSearchQuery(query)
+      setSearchResults(null)
+      setSearchError(null)
+
+      if (!hasConfiguredSearchProvider(searchApiConfig)) {
+        setSearchResults([])
+        setSearchError(
+          "No web-search provider configured. Open Settings → Web Search and add a Tavily / SerpApi / SearXNG / Ollama key.",
+        )
+        return
+      }
+
+      try {
+        const results = await webSearch(query, searchApiConfig, 8)
+        setSearchResults(results)
+      } catch (err) {
+        setSearchResults([])
+        setSearchError(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [searchApiConfig],
+  )
+
+  const dismissSearchResults = useCallback(() => {
+    setSearchQuery(null)
+    setSearchResults(null)
+    setSearchError(null)
+  }, [])
+
+  const handleSearchConfirm = useCallback(
+    (urls: string[]) => {
+      setStagedUrls((prev) => {
+        const seen = new Set(prev)
+        const next = [...prev]
+        for (const u of urls) {
+          if (!seen.has(u)) {
+            seen.add(u)
+            next.push(u)
+          }
+        }
+        return next
+      })
+      // Stash the query so it rides along as Context intent on the
+      // eventual send. We use searchQuery (not the trimmed input) so
+      // the user sees the exact phrase they typed in the chip.
+      if (searchQuery) setSearchIntent(searchQuery)
+      dismissSearchResults()
+    },
+    [dismissSearchResults, searchQuery],
+  )
+
+  const clearSearchIntent = useCallback(() => setSearchIntent(null), [])
 
   // Auto-scroll to bottom when messages change or streaming content updates
   useEffect(() => {
@@ -557,8 +643,25 @@ export function ChatPanel() {
   //     raw/sources/web/<slug>-<date>.md with the same context block.
   const handleSubmit = useCallback(
     async (text: string) => {
+      // Search triggers (/search, "搜索 X", "search X") preempt the
+      // normal send flow — we run the query, render results inline,
+      // and let the user fold picks into staged URLs. Triggers don't
+      // touch the chat history; the actual user turn happens later
+      // when they confirm and send with the staged chips.
+      const trig = detectSearchTrigger(text)
+      if (trig) {
+        // Auto-create a conversation so the search card is anchored
+        // somewhere (otherwise mounting a card with no conversation
+        // looks orphaned and a later send would create one anyway).
+        let convId = useChatStore.getState().activeConversationId
+        if (!convId) createConversation()
+        runSearch(trig.query)
+        return
+      }
+
       const filesNow = stagedFiles
       const urlsNow = stagedUrls
+      const intentNow = searchIntent
       if (filesNow.length === 0 && urlsNow.length === 0) {
         handleSend(text)
         return
@@ -567,12 +670,23 @@ export function ChatPanel() {
         addMessage("assistant", "Open a wiki project first — nothing can be added without one.")
         setStagedFiles([])
         setStagedUrls([])
+        setSearchIntent(null)
         return
       }
+
+      // Compose the Context note: prepend the search intent (if any)
+      // so ingest knows the user's search angle, then the user's
+      // typed note. Either alone is fine; both together is the rich
+      // case. Stored as-is in the `## Context` block prepended to
+      // each saved raw file.
+      const composedContext = intentNow
+        ? `🔍 Search query: ${intentNow}${text.trim() ? `\n\n${text.trim()}` : ""}`
+        : text
       let convId = useChatStore.getState().activeConversationId
       if (!convId) convId = createConversation()
 
       const userLines: string[] = []
+      if (intentNow) userLines.push(`🔍 Searched: ${intentNow}`)
       if (text.trim()) userLines.push(text.trim())
       const stagedCount = filesNow.length + urlsNow.length
       userLines.push(
@@ -583,15 +697,16 @@ export function ChatPanel() {
       addMessage("user", userLines.join("\n"))
       setStagedFiles([])
       setStagedUrls([])
+      setSearchIntent(null)
 
       const lines: string[] = []
 
       if (filesNow.length > 0) {
         try {
-          const result = await addFilesToRawWithContext(project, filesNow, text, llmConfig)
+          const result = await addFilesToRawWithContext(project, filesNow, composedContext, llmConfig)
           if (result.imported.length > 0) {
             lines.push(
-              `Copied ${result.imported.length} file${result.imported.length === 1 ? "" : "s"} to \`raw/sources/\`${text.trim() ? " with your note as `## Context`" : ""}.`,
+              `Copied ${result.imported.length} file${result.imported.length === 1 ? "" : "s"} to \`raw/sources/\`${composedContext.trim() ? " with your note as `## Context`" : ""}.`,
             )
           }
           if (result.failed.length > 0) {
@@ -604,7 +719,7 @@ export function ChatPanel() {
 
       if (urlsNow.length > 0) {
         try {
-          const result = await addUrlsToRawWithContext(project, urlsNow, text, llmConfig)
+          const result = await addUrlsToRawWithContext(project, urlsNow, composedContext, llmConfig)
           if (result.imported.length > 0) {
             lines.push(
               `Fetched ${result.imported.length} URL${result.imported.length === 1 ? "" : "s"} into \`raw/sources/web/\`.`,
@@ -635,7 +750,7 @@ export function ChatPanel() {
         // non-fatal
       }
     },
-    [stagedFiles, stagedUrls, project, llmConfig, handleSend, addMessage, createConversation, setFileTree],
+    [stagedFiles, stagedUrls, searchIntent, project, llmConfig, handleSend, addMessage, createConversation, setFileTree, runSearch],
   )
 
   const handleRegenerate = useCallback(async () => {
@@ -739,6 +854,15 @@ export function ChatPanel() {
           </>
         )}
 
+        {searchQuery !== null && (
+          <ChatSearchResults
+            query={searchQuery}
+            results={searchResults}
+            error={searchError}
+            onConfirm={handleSearchConfirm}
+            onDismiss={dismissSearchResults}
+          />
+        )}
         <ChatInput
           onSend={handleSubmit}
           onStop={handleStop}
@@ -753,6 +877,9 @@ export function ChatPanel() {
           stagedUrls={stagedUrls}
           onAddUrl={addStagedUrl}
           onRemoveUrl={removeStagedUrl}
+          onSearchClick={() => { /* prefill handled in ChatInput */ }}
+          searchIntent={searchIntent}
+          onClearSearchIntent={clearSearchIntent}
         />
       </div>
     </div>

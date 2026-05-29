@@ -141,6 +141,11 @@
     "refreshFolderHint": "Rescan the source folder and process new, changed, or deleted files.",
     "refreshFolderTooltip": "Rescan the project source folder with the same rules as automatic monitoring. New or modified allowed files are queued for ingest; deleted sources trigger the normal wiki and index cleanup; then the file tree is rebuilt.",
     "refreshFailed": "Failed to refresh sources: {{error}}",
+    "reingestAll": "Re-ingest all",
+    "reingestingAll": "Queuing...",
+    "reingestAllTooltip": "Re-run ingest on every file in raw/sources/ to rebuild the wiki. Confirms before firing — uses LLM tokens.",
+    "reingestAllConfirm": "Re-run ingest on {{count}} source file(s)? This will rebuild the wiki and consumes LLM tokens.",
+    "reingestAllEmpty": "No ingestable sources found in raw/sources/.",
     "ingest": "Ingest",
     "delete": "Delete source and related wiki pages",
     "deleteConfirm": "Delete \"{{name}}\" and its related wiki pages?\n\nThis will:\n- Delete the source file\n- Delete wiki pages generated from this source\n- Update index.md",
@@ -169,6 +174,15 @@
     "startNewConversation": "Start a new conversation",
     "clickNewChatToBegin": "Click \"New Chat\" to begin",
     "typeAMessage": "Type a message..."
+  },
+  "chatSearch": {
+    "headerPrefix": "Search:",
+    "dismiss": "Dismiss",
+    "loading": "Searching the web...",
+    "noResults": "No results.",
+    "selectAll": "Select all",
+    "deselectAll": "Deselect all",
+    "addSelected": "Add {{count}} to raw"
   },
   "search": {
     "title": "Search",

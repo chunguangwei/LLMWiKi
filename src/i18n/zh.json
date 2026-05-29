@@ -141,6 +141,11 @@
     "refreshFolderHint": "重新扫描资料文件夹，并处理新增、修改或删除的文件。",
     "refreshFolderTooltip": "按自动监控相同规则重新扫描当前项目的资料文件夹。允许的新增或修改文件会加入提取队列；已删除的资料会走正常的 Wiki 与索引清理流程；随后重建文件树。",
     "refreshFailed": "刷新原始资料失败：{{error}}",
+    "reingestAll": "重提全部",
+    "reingestingAll": "排队中...",
+    "reingestAllTooltip": "对 raw/sources/ 下所有资料重跑提取，用于重建 Wiki。会先弹窗确认 — 会消耗 LLM tokens。",
+    "reingestAllConfirm": "对 {{count}} 个资料文件重跑提取？将重建 Wiki，会消耗 LLM tokens。",
+    "reingestAllEmpty": "raw/sources/ 下没有可提取的资料。",
     "ingest": "提取到 Wiki",
     "delete": "删除资料及相关 Wiki 页面",
     "deleteConfirm": "删除「{{name}}」及其相关 Wiki 页面？\n\n此操作将：\n- 删除原始资料文件\n- 删除由该资料生成的 Wiki 页面\n- 更新 index.md",
@@ -169,6 +174,15 @@
     "startNewConversation": "开始新对话",
     "clickNewChatToBegin": "点击「新建对话」开始",
     "typeAMessage": "输入消息..."
+  },
+  "chatSearch": {
+    "headerPrefix": "搜索：",
+    "dismiss": "关闭",
+    "loading": "正在搜索网络...",
+    "noResults": "没有结果。",
+    "selectAll": "全选",
+    "deselectAll": "全不选",
+    "addSelected": "添加 {{count}} 条到 raw"
   },
   "search": {
     "title": "搜索",
