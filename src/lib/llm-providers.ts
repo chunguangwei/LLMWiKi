@@ -3,6 +3,7 @@ import {
   AZURE_OPENAI_API_VERSION,
   buildAzureOpenAiUrl,
   isAzureOpenAiEndpoint,
+  isAzureOpenAiV1Endpoint,
 } from "@/lib/azure-openai"
 
 /**
@@ -258,6 +259,19 @@ function isXiaomiMimoEndpoint(config: LlmConfig): boolean {
 function isOpenAiStrictCompletionModel(config: LlmConfig): boolean {
   if ((config.provider === "azure" || (config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint)))
     && config.azureModelFamily === "gpt5") {
+    return true
+  }
+
+  // Azure's newer OpenAI-API-compatible v1 surface
+  // (`/openai/v1/chat/completions`) consistently rejects `max_tokens`
+  // even on gpt-4o-class deployments — the v1 path is targeted at
+  // modern models and Azure normalized the param name to
+  // `max_completion_tokens` across the board. Defensively mark every
+  // v1 request strict so the deployment-name → underlying-SKU
+  // mapping doesn't matter to us. Older /openai/deployments/...
+  // requests still follow the explicit regex / azureModelFamily
+  // toggle below so we don't break gpt-35-turbo / gpt-4-turbo configs.
+  if (config.provider === "custom" && isAzureOpenAiV1Endpoint(config.customEndpoint)) {
     return true
   }
 
@@ -757,33 +771,55 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       // a pasted "/chat/completions" tail. Don't double-append in that
       // case, or we'd POST to ".../chat/completions/chat/completions".
       const base = customEndpoint.replace(/\/+$/, "")
-      const url = isAzureOpenAiEndpoint(base)
-        ? buildAzureOpenAiUrl(
-            base,
-            model,
-            config.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
-          )
-        : /\/chat\/completions$/i.test(base)
-          ? base
-          : `${base}/chat/completions`
-      const azure = isAzureOpenAiEndpoint(url)
+      // Azure has TWO Chat Completions surfaces today:
+      //
+      //   - Classic deployment routing: /openai/deployments/<name>/chat/completions
+      //     model = deployment name (not SKU), api-version query string required.
+      //
+      //   - OpenAI-API-compatible v1: /openai/v1/chat/completions
+      //     model = SKU ("gpt-4o", "o3-mini", ...), api-key header,
+      //     wire identical to standard OpenAI. No deployment indirection.
+      //
+      // The classic builder rewrites the URL into the deployment shape.
+      // If you feed it a v1 endpoint, it appends a second
+      // /openai/deployments/... segment and the request 404s ("Resource
+      // not found"). Detect v1 first and route through the plain
+      // OpenAI body path instead.
+      const azureV1 = isAzureOpenAiV1Endpoint(base)
+      const azureClassic = !azureV1 && isAzureOpenAiEndpoint(base)
+      const url = azureV1
+        ? (/\/chat\/completions$/i.test(base) ? base : `${base}/chat/completions`)
+        : azureClassic
+          ? buildAzureOpenAiUrl(
+              base,
+              model,
+              config.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
+            )
+          : /\/chat\/completions$/i.test(base)
+            ? base
+            : `${base}/chat/completions`
+      const azureAuthStyle = azureV1 || azureClassic
       return {
         url,
         headers: {
           "Content-Type": JSON_CONTENT_TYPE,
           ...(apiKey
-            ? azure
+            ? azureAuthStyle
               ? { "api-key": apiKey }
               : { Authorization: `Bearer ${apiKey}` }
             : {}),
           // Local OpenAI-compatible servers (LM Studio, llama.cpp,
           // vLLM, LocalAI) often share Ollama's CORS sensitivity.
-          // Same rationale as the `ollama` branch above.
-          ...(azure ? {} : localLlmOriginHeader()),
+          // Same rationale as the `ollama` branch above. Azure
+          // endpoints don't need the local-LLM CORS headers.
+          ...(azureAuthStyle ? {} : localLlmOriginHeader()),
         },
         buildBody: (messages, overrides) => {
           const body = buildOpenAiCompatibleBody(config, messages, overrides)
-          if (!azure) body.model = model
+          // Classic Azure puts the deployment in the URL — body.model
+          // would be ignored (or in some setups, rejected). v1 and
+          // non-Azure both need the model SKU in the body.
+          if (!azureClassic) body.model = model
           return body
         },
         parseStream: parseOpenAiLine,

@@ -11,6 +11,28 @@ export function isAzureOpenAiEndpoint(endpoint: string): boolean {
   }
 }
 
+/**
+ * Detect Azure's newer OpenAI-API-compatible surface
+ * (`/openai/v1[/chat/completions]`). Microsoft introduced this in
+ * 2025 as a drop-in replacement for the legacy deployment-name routing
+ * — same hostname (`*.openai.azure.com`) but the request shape matches
+ * standard OpenAI:
+ *
+ *   - URL: `${resource}/openai/v1/chat/completions`
+ *   - Body: `{ model: "gpt-4o", messages: [...] }` (model SKU, not deployment name)
+ *   - Auth: `api-key: <key>` (or `Authorization: Bearer` — both accepted)
+ *
+ * Treating it as classic Azure routing produces a double-pathed URL
+ * (`/openai/v1/openai/deployments/.../chat/completions`) that 404s
+ * with "Resource not found". Callers should check this BEFORE falling
+ * back to `buildAzureOpenAiUrl`.
+ */
+export function isAzureOpenAiV1Endpoint(endpoint: string): boolean {
+  const trimmed = endpoint.trim().replace(/\/+$/, "")
+  if (!isAzureOpenAiEndpoint(trimmed)) return false
+  return /\/openai\/v1(?:\/chat\/completions)?$/i.test(trimmed)
+}
+
 export interface AzureParsedEndpoint {
   resourceBase: string
   deployment: string
