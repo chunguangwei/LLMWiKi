@@ -19,7 +19,7 @@ export class InMemoryCoverageTracker implements CoverageTracker {
   private covered = new Set<string>()
   private created: Array<{ slug: string; fromChunks: string[] }> = []
   private updated: Array<{ slug: string; fromChunks: string[] }> = []
-  private _gaps: Array<{ topic: string; chunks?: string[] }> = []
+  private _gaps: Array<{ topic: string; reason?: string; chunks?: string[] }> = []
   private _completed = false
   private _budgetExhausted = false
   private _turnsUsed = 0
@@ -51,8 +51,11 @@ export class InMemoryCoverageTracker implements CoverageTracker {
       this.updated.push({ slug, fromChunks: [...fromChunks] })
     }
   }
-  surfaceGap(topic: string, chunks?: string[]): void {
-    this._gaps.push({ topic, chunks })
+  surfaceGap(topic: string, opts?: { reason?: string; chunks?: string[] }): void {
+    const entry: { topic: string; reason?: string; chunks?: string[] } = { topic }
+    if (opts?.reason) entry.reason = opts.reason
+    if (opts?.chunks && opts.chunks.length > 0) entry.chunks = opts.chunks.slice()
+    this._gaps.push(entry)
   }
   markCompleted(_reason: string): void {
     this._completed = true
@@ -72,7 +75,7 @@ export class InMemoryCoverageTracker implements CoverageTracker {
   updatedPages(): Array<{ slug: string; fromChunks: string[] }> {
     return this.updated.slice()
   }
-  gaps(): Array<{ topic: string; chunks?: string[] }> {
+  gaps(): Array<{ topic: string; reason?: string; chunks?: string[] }> {
     return this._gaps.slice()
   }
   recordTurn(tokensThisTurn: number): void {
@@ -88,7 +91,11 @@ export class InMemoryCoverageTracker implements CoverageTracker {
       coveredChunks: Array.from(this.covered),
       pagesCreated: this.created.slice(),
       pagesUpdated: this.updated.slice(),
-      gaps: this._gaps.map((g) => ({ topic: g.topic, relatedChunks: g.chunks })),
+      gaps: this._gaps.map((g) => ({
+        topic: g.topic,
+        ...(g.reason ? { reason: g.reason } : {}),
+        ...(g.chunks && g.chunks.length > 0 ? { relatedChunks: g.chunks } : {}),
+      })),
       turnsUsed: this._turnsUsed,
       tokensSpent: this._tokensSpent,
       completed: this._completed,
@@ -101,7 +108,12 @@ export class InMemoryCoverageTracker implements CoverageTracker {
     for (const id of snap.coveredChunks) t.covered.add(id)
     t.created = snap.pagesCreated.slice()
     t.updated = snap.pagesUpdated.slice()
-    t._gaps = snap.gaps.map((g) => ({ topic: g.topic, chunks: g.relatedChunks }))
+    t._gaps = snap.gaps.map((g) => {
+      const e: { topic: string; reason?: string; chunks?: string[] } = { topic: g.topic }
+      if (g.reason) e.reason = g.reason
+      if (g.relatedChunks && g.relatedChunks.length > 0) e.chunks = g.relatedChunks.slice()
+      return e
+    })
     t._completed = snap.completed
     t._budgetExhausted = snap.budgetExhausted
     t._turnsUsed = snap.turnsUsed

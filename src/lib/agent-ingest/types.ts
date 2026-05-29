@@ -138,14 +138,21 @@ export interface CoverageTracker {
   markCovered(chunk_id: string, page_slugs: string[]): void
   markCreated(slug: string, fromChunks: string[]): void
   markUpdated(slug: string, fromChunks: string[]): void
-  surfaceGap(topic: string, chunks?: string[]): void
+  /**
+   * Record a topic the agent noticed but won't extract right now.
+   * `reason` is the agent's stated rationale ("only mentioned in
+   * passing", "out of scope for this source"); preserved through to
+   * the Review item the verify pass surfaces so the user can decide
+   * whether to act on it later.
+   */
+  surfaceGap(topic: string, opts?: { reason?: string; chunks?: string[] }): void
   markCompleted(reason: string): void
   markBudgetExhausted(): void
   coveragePercent(): number
   isComplete(): boolean
   createdPages(): Array<{ slug: string; fromChunks: string[] }>
   updatedPages(): Array<{ slug: string; fromChunks: string[] }>
-  gaps(): Array<{ topic: string; chunks?: string[] }>
+  gaps(): Array<{ topic: string; reason?: string; chunks?: string[] }>
   snapshot(): CoverageSnapshot
 }
 
@@ -157,7 +164,7 @@ export interface CoverageSnapshot {
   coveredChunks: string[]
   pagesCreated: Array<{ slug: string; fromChunks: string[] }>
   pagesUpdated: Array<{ slug: string; fromChunks: string[] }>
-  gaps: Array<{ topic: string; relatedChunks?: string[] }>
+  gaps: Array<{ topic: string; reason?: string; relatedChunks?: string[] }>
   turnsUsed: number
   tokensSpent: number
   completed: boolean
