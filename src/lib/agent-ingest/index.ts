@@ -36,6 +36,12 @@ import type { WikiProject } from "@/types/wiki"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { normalizePath } from "@/lib/path-utils"
 import { createAgentLlm } from "./agent-llm"
+import {
+  deleteCheckpoint,
+  loadCheckpoint,
+  saveCheckpoint,
+} from "./checkpoint"
+import type { AgentMessage } from "./llm-interface"
 import { preprocessSource } from "./preprocess"
 import { buildInitialUserPrompt, buildSystemPrompt } from "./prompts"
 import { runAgentLoop } from "./runner"
@@ -82,12 +88,18 @@ export async function runAgentIngest(
   //    agent can re-query mid-loop after writes.)
   const existingPages = await wikiAccess.listPages()
 
-  // 6. Coverage tracker.
-  const tracker = new InMemoryCoverageTracker(
-    opts.sourcePath,
-    preprocessed.sourceHash,
-    preprocessed.chunkList.length,
-  )
+  // 6. Coverage tracker. Resume from a checkpoint if one is on
+  //    disk for this exact sourceHash — sourceHash invalidation
+  //    handled inside loadCheckpoint (re-edited source returns
+  //    null and we start fresh).
+  const checkpoint = await loadCheckpoint(projectPath, preprocessed.sourceHash)
+  const tracker = checkpoint
+    ? InMemoryCoverageTracker.fromSnapshot(checkpoint.tracker)
+    : new InMemoryCoverageTracker(
+        opts.sourcePath,
+        preprocessed.sourceHash,
+        preprocessed.chunkList.length,
+      )
 
   // 7. AgentContext bag.
   const ctx: AgentContext = {
@@ -114,16 +126,22 @@ export async function runAgentIngest(
     existingPages,
   })
 
-  // 9. LLM + loop.
+  // 9. LLM + loop. Use the checkpoint's message history if resuming
+  //    so the model picks up mid-conversation (it sees its own
+  //    prior tool_use blocks + the tool_results). Otherwise start
+  //    with system + initial user prompts.
+  const initialMessages: AgentMessage[] = checkpoint
+    ? checkpoint.messages
+    : [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ]
   const llm = createAgentLlm(opts.llmConfig)
   let lastReportedTokens = 0
   const runResult = await runAgentLoop({
     llm,
     ctx,
-    initialMessages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
+    initialMessages,
     tools: toolSchemasForLlm(),
     maxTurns: opts.maxTurns,
     maxTokens: opts.maxTokens,
@@ -133,7 +151,33 @@ export async function runAgentIngest(
           opts.onTurn!(i, lastReportedTokens)
         }
       : undefined,
+    onCheckpoint: ({ messages }) => {
+      // Fire-and-forget: persist the checkpoint without blocking the
+      // loop's next LLM call. Errors are logged but never bubble up
+      // — checkpointing is best-effort; a write failure shouldn't
+      // kill a run that's otherwise making progress.
+      saveCheckpoint(projectPath, {
+        sourcePath: opts.sourcePath,
+        sourceHash: preprocessed.sourceHash,
+        tracker: tracker.snapshot(),
+        messages,
+      }).catch((err) => {
+        console.warn(
+          `[agent-ingest] checkpoint save failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+      })
+    },
   })
+
+  // Cleanup: a successful done means the run completed; the
+  // checkpoint becomes garbage. Anything else (max_tokens,
+  // max_turns, aborted, error) leaves the file in place so the
+  // next call resumes.
+  if (runResult.stopReason === "done_called") {
+    await deleteCheckpoint(projectPath, preprocessed.sourceHash).catch(() => {})
+  }
 
   // 10. Aggregate result.
   return {

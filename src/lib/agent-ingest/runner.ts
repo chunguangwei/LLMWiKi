@@ -74,6 +74,20 @@ export interface RunAgentLoopOpts {
   /** Hook fired after each turn — useful for tests / activity-panel
    *  progress. */
   onTurn?: (turn: AssistantTurn, turnIndex: number) => void
+  /**
+   * Fired immediately after each turn's tool_results are appended to
+   * the message history — gives the entry-point a chance to persist
+   * a checkpoint without re-implementing the loop's state machine.
+   *
+   * The runner doesn't await this hook; it fires-and-forgets so a
+   * slow disk doesn't stretch the loop's wall-clock. Callers that
+   * want strict ordering can chain promises in their hook impl.
+   */
+  onCheckpoint?: (snapshot: {
+    messages: AgentMessage[]
+    turnsUsed: number
+    tokensSpent: number
+  }) => void
 }
 
 export interface RunAgentLoopResult {
@@ -114,8 +128,16 @@ export async function runAgentLoop(opts: RunAgentLoopOpts): Promise<RunAgentLoop
     }
 
     const turn = await opts.llm.chat(messages, opts.tools, opts.ctx.signal)
+    const turnTokens = turn.usage.input_tokens + turn.usage.output_tokens
     turnsUsed += 1
-    tokensSpent += turn.usage.input_tokens + turn.usage.output_tokens
+    tokensSpent += turnTokens
+    // Push usage into the tracker too so checkpoint snapshots
+    // carry per-run accounting (turnsUsed, tokensSpent). Without
+    // this the snapshot reports 0/0 on resume — purely cosmetic
+    // for the activity panel but confusing in the saved JSON.
+    if (typeof (opts.ctx.tracker as { recordTurn?: (n: number) => void }).recordTurn === "function") {
+      ;(opts.ctx.tracker as { recordTurn: (n: number) => void }).recordTurn(turnTokens)
+    }
     opts.onTurn?.(turn, turnsUsed - 1)
 
     // Append assistant content. Even pure-text replies get appended
@@ -148,6 +170,16 @@ export async function runAgentLoop(opts: RunAgentLoopOpts): Promise<RunAgentLoop
       toolResults.push(await dispatchTool(use, opts.ctx))
     }
     messages.push({ role: "user", content: toolResults })
+
+    // Fire the checkpoint hook now — message history is in its
+    // post-tool-result state, tracker mutations from this turn's
+    // dispatch are committed. The next iteration is the natural
+    // resume point.
+    opts.onCheckpoint?.({
+      messages: messages.slice(),
+      turnsUsed,
+      tokensSpent,
+    })
 
     // Check completion AFTER tool dispatch — `done` tool call sets
     // tracker.isComplete() to true in its execute().

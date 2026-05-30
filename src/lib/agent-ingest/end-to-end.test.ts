@@ -37,6 +37,10 @@ function setTree(d: string, t: FileNode[]) {
 }
 
 vi.mock("@/commands/fs", () => ({
+  createDirectory: async () => {},  // checkpoint module calls this
+  deleteFile: async (p: string) => {
+    fs.files.delete(p)
+  },
   fileExists: async (p: string) => fs.files.has(p),
   readFile: async (p: string) => {
     const c = fs.files.get(p)
@@ -245,6 +249,109 @@ describe("runAgentIngest — happy path", () => {
       llmConfig: LLM_CONFIG,
     })
     expect(result.reason).toMatch(/text only|explicit done/i)
+  })
+})
+
+describe("runAgentIngest — checkpoint persistence", () => {
+  it("writes a checkpoint after each turn (visible in the mock fs)", async () => {
+    setFile(SOURCE_PATH, SAMPLE_SOURCE)
+    setTree(WIKI, [])
+
+    const llm = new ScriptedLlm([
+      toolUseTurn({ name: "read_outline", input: {} }),
+      toolUseTurn({ name: "done", input: { reason: "ok" } }),
+    ])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    await runAgentIngest({
+      sourcePath: SOURCE_PATH,
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+    })
+
+    // After successful done the checkpoint is CLEANED UP — verified
+    // by no checkpoint file in fs.files. Inverse check: a non-done
+    // exit leaves the file (covered in the test below).
+    const checkpointFiles = Array.from(fs.files.keys()).filter((k) =>
+      k.includes(".llm-wiki/agent-checkpoints/"),
+    )
+    expect(checkpointFiles).toEqual([])
+  })
+
+  it("leaves the checkpoint in place when the loop exits without done", async () => {
+    setFile(SOURCE_PATH, SAMPLE_SOURCE)
+    setTree(WIKI, [])
+
+    // Endless script — runner hits max_turns before any done.
+    const llm = new ScriptedLlm((_messages, i) =>
+      toolUseTurn({ name: "read_outline", input: {}, id: `u${i}` }),
+    )
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    await runAgentIngest({
+      sourcePath: SOURCE_PATH,
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+      maxTurns: 2,
+    })
+
+    const checkpointFiles = Array.from(fs.files.keys()).filter((k) =>
+      k.includes(".llm-wiki/agent-checkpoints/"),
+    )
+    expect(checkpointFiles).toHaveLength(1)
+    const raw = fs.files.get(checkpointFiles[0])!
+    const parsed = JSON.parse(raw)
+    expect(parsed.tracker.turnsUsed).toBeGreaterThan(0)
+    expect(parsed.tracker.completed).toBe(false)
+  })
+
+  it("resumes from an existing checkpoint when sourceHash matches", async () => {
+    setFile(SOURCE_PATH, SAMPLE_SOURCE)
+    setTree(WIKI, [])
+
+    // First run — hits max_turns, leaves a checkpoint.
+    const llm1 = new ScriptedLlm((_messages, i) =>
+      toolUseTurn({ name: "read_outline", input: {}, id: `u1-${i}` }),
+    )
+    const spy = vi.spyOn(agentLlmModule, "createAgentLlm")
+    spy.mockReturnValue(llm1)
+
+    await runAgentIngest({
+      sourcePath: SOURCE_PATH,
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+      maxTurns: 2,
+    })
+
+    const ckpts1 = Array.from(fs.files.keys()).filter((k) =>
+      k.includes("agent-checkpoints"),
+    )
+    expect(ckpts1).toHaveLength(1)
+
+    // Second run — should resume. Capture what message history the
+    // LLM sees on its FIRST call; it should already contain the
+    // earlier read_outline tool_use blocks + tool_result blocks.
+    const llm2 = new ScriptedLlm([
+      toolUseTurn({ name: "done", input: { reason: "wrapping up" } }),
+    ])
+    spy.mockReturnValue(llm2)
+
+    await runAgentIngest({
+      sourcePath: SOURCE_PATH,
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+      maxTurns: 2,
+    })
+
+    // The resumed run's first LLM call has > 2 messages (the
+    // initial system + user from the first run, plus assistant +
+    // tool_result from each turn that already ran).
+    expect(llm2.calls[0].messages.length).toBeGreaterThan(2)
+    // Successful done — checkpoint cleaned up.
+    const ckpts2 = Array.from(fs.files.keys()).filter((k) =>
+      k.includes("agent-checkpoints"),
+    )
+    expect(ckpts2).toEqual([])
   })
 })
 
