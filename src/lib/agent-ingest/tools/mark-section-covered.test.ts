@@ -22,6 +22,7 @@ function mockCtx(opts: { chunks: SourceChunk[]; aborted?: boolean }) {
     wikiAccess: {
       listPages: async () => [],
       readPage: async () => null,
+      writePage: async () => ({ kind: "validation_failed", detail: "mock" }),
     },
     llmConfig: {} as AgentContext["llmConfig"],
     signal: controller.signal,

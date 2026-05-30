@@ -54,6 +54,7 @@ function mockCtx(opts: {
     wikiAccess: {
       listPages: async () => [],
       readPage: async () => null,
+      writePage: async () => ({ kind: "validation_failed", detail: "mock" }),
     },
     signal: controller.signal,
   }

@@ -96,6 +96,38 @@ export interface WikiAccess {
    * type/title/created/tags/related/sources.
    */
   readPage(slug: string): Promise<WikiPageFull | null>
+
+  /**
+   * Create a new wiki page. The runner generates the frontmatter
+   * from the supplied fields (type, title, related, tags) and
+   * inserts the `created:` / `updated:` dates server-side so the
+   * agent doesn't need to know them. The body is the markdown
+   * after the closing `---` of the frontmatter.
+   *
+   * Result discriminator:
+   *   - `{ kind: "created", path }`     — success; path is the
+   *                                       wiki-relative .md path.
+   *   - `{ kind: "slug_taken" }`        — slug already exists; the
+   *                                       agent should `read_wiki_page`
+   *                                       + `updatePage` instead.
+   *   - `{ kind: "validation_failed",   — type isn't in the project
+   *        detail }`                      schema, frontmatter invalid,
+   *                                       etc.
+   *
+   * Never throws; every error is reported via the result.
+   */
+  writePage(opts: {
+    slug: string
+    type: string
+    title: string
+    body: string
+    related?: string[]
+    tags?: string[]
+  }): Promise<
+    | { kind: "created"; path: string }
+    | { kind: "slug_taken" }
+    | { kind: "validation_failed"; detail: string }
+  >
 }
 
 /** Runtime context threaded into every tool call. */

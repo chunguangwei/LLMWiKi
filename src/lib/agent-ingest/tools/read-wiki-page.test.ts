@@ -17,6 +17,9 @@ function mockCtx(opts: {
       opts.readCalls?.push(slug)
       return opts.pages.get(slug) ?? null
     },
+    async writePage() {
+      return { kind: "validation_failed", detail: "mock" }
+    },
   }
   return {
     chunks: new Map(),

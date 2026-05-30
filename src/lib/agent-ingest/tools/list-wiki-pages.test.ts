@@ -21,6 +21,9 @@ function mockCtx(opts: {
     async readPage() {
       return null
     },
+    async writePage() {
+      return { kind: "validation_failed", detail: "mock" }
+    },
   }
   return {
     chunks: new Map(),
