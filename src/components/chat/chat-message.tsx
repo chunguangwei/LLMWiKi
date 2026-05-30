@@ -179,7 +179,7 @@ function ToolCallsBlock({
               </div>
               <div
                 className={`pl-3 ${
-                  t.resultSummary.startsWith("error:")
+                  isAttentionResult(t.resultSummary)
                     ? "text-amber-600 dark:text-amber-400"
                     : ""
                 }`}
@@ -191,6 +191,22 @@ function ToolCallsBlock({
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Whether a tool's result summary should render in amber (worth-a-look).
+ * Covers explicit `error:`, the runner's done-batch `skipped` sentinel,
+ * and the chat-agent's structured `no_provider_configured` envelope —
+ * all three are "tool ran but didn't accomplish what the LLM wanted".
+ * Plain `ok` results stay in the muted default color.
+ */
+function isAttentionResult(summary: string): boolean {
+  const s = summary.toLowerCase()
+  return (
+    s.startsWith("error:") ||
+    s.startsWith("skipped") ||
+    s.includes("no_provider_configured")
   )
 }
 

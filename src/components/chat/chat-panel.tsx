@@ -664,6 +664,16 @@ export function ChatPanel() {
       //   - agent loop throws — caller sees the error in the chat
       const chatAgentEnabled = useWikiStore.getState().experimentalChatAgent
       if (chatAgentEnabled && hasUsableLlm(llmConfig) && project) {
+        // Lock the input + wire abort. Agent mode doesn't stream
+        // tokens, but `isStreaming` is also what disables the send
+        // button + drives the Stop control — without setting it the
+        // user can rapid-fire follow-up sends and spin up parallel
+        // agent loops. The AbortController is the same shape classic
+        // streaming uses (abortRef.current), so handleStop reuses
+        // unchanged.
+        const controller = new AbortController()
+        abortRef.current = controller
+        setStreaming(true)
         try {
           const searchApiConfig = useWikiStore.getState().searchApiConfig
           const outputLanguage = useWikiStore.getState().outputLanguage
@@ -676,13 +686,24 @@ export function ChatPanel() {
             llmConfig,
             searchApiConfig,
             outputLanguage,
+            signal: controller.signal,
           })
           addAssistantTurn(result.text || `_(${result.reason})_`, {
             toolCalls: result.toolCalls,
           })
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err)
-          addMessage("assistant", `Chat-agent failed: ${detail}`)
+          // AbortError from a user Stop click shouldn't read as a
+          // crash — the agent intentionally stopped. Anything else
+          // is a real failure worth surfacing.
+          if (controller.signal.aborted) {
+            addMessage("assistant", `_(stopped)_`)
+          } else {
+            addMessage("assistant", `Chat-agent failed: ${detail}`)
+          }
+        } finally {
+          setStreaming(false)
+          if (abortRef.current === controller) abortRef.current = null
         }
         return
       }
