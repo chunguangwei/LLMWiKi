@@ -415,6 +415,13 @@ export function SourcesView() {
         result.reviewItemsCreated.length > 0
           ? `Gaps surfaced: ${result.reviewItemsCreated.length} (see Review)`
           : "",
+        // finalCheckpointError fires when the run was partial AND the
+        // final checkpoint save threw. Without this line the user
+        // thinks they can resume but the next run starts from scratch
+        // — silently re-spending the LLM budget. Surface loudly.
+        result.finalCheckpointError
+          ? `⚠️ Checkpoint save failed; resume will NOT work — re-run from scratch. (${result.finalCheckpointError})`
+          : "",
       ].filter(Boolean)
       activity.updateItem(activityId, {
         status: "done",
