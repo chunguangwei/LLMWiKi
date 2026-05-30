@@ -20,10 +20,22 @@ export interface BuildChatAgentSystemPromptOpts {
   /** Output language ("zh" / "en" / "auto"). When "zh" or "en" the prompt
    *  pins the answer language; "auto" leaves it to the LLM. */
   outputLanguage?: "zh" | "en" | "auto" | string
+  /**
+   * Today's date as `YYYY-MM-DD`. Required for caller; tests pass a
+   * fixed string so prompt snapshots stay deterministic, the runtime
+   * entry point computes it from `new Date()`. The LLM uses this for
+   * time-sensitive web searches — without it the model defaults to
+   * the year in its training data (real-world example: a query for
+   * "today's news" turned into "2025 news" while running on 2026-05-30
+   * because the model had no clock).
+   */
+  today: string
 }
 
 export function buildChatAgentSystemPrompt(opts: BuildChatAgentSystemPromptOpts): string {
   const sections: string[] = [BASE_PROMPT]
+
+  sections.push(`\n## Today\n\nToday is ${opts.today}. Use this when crafting time-sensitive web_search queries.`)
 
   if (opts.projectPurpose.trim().length > 0) {
     sections.push(`\n## Project purpose\n\n${opts.projectPurpose.trim()}`)
@@ -40,6 +52,11 @@ export function buildChatAgentSystemPrompt(opts: BuildChatAgentSystemPromptOpts)
   sections.push(STOPPING_RULES)
 
   return sections.join("\n")
+}
+
+/** YYYY-MM-DD for "today" in the user's local timezone. */
+export function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 export function buildChatAgentUserPrompt(
@@ -79,7 +96,9 @@ If the wiki doesn't cover the question:
   - web_search for general information (returns ranked title / url / snippet results)
   - web_fetch to read a SPECIFIC URL fully (article body, blog post, docs page) — use this after web_search picks the right hit, or when the user gave you a URL
 
-You CANNOT mutate the wiki (no write / update / delete / link tools in this mode). If the user wants you to add to the wiki, say so and explain that they should use the source-ingest flow.`
+You CANNOT mutate the wiki in this mode — no write / update / delete / link tools. When the user asks you to write / create / save a wiki page, you MUST still answer the SUBSTANTIVE question (give the full summary / content they asked about) in your reply text, THEN add a short note like "I can't save this directly — hover this message and click 'Save to Wiki' to commit it as a page, or paste it into a new file in raw/sources/ to run through ingest." Do NOT call \`done\` with empty text just because you can't write — the user's question still deserves an answer.
+
+DO NOT emit \`---REVIEW: ...\` or \`---FILE: ...\` / \`---END REVIEW---\` / \`---END FILE---\` blocks. Those structured blocks exist for the ingest path; in chat mode they get rendered as separate cards and route the user's content into the Review queue, which is NOT what the user wants when they ask for an answer. Write your reply as plain markdown — headings, lists, paragraphs. The user's "Save to Wiki" button (visible on hover over your reply) handles the wiki-creation path.`
 
 const NO_SEARCH_PROVIDER_NOTE = `
 
@@ -98,9 +117,15 @@ const TOOL_USE_RULES = `
 
 const STOPPING_RULES = `
 
-## Stopping
+## Stopping — answer-first rule
 
-When you have enough information to answer well, write your reply as a final assistant message (no tool calls), THEN call \`done\` with a one-sentence summary of what you investigated. Don't call \`done\` mid-investigation — your answer text is the deliverable.`
+The user's reply is YOUR ANSWER TEXT, not the tool calls. Tool calls happen behind a foldable block; the user reads your text. Before \`done\`, you MUST emit a substantive assistant message that answers the question — even if:
+
+  - You couldn't perform a side effect the user wanted (write a page, fetch a paywalled URL, etc.) — explain what you can do instead, but FIRST deliver the substantive content (summary, comparison, recommendation, …).
+  - Some tool call failed — explain what succeeded and pivot.
+  - The wiki turned out not to cover the topic — say so and present what you found from web / local sources.
+
+A turn that's "tool_use → done" with no text in either turn is a FAILURE mode — the user sees an empty reply. Always: investigate with tools → write substantive answer text → call \`done\` with a one-sentence summary of what you investigated.`
 
 function languageNote(lang: BuildChatAgentSystemPromptOpts["outputLanguage"]): string {
   if (lang === "zh") return "\n## Language\n\n以中文回答。"

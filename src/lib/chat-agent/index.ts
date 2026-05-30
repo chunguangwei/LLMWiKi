@@ -49,7 +49,11 @@ import type {
   ToolResultBlock,
   ToolUseBlock,
 } from "@/lib/agent-ingest/llm-interface"
-import { buildChatAgentSystemPrompt, buildChatAgentUserPrompt } from "./prompts"
+import {
+  buildChatAgentSystemPrompt,
+  buildChatAgentUserPrompt,
+  todayIsoDate,
+} from "./prompts"
 
 export interface RunChatAgentOpts {
   userMessage: string
@@ -132,6 +136,7 @@ export async function runChatAgent(opts: RunChatAgentOpts): Promise<ChatAgentRes
     projectPurpose: purpose,
     hasSearchProvider,
     outputLanguage: opts.outputLanguage,
+    today: todayIsoDate(),
   })
 
   // Recent exchange — last N messages from this conversation, role +
