@@ -37,6 +37,7 @@ function mockCtx(opts: {
         added_chars: opts.addedChars ?? 0,
       }
     },
+    linkPages: async () => ({ kind: "validation_failed", detail: "mock" }),
   }
   const ctx: AgentContext = {
     chunks: new Map(),

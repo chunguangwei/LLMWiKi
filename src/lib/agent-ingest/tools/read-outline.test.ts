@@ -48,6 +48,7 @@ function mockCtx(outline: OutlineHeading[], aborted = false): AgentContext {
       readPage: async () => null,
       writePage: async () => ({ kind: "validation_failed", detail: "mock" }),
       updatePage: async () => ({ kind: "validation_failed", detail: "mock" }),
+      linkPages: async () => ({ kind: "validation_failed", detail: "mock" }),
     },
     signal: controller.signal,
   }

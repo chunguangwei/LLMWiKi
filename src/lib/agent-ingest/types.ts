@@ -173,6 +173,46 @@ export interface WikiAccess {
     | { kind: "slug_not_found" }
     | { kind: "validation_failed"; detail: string }
   >
+
+  /**
+   * Add a wikilink from one page to another.
+   *
+   * Semantics:
+   *
+   *   - `from`'s `related:` frontmatter array gains `to` (if not
+   *     already present). Idempotent — re-linking a pair is a no-op
+   *     in terms of file content.
+   *   - When `bidirectional` is true, `to` ALSO gains `from`. Each
+   *     direction is independent: if the from→to link existed but
+   *     to→from didn't, the call adds only to→from and reports
+   *     was_new for that direction.
+   *   - `from_was_new` / `to_was_new` report whether the runner
+   *     actually changed the file. Lets the agent skip redundant
+   *     link calls in subsequent turns (telemetry for the loop, not
+   *     a correctness signal — re-linking is safe).
+   *   - When `bidirectional` is false, `to_was_new` is omitted.
+   *
+   * Result discriminator:
+   *
+   *   - `{ kind: "linked", from_was_new, to_was_new? }` — success.
+   *   - `{ kind: "slug_not_found", missing: "from" | "to" }` —
+   *     one of the slugs has no page. The tool layer surfaces
+   *     which side is missing so the LLM can fix the right one.
+   *   - `{ kind: "validation_failed", detail }` — schema-level
+   *     reject (cycle detection, etc — currently unused but
+   *     reserved).
+   *
+   * Never throws.
+   */
+  linkPages(opts: {
+    from: string
+    to: string
+    bidirectional?: boolean
+  }): Promise<
+    | { kind: "linked"; from_was_new: boolean; to_was_new?: boolean }
+    | { kind: "slug_not_found"; missing: "from" | "to" }
+    | { kind: "validation_failed"; detail: string }
+  >
 }
 
 /** Runtime context threaded into every tool call. */
