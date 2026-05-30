@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { BookOpen, Plus, Trash2, MessageSquare } from "lucide-react"
+import { BookOpen, Plus, Trash2, MessageSquare, Pencil, Check, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles } from "./chat-message"
 import { ChatInput } from "./chat-input"
@@ -54,14 +54,49 @@ function ConversationSidebar() {
   const messages = useChatStore((s) => s.messages)
   const createConversation = useChatStore((s) => s.createConversation)
   const deleteConversation = useChatStore((s) => s.deleteConversation)
+  const renameConversation = useChatStore((s) => s.renameConversation)
   const setActiveConversation = useChatStore((s) => s.setActiveConversation)
 
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+  // Inline-rename state. editingId is the conv being renamed (null when
+  // the sidebar is in normal mode); editValue holds the in-flight title
+  // string. Kept local because rename is a transient UI mode — committing
+  // pushes through renameConversation and auto-save persists it.
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState("")
+  const editInputRef = useRef<HTMLInputElement | null>(null)
 
   const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
 
   function getMessageCount(convId: string): number {
     return messages.filter((m) => m.conversationId === convId).length
+  }
+
+  function startEdit(convId: string, currentTitle: string) {
+    setEditingId(convId)
+    setEditValue(currentTitle)
+    // focus + select-all on next tick — input isn't mounted yet
+    setTimeout(() => {
+      editInputRef.current?.focus()
+      editInputRef.current?.select()
+    }, 0)
+  }
+
+  function commitEdit() {
+    if (!editingId) return
+    const trimmed = editValue.trim()
+    // Empty trim → cancel (treat as "no change") rather than write a
+    // blank title; the original title stays put.
+    if (trimmed.length > 0) {
+      renameConversation(editingId, trimmed)
+    }
+    setEditingId(null)
+    setEditValue("")
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditValue("")
   }
 
   return (
@@ -87,36 +122,117 @@ function ConversationSidebar() {
           sorted.map((conv) => {
             const isActive = conv.id === activeConversationId
             const msgCount = getMessageCount(conv.id)
+            const isEditing = editingId === conv.id
             return (
               <div
                 key={conv.id}
-                className={`group relative mx-1 my-0.5 flex cursor-pointer flex-col rounded-md px-2 py-1.5 text-sm transition-colors ${
+                className={`group relative mx-1 my-0.5 flex flex-col rounded-md px-2 py-1.5 text-sm transition-colors ${
+                  isEditing ? "" : "cursor-pointer"
+                } ${
                   isActive
                     ? "bg-primary/10 text-primary"
                     : "hover:bg-accent text-foreground"
                 }`}
-                onClick={() => setActiveConversation(conv.id)}
+                onClick={() => {
+                  if (isEditing) return
+                  setActiveConversation(conv.id)
+                }}
                 onMouseEnter={() => setHoveredId(conv.id)}
                 onMouseLeave={() => setHoveredId(null)}
               >
                 <div className="flex items-start justify-between gap-1">
-                  <span className="line-clamp-2 flex-1 text-xs font-medium leading-snug">
-                    {conv.title}
-                  </span>
-                  {hoveredId === conv.id && (
-                    <button
-                      className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteConversation(conv.id)
-                        const proj = useWikiStore.getState().project
-                        if (proj) {
-                          deleteChatConversation(proj.path, conv.id).catch(() => {})
+                  {isEditing ? (
+                    <input
+                      ref={editInputRef}
+                      type="text"
+                      value={editValue}
+                      placeholder={t("chat.renamePlaceholder")}
+                      maxLength={200}
+                      className="flex-1 rounded border bg-background px-1 py-0.5 text-xs font-medium leading-snug text-foreground outline-none focus:border-primary"
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault()
+                          commitEdit()
+                        } else if (e.key === "Escape") {
+                          e.preventDefault()
+                          cancelEdit()
                         }
                       }}
+                      // Blur after Enter/Escape would re-fire commit/cancel; the
+                      // editingId guard in commitEdit/cancelEdit makes that safe.
+                      onBlur={commitEdit}
+                    />
+                  ) : (
+                    <span
+                      className="line-clamp-2 flex-1 text-xs font-medium leading-snug"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        startEdit(conv.id, conv.title)
+                      }}
+                      title={t("chat.renameConversation")}
                     >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
+                      {conv.title}
+                    </span>
+                  )}
+                  {isEditing ? (
+                    <div className="flex flex-shrink-0 gap-0.5">
+                      <button
+                        className="rounded p-0.5 text-muted-foreground hover:text-primary"
+                        onMouseDown={(e) => {
+                          // mouseDown not click: the input's onBlur fires
+                          // before click, which would have already committed.
+                          e.preventDefault()
+                          e.stopPropagation()
+                          commitEdit()
+                        }}
+                        aria-label={t("chat.renameConversation")}
+                      >
+                        <Check className="h-3 w-3" />
+                      </button>
+                      <button
+                        className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          cancelEdit()
+                        }}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    hoveredId === conv.id && (
+                      <div className="flex flex-shrink-0 gap-0.5">
+                        <button
+                          className="rounded p-0.5 text-muted-foreground hover:text-primary"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            startEdit(conv.id, conv.title)
+                          }}
+                          title={t("chat.renameConversation")}
+                          aria-label={t("chat.renameConversation")}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button
+                          className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            deleteConversation(conv.id)
+                            const proj = useWikiStore.getState().project
+                            if (proj) {
+                              deleteChatConversation(proj.path, conv.id).catch(() => {})
+                            }
+                          }}
+                          title={t("chat.deleteConversationTooltip")}
+                          aria-label={t("chat.deleteConversationTooltip")}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )
                   )}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
@@ -133,6 +249,84 @@ function ConversationSidebar() {
           })
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Slim title bar at the top of the active conversation. Shows the
+ * current title with a click-to-rename pencil — the user asked for
+ * "也能在对话中修改" (also editable inside the conversation), not just
+ * from the sidebar.
+ */
+function ConversationHeader() {
+  const { t } = useTranslation()
+  const activeConversationId = useChatStore((s) => s.activeConversationId)
+  const conversations = useChatStore((s) => s.conversations)
+  const renameConversation = useChatStore((s) => s.renameConversation)
+  const conv = conversations.find((c) => c.id === activeConversationId)
+
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState("")
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  if (!conv) return null
+
+  function start() {
+    if (!conv) return
+    setValue(conv.title)
+    setEditing(true)
+    setTimeout(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }, 0)
+  }
+
+  function commit() {
+    if (!conv) return
+    const trimmed = value.trim()
+    if (trimmed.length > 0 && trimmed !== conv.title) {
+      renameConversation(conv.id, trimmed)
+    }
+    setEditing(false)
+  }
+
+  function cancel() {
+    setEditing(false)
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 border-b bg-muted/20 px-3 py-1.5">
+      {editing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          placeholder={t("chat.renamePlaceholder")}
+          maxLength={200}
+          className="flex-1 rounded border bg-background px-2 py-0.5 text-xs font-medium outline-none focus:border-primary"
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              commit()
+            } else if (e.key === "Escape") {
+              e.preventDefault()
+              cancel()
+            }
+          }}
+          onBlur={commit}
+        />
+      ) : (
+        <button
+          className="flex flex-1 items-center gap-1.5 truncate text-left text-xs font-medium text-foreground hover:text-primary"
+          onClick={start}
+          title={t("chat.renameConversation")}
+        >
+          <span className="truncate">{conv.title}</span>
+          <Pencil className="h-3 w-3 flex-shrink-0 opacity-50" />
+        </button>
+      )}
     </div>
   )
 }
@@ -934,6 +1128,7 @@ export function ChatPanel() {
           </div>
         ) : (
           <>
+            <ConversationHeader />
             <div
               ref={scrollContainerRef}
               className="flex-1 overflow-y-auto px-3 py-2"

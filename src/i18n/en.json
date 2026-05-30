@@ -179,7 +179,10 @@
     "msgCount": "msgs",
     "startNewConversation": "Start a new conversation",
     "clickNewChatToBegin": "Click \"New Chat\" to begin",
-    "typeAMessage": "Type a message..."
+    "typeAMessage": "Type a message...",
+    "renameConversation": "Rename conversation",
+    "renamePlaceholder": "Conversation title",
+    "deleteConversationTooltip": "Delete conversation"
   },
   "chatSearch": {
     "headerPrefix": "Search:",

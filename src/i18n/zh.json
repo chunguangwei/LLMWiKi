@@ -182,7 +182,10 @@
     "msgCount": "条消息",
     "startNewConversation": "开始新对话",
     "clickNewChatToBegin": "点击「新建对话」开始",
-    "typeAMessage": "输入消息..."
+    "typeAMessage": "输入消息...",
+    "renameConversation": "重命名对话",
+    "renamePlaceholder": "对话名称",
+    "deleteConversationTooltip": "删除对话"
   },
   "chatSearch": {
     "headerPrefix": "搜索：",
