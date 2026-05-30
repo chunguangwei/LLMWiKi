@@ -78,6 +78,75 @@ export const lintScenarios: LintScenario[] = [
     },
   },
 
+  // 3b. broken-link DEDUP — same missing target referenced from
+  //     multiple source pages collapses into ONE lint row with
+  //     affectedPages populated. Without this, every reference
+  //     produces a separate row, flooding the Lint view (a popular
+  //     missing target like a wiki concept can appear 5–10 times).
+  {
+    name: "structural/broken-link-dedup",
+    description:
+      "[[missing-target]] is referenced from three different pages. The " +
+      "structural lint should emit exactly ONE broken-link row whose " +
+      "affectedPages list names all three.",
+    initialWiki: {
+      "wiki/index.md":
+        "# Index\n\n- [[page-a]]\n- [[page-b]]\n- [[page-c]]\n",
+      // Cross-link page-a / page-b / page-c so they're NOT orphans —
+      // the lint that's being tested here is the broken-link dedup,
+      // not the orphan flag. Each page also references the missing
+      // target with its OWN wording (same target, three references).
+      "wiki/page-a.md": page(
+        "Page A",
+        "Page A talks about [[missing-target]]. See also [[page-b]].",
+      ),
+      "wiki/page-b.md": page(
+        "Page B",
+        "Page B also mentions [[missing-target]] for the same reason. " +
+          "Cross-ref: [[page-a]], [[page-c]].",
+      ),
+      "wiki/page-c.md": page(
+        "Page C",
+        "And [[missing-target]] comes up again here, in Page C. " +
+          "Related: [[page-b]].",
+      ),
+    },
+    expected: {
+      structural: [
+        {
+          type: "broken-link",
+          // page = first affected (sorted alphabetically), the lint UI
+          // uses this as the row anchor.
+          page: "page-a.md",
+          linkName: "missing-target",
+          affectedPages: ["page-a.md", "page-b.md", "page-c.md"],
+        },
+      ],
+    },
+  },
+
+  // 3c. lint exclusion: raw-source paths (sources/, queries/) are
+  //     skipped by default. A page directly under wiki/sources/ has
+  //     a broken link AND no inbound link — without the exclusion it
+  //     would produce orphan + no-outlinks + broken-link. With the
+  //     default LintConfig it produces NONE.
+  {
+    name: "structural/ignore-raw-sources",
+    description:
+      "sources/raw-import.md has [[non-existent]] and no other linking page. " +
+      "Default lint config skips sources/ so the page produces zero findings.",
+    initialWiki: {
+      "wiki/index.md": "# Index\n\n",
+      "wiki/sources/raw-import.md": page(
+        "Raw import",
+        "Some imported content referencing [[non-existent]] and nothing else.",
+      ),
+    },
+    expected: {
+      structural: [],
+    },
+  },
+
   // 4. no-outlinks — a page has zero [[wikilinks]]
   {
     name: "structural/no-outlinks",

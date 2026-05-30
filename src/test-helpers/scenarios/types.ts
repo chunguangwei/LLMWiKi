@@ -60,6 +60,14 @@ export interface LintScenario {
       page: string
       /** For broken-link, the substring that should appear in the detail */
       linkName?: string
+      /**
+       * For broken-link with the new dedup behavior (multi-source case):
+       * the exact list of source pages that referenced the missing
+       * target. Order-insensitive; the matcher sorts both sides before
+       * comparing. Single-source rows omit this — the dedup pass only
+       * populates affectedPages when N > 1.
+       */
+      affectedPages?: string[]
     }>
     /** Expected semantic lint findings (when llmResponse provided) */
     semantic?: Array<{
