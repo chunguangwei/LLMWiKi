@@ -147,6 +147,7 @@
     "reingestAllConfirm": "对 {{count}} 个资料文件重跑提取？将重建 Wiki，会消耗 LLM tokens。",
     "reingestAllEmpty": "raw/sources/ 下没有可提取的资料。",
     "reingestOne": "重新提取这一个文件",
+    "agentIngest": "🤖 Agent 智能提取（实验性）— 由 LLM 多轮工具调用阅读原文、决定生成/更新 wiki 页面。token 消耗大于经典提取，长文档质量未充分验证；先在低风险文档上试。",
     "importImages": "图片",
     "importingImages": "识别中...",
     "importImagesTooltip": "选择图片文件，由 vision-capable LLM 把图片内容提取为 markdown（描述 + OCR 文字 + 结构），再走正常的提取流程进入 Wiki。",

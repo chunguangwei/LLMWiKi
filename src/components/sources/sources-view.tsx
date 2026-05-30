@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
-import { Plus, FileText, RefreshCw, Trash2, Folder, ChevronRight, ChevronDown, Wand2, Image as ImageIcon } from "lucide-react"
+import { Plus, FileText, RefreshCw, Trash2, Folder, ChevronRight, ChevronDown, Wand2, Image as ImageIcon, Bot } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -20,6 +20,8 @@ import {
   isIngestableSourcePath,
 } from "@/lib/source-lifecycle"
 import { addImagesToRawWithContext } from "@/lib/raw-from-chat"
+import { runAgentIngest } from "@/lib/agent-ingest"
+import { useActivityStore } from "@/stores/activity-store"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
@@ -37,7 +39,9 @@ export function SourcesView() {
   const [importing, setImporting] = useState(false)
   const [importingImages, setImportingImages] = useState(false)
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
+  const [agentRunningPath, setAgentRunningPath] = useState<string | null>(null)
   const [reingestingAll, setReingestingAll] = useState(false)
+  const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   /**
@@ -322,6 +326,94 @@ export function SourcesView() {
     }
   }
 
+  /**
+   * Run the experimental agent-ingest pipeline on a single source.
+   *
+   * Bypasses the classic queue entirely — `runAgentIngest()` is a
+   * single direct call that drives a multi-turn agent conversation
+   * over the tool catalogue defined in `lib/agent-ingest/tools/`.
+   * The user-facing experience is "click the 🤖 button on a source,
+   * watch the activity panel update turn-by-turn, end up with new
+   * wiki pages (or gaps surfaced as review items) when the agent
+   * calls `done`".
+   *
+   * Caveats called out in the tooltip + activity detail so users
+   * with budget concerns can opt out:
+   *
+   *   - Costs more LLM tokens than the classic pipeline (multi-turn
+   *     tool calling vs single-shot analysis + generate).
+   *   - Quality is currently UNVALIDATED — Phase F has yet to run
+   *     it on real long sources and tune the prompts. Use on
+   *     low-stakes documents first.
+   *   - No checkpoint persistence yet (Phase E). A network hiccup
+   *     mid-loop loses the partial state; just retry.
+   */
+  async function handleAgentIngest(node: FileNode) {
+    if (!project || agentRunningPath) return
+    setAgentRunningPath(node.path)
+    const activity = useActivityStore.getState()
+    const sourceName = node.path.split("/").pop() ?? node.path
+    const activityId = activity.addItem({
+      type: "ingest",
+      title: `🤖 Agent ingest: ${sourceName}`,
+      status: "running",
+      detail: "Starting agent loop…",
+      filesWritten: [],
+    })
+    try {
+      const result = await runAgentIngest({
+        sourcePath: node.path,
+        project,
+        llmConfig,
+        onTurn: (turnIndex, tokensSoFar) => {
+          activity.updateItem(activityId, {
+            detail: `Turn ${turnIndex + 1} · ${Math.round(tokensSoFar / 1000)}k tokens`,
+          })
+        },
+      })
+      const writtenPaths = [
+        ...result.pagesCreated.map((p) => p.slug),
+        ...result.pagesUpdated.map((p) => p.slug),
+      ]
+      const lines = [
+        result.reason,
+        `Turns: ${result.turnsUsed} · tokens: ${Math.round(result.tokensSpent / 1000)}k`,
+        `Coverage: ${Math.round(result.coverage * 100)}%`,
+        result.pagesCreated.length > 0
+          ? `Created: ${result.pagesCreated.map((p) => p.slug).join(", ")}`
+          : "",
+        result.pagesUpdated.length > 0
+          ? `Updated: ${result.pagesUpdated.map((p) => p.slug).join(", ")}`
+          : "",
+        result.reviewItemsCreated.length > 0
+          ? `Gaps surfaced: ${result.reviewItemsCreated.length} (see Review)`
+          : "",
+      ].filter(Boolean)
+      activity.updateItem(activityId, {
+        status: "done",
+        detail: lines.join("\n"),
+        filesWritten: writtenPaths,
+      })
+      // Wiki pages changed → file tree + knowledge tree need to refresh.
+      bumpDataVersion()
+      try {
+        const tree = await listDirectory(normalizePath(project.path))
+        setFileTree(tree)
+      } catch {
+        // non-fatal — the next refresh will catch it
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error("[agent-ingest] failed:", err)
+      activity.updateItem(activityId, {
+        status: "error",
+        detail: `Agent ingest failed: ${message}`,
+      })
+    } finally {
+      setAgentRunningPath(null)
+    }
+  }
+
   function collectIngestableLeaves(nodes: FileNode[]): string[] {
     const out: string[] = []
     const walk = (ns: FileNode[]) => {
@@ -485,6 +577,8 @@ export function SourcesView() {
               nodes={sources}
               onOpen={handleOpenSource}
               onIngest={handleIngest}
+              onAgentIngest={handleAgentIngest}
+              agentRunningPath={agentRunningPath}
               onDelete={handleDelete}
               onDeleteFolder={handleDeleteFolder}
               pendingDeletePath={pendingDeletePath}
@@ -578,15 +672,18 @@ function SourceTree({
   nodes,
   onOpen,
   onIngest,
+  onAgentIngest,
   onDelete,
   onDeleteFolder,
   pendingDeletePath,
   setPendingDeletePath,
   ingestingPath,
+  agentRunningPath,
 }: {
   nodes: FileNode[]
   onOpen: (node: FileNode) => void
   onIngest: (node: FileNode) => void
+  onAgentIngest: (node: FileNode) => void
   onDelete: (node: FileNode) => void
   onDeleteFolder: (node: FileNode) => void
   /** Path of the node currently in "click again to confirm" state.
@@ -596,6 +693,7 @@ function SourceTree({
   pendingDeletePath: string | null
   setPendingDeletePath: (path: string | null) => void
   ingestingPath: string | null
+  agentRunningPath: string | null
 }) {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -715,6 +813,25 @@ function SourceTree({
               onClick={() => onIngest(node)}
             >
               <Wand2 className={`h-4 w-4 ${ingestingPath === node.path ? "animate-pulse" : ""}`} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              title={t("sources.agentIngest", {
+                defaultValue:
+                  "🤖 Agent ingest (experimental) — multi-turn LLM agent reads the source and writes wiki pages. Uses more tokens than classic ingest; quality not yet validated on real long docs.",
+              })}
+              disabled={agentRunningPath === node.path || agentRunningPath !== null}
+              onClick={() => onAgentIngest(node)}
+            >
+              <Bot
+                className={`h-4 w-4 ${
+                  agentRunningPath === node.path
+                    ? "animate-pulse text-emerald-600 dark:text-emerald-400"
+                    : "text-emerald-600/70 dark:text-emerald-400/70"
+                }`}
+              />
             </Button>
             <DeleteButton
               isPending={isPendingDelete}
