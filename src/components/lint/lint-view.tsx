@@ -82,6 +82,9 @@ export function LintView() {
   // when no bulk run is active.
   const [bulkRunning, setBulkRunning] = useState(false)
   const bulkAbortRef = useRef<{ aborted: boolean } | null>(null)
+  // Reconcile (mechanical cleanup) state. Runs a dry-run first to
+  // collect counts, asks the user to confirm, then applies.
+  const [reconciling, setReconciling] = useState(false)
 
   const handleRunLint = useCallback(async () => {
     if (!project || running) return
@@ -401,6 +404,76 @@ export function LintView() {
     if (bulkAbortRef.current) bulkAbortRef.current.aborted = true
   }
 
+  /**
+   * Mechanical cleanup: dry-run reconcile to see totals → confirm →
+   * actual reconcile → re-run lint to refresh the view. Pure non-LLM
+   * pass; safe to run repeatedly.
+   */
+  async function handleReconcile() {
+    if (!project || reconciling) return
+    const pp = normalizePath(project.path)
+    setReconciling(true)
+    try {
+      const { reconcileWiki } = await import("@/lib/wiki-reconcile")
+      const dry = await reconcileWiki(pp, { dryRun: true })
+      if (
+        dry.totalBrokenWikilinksReplaced === 0 &&
+        dry.totalRelatedEntriesRemoved === 0 &&
+        dry.totalIndexRowsDropped === 0
+      ) {
+        window.alert(
+          t("lint.reconcileNoOp", {
+            defaultValue: "No broken references found — nothing to clean.",
+          }),
+        )
+        return
+      }
+      const msg = t("lint.reconcileConfirm", {
+        defaultValue:
+          `Cleanup will rewrite ${dry.changes.length} file(s):\n` +
+          `  · ${dry.totalBrokenWikilinksReplaced} broken [[X]] → plain text\n` +
+          `  · ${dry.totalRelatedEntriesRemoved} dangling related: entries removed\n` +
+          `  · ${dry.totalIndexRowsDropped} index.md row(s) dropped\n\n` +
+          "queries/ and sources/ files are preserved as raw. Proceed?",
+        files: dry.changes.length,
+        links: dry.totalBrokenWikilinksReplaced,
+        related: dry.totalRelatedEntriesRemoved,
+        index: dry.totalIndexRowsDropped,
+      })
+      if (!window.confirm(msg)) return
+      const real = await reconcileWiki(pp)
+      const activity = useActivityStore.getState()
+      activity.addItem({
+        type: "lint",
+        title: "🧹 Cleanup broken references",
+        status: "done",
+        detail:
+          `Rewrote ${real.changes.length} files · ` +
+          `${real.totalBrokenWikilinksReplaced} broken wikilinks · ` +
+          `${real.totalRelatedEntriesRemoved} dangling related: · ` +
+          `${real.totalIndexRowsDropped} index rows`,
+        filesWritten: real.changes.map((c) => c.slug),
+      })
+      const tree = await listDirectory(pp)
+      setFileTree(tree)
+      bumpDataVersion()
+      // Auto-re-run lint so the user immediately sees the drop.
+      handleRunLint()
+    } catch (err) {
+      console.error("[reconcile] failed:", err)
+      window.alert(
+        t("lint.reconcileFailed", {
+          defaultValue: `Cleanup failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      )
+    } finally {
+      setReconciling(false)
+    }
+  }
+
   async function handleDeleteOrphan(item: LintItem) {
     if (!project) return
     const pp = normalizePath(project.path)
@@ -508,6 +581,27 @@ export function LintView() {
                     })}
               </Button>
             )}
+          {/* Reconcile button — mechanical cleanup of broken refs +
+              dangling related: + index drift. No LLM needed; runs in
+              dry-run first to preview the change set, then a confirm
+              dialog applies. queries/ + sources/ + .llm-wiki* trees
+              are preserved as raw sources, so re-ingest can recover
+              any over-eager cleanup. */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleReconcile}
+            disabled={running || reconciling || !project}
+            title={t("lint.reconcileTitle", {
+              defaultValue:
+                "Mechanical cleanup: replace broken [[X]] with plain text, drop dangling related: entries, scrub index.md. No LLM. Dry-run preview first.",
+            })}
+          >
+            <Wrench className={`mr-1.5 h-3.5 w-3.5 ${reconciling ? "animate-spin" : ""}`} />
+            {reconciling
+              ? t("lint.reconciling", { defaultValue: "Cleaning…" })
+              : t("lint.reconcile", { defaultValue: "Cleanup refs" })}
+          </Button>
         </div>
       </div>
 
