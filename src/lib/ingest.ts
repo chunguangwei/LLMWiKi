@@ -773,8 +773,20 @@ async function autoIngestImpl(
   // knowledge gaps / follow-up research. Gated by signal heuristics
   // so short/trivial ingests skip the extra LLM call. Best-effort:
   // a failure here never blocks the ingest (pages are already written).
+  //
+  // Origin-aware skip: sources written by SaveToWikiButton carry
+  // `origin: chat-save` in their frontmatter. Chat replies are
+  // already user-vetted answers — the user wrote the question,
+  // saw the model's reply, and explicitly chose to save it. Running
+  // a second pass to "surface concerns" on that content just floods
+  // the Review queue with noise the user has to triage. Skip.
+  const isChatSaveOrigin = /^\s*origin\s*:\s*chat-save\b/im.test(sourceContent)
   let reviewSuggestionOutput = ""
-  if (!signal?.aborted && shouldRunDedicatedReviewStage(generation)) {
+  if (
+    !signal?.aborted &&
+    !isChatSaveOrigin &&
+    shouldRunDedicatedReviewStage(generation)
+  ) {
     let reviewStageHadError = false
     try {
       await streamChat(

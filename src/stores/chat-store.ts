@@ -34,6 +34,40 @@ export interface DisplayMessage {
     /** Short one-line description of the result: "ok", "skipped", "error: X", etc. */
     resultSummary: string
   }>
+  /**
+   * Set when the user already saved this assistant reply to the wiki
+   * via SaveToWikiButton. Stored on the message itself (not in local
+   * React state) so the "saved" indicator survives re-renders,
+   * conversation switches, tab toggles, and app restarts (auto-save
+   * persists messages to disk). Without this, the Save button comes
+   * back enabled and the user can create duplicate query pages.
+   */
+  savedToWiki?: {
+    /** Absolute path of the file that was created. */
+    path: string
+    /** ms epoch when the save happened — for "Saved 3m ago" tooltips. */
+    savedAt: number
+    /**
+     * Post-save autoIngest progress. Surfaces the smart-split / page
+     * generation outcome inline next to the Save button so the user
+     * sees what landed where without having to dig through the
+     * Activity panel.
+     *
+     *   - "running": autoIngest is in flight; button shows "ingesting…"
+     *   - "done":    autoIngest finished; `pages` is the list of
+     *                wiki-relative paths that were written (empty
+     *                array is valid — means autoIngest ran but
+     *                produced no new pages).
+     *   - "failed":  autoIngest threw; user sees the error in tooltip
+     *                + can re-trigger via a different path (e.g.
+     *                manual re-ingest). The saved query page itself
+     *                is untouched.
+     */
+    ingest?:
+      | { state: "running" }
+      | { state: "done"; pages: string[] }
+      | { state: "failed"; error: string }
+  }
 }
 
 interface ChatState {
@@ -66,6 +100,25 @@ interface ChatState {
       references?: MessageReference[]
       toolCalls?: DisplayMessage["toolCalls"]
     },
+  ) => void
+  /**
+   * Record that a given assistant message was saved to the wiki at
+   * `path`. Idempotent — re-marking already-saved messages just
+   * refreshes the timestamp. No-op for unknown ids.
+   */
+  markMessageSavedToWiki: (messageId: string, path: string) => void
+  /**
+   * Update the post-save autoIngest state for a message that's
+   * already been saved. No-op if the message isn't marked saved.
+   * `state` accepts the discriminated union from
+   * DisplayMessage.savedToWiki.ingest.
+   */
+  setMessageIngestState: (
+    messageId: string,
+    state:
+      | { state: "running" }
+      | { state: "done"; pages: string[] }
+      | { state: "failed"; error: string },
   ) => void
   setMessages: (messages: DisplayMessage[]) => void
   setConversations: (conversations: Conversation[]) => void
@@ -223,6 +276,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversations: updatedConversations,
       }
     }),
+
+  markMessageSavedToWiki: (messageId, path) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId
+          ? { ...m, savedToWiki: { path, savedAt: Date.now() } }
+          : m,
+      ),
+    })),
+
+  setMessageIngestState: (messageId, ingestState) =>
+    set((state) => ({
+      messages: state.messages.map((m) => {
+        if (m.id !== messageId || !m.savedToWiki) return m
+        return {
+          ...m,
+          savedToWiki: { ...m.savedToWiki, ingest: ingestState },
+        }
+      }),
+    })),
 
   setMessages: (messages) => set({ messages }),
 

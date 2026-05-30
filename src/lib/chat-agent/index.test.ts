@@ -31,9 +31,6 @@ type FsState = {
   tree: Map<string, FileNode[]>
 }
 let fs: FsState = { files: new Map(), tree: new Map() }
-function setFile(p: string, c: string) {
-  fs.files.set(p, c)
-}
 function setTree(d: string, t: FileNode[]) {
   fs.tree.set(d, t)
 }
