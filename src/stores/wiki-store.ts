@@ -295,6 +295,17 @@ interface WikiState {
    * Persisted via `saveExperimentalConfig` (project-store.ts).
    */
   experimentalAgentIngest: boolean
+  /**
+   * **Labs / experimental** — replace the lint Fix button's hardcoded
+   * actions (orphan → append to index.md, broken-link → push to Review,
+   * etc.) with an agent-driven mini-loop that decides per-item how to
+   * repair the wiki. Off by default; users opting in get smarter fixes
+   * but also LLM-cost overhead per click. See
+   * `src/lib/agent-lint-fix/` for the implementation.
+   *
+   * Persisted via `saveExperimentalConfig` (project-store.ts).
+   */
+  experimentalAiLintFix: boolean
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -316,6 +327,7 @@ interface WikiState {
   setSourceWatchConfig: (config: SourceWatchConfig) => void
   setApiConfig: (config: ApiConfig) => void
   setExperimentalAgentIngest: (enabled: boolean) => void
+  setExperimentalAiLintFix: (enabled: boolean) => void
   bumpDataVersion: () => void
 }
 
@@ -412,6 +424,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   },
 
   experimentalAgentIngest: false,
+  experimentalAiLintFix: false,
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
@@ -426,6 +439,8 @@ export const useWikiStore = create<WikiState>((set) => ({
   setApiConfig: (apiConfig) => set({ apiConfig }),
   setExperimentalAgentIngest: (experimentalAgentIngest) =>
     set({ experimentalAgentIngest }),
+  setExperimentalAiLintFix: (experimentalAiLintFix) =>
+    set({ experimentalAiLintFix }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
