@@ -376,6 +376,33 @@ describe("runChatAgent — system prompt rails", () => {
     expect(sys.content).toContain("以中文回答")
   })
 
+  it("teaches the answer-first rule (substantive text before done, even when can't mutate)", async () => {
+    // Real-LLM regression: when a user asked the agent to "write a
+    // wiki page about X", the agent did 12 tool calls (search, fetch)
+    // then called `done` with empty text — because the prompt said
+    // "you can't mutate the wiki", the agent treated that as
+    // "nothing to do". Strengthened both the mutation note and the
+    // stopping rules to require substantive answer text even when
+    // the side effect can't be performed.
+    setupEmptyProject()
+    const llm = new ScriptedLlm([textTurn("OK.")])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    await runChatAgent({
+      userMessage: "hi",
+      history: emptyHistory(),
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+    })
+
+    const sys = llm.calls[0].messages.find((m) => m.role === "system")!
+    if (typeof sys.content !== "string") throw new Error("expected string system")
+    // The substantive-answer requirement is the key contract.
+    expect(sys.content).toMatch(/answer the SUBSTANTIVE question/i)
+    expect(sys.content).toMatch(/FAILURE mode/i)
+    expect(sys.content).toMatch(/Save to Wiki/)
+  })
+
   it("injects today's date so time-sensitive web searches use the current year", async () => {
     // Real-world prompt-tuning fix: without this, MiniMax-M2.7 generated
     // `query="OpenAI 2025"` while running on 2026-05-30 because the
