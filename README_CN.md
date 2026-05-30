@@ -463,6 +463,19 @@ API Key 一直在 OS 应用数据目录，从不在项目目录里。
 
 Settings → **视觉 / 图片识别**（从「图片描述」改名）同时控制这个新流程**和**原有的 PDF/DOCX caption 流程。主开关用 emerald 绿，ON 状态一目了然。
 
+### 29. Agent 智能提取 — 实验性（v0.4.23 新增）
+
+第二条 ingest 管线：把经典的「一次性 analyse + generate」换成 LLM 多轮 agent loop。在 **Settings → Labs → 「Agent ingest (experimental)」** 开关后启用（默认关闭）；开启后每个源文件旁出现 🤖 按钮。
+
+跟经典管线的区别：
+
+- **LLM 是主动 agent**，不是被动转换器。Runner 暴露 11 个工具（`read_outline` / `read_chunk` / `search_source` / `list_wiki_pages` / `read_wiki_page` / `mark_section_covered` / `surface_gap` / `write_wiki_page` / `update_wiki_page` / `link_pages` / `done`），由模型自己决定调用顺序。
+- **长文档友好**：源文档先用 `chunkMarkdown` 切片，建 BM25 关键词索引（支持中文），agent 只读自己需要的那几个 chunk —— 不会把 10 万 token 塞一个 context 里触发「Lost in the Middle」效应。
+- **每轮自动 checkpoint**：状态写到 `.llm-wiki/agent-checkpoints/<sourceHash>.json`。崩溃 / 网络中断 / 取消都留干净的续跑点，下次运行接着跑。源 hash 校验：源被改了就重新开始，不会用过期 chunk 引用继续。
+- **独立 verify pass**：loop 跑完后单独跑一次 LLM 调用，把源文档大纲和实际写出来的 wiki 页面对照，没覆盖的章节自动进 **Review** tab 显示为 `missing-page` 项，带「创建页面」/「跳过」选项。
+
+状态：端到端能跑（333 个单测覆盖），但真实长文档的 prompt 调优还在进行中。打开 Labs 开关 == 主动加入 Phase F 验证，期间工具集和 prompt 可能在不发主版本号的情况下调整。完整设计见 `docs/agent-ingest-design.md`，包含 11 工具协议和决策依据。
+
 ## 示例：一份完整的 schema.md（可参考 / 复制）
 
 下面是一份实际使用中的综合 `schema.md`，覆盖 34 类页面（整篇保留 vs 可拆分）、命名约定、frontmatter 字段、索引/日志格式、互链与拆分规则。新建「综合」模板项目时会自动生成类似内容；你也可以把它整段复制到项目根的 `schema.md`，再按需增删类型——LLM 在**下次摄入**时就会按你的规则决定页面落到哪个目录、是否拆分、怎么互链。完整自定义说明见 [`docs/user-rules.md`](docs/user-rules.md)。

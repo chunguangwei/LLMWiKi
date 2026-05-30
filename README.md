@@ -468,6 +468,19 @@ Cross-platform: works on macOS, Windows, and Linux. The Canvas downsize is webvi
 
 Settings → **Vision / Image OCR** (renamed from "Image Captioning") controls both this new flow AND the existing PDF/DOCX caption flow. Master toggle uses emerald green for an unambiguous ON state.
 
+### 29. Agentic Ingest — experimental (v0.4.23)
+
+A second ingestion pipeline that runs as a multi-turn agent loop instead of the classic single-shot analyse + generate. Gated behind **Settings → Labs → "Agent ingest (experimental)"** (default OFF); enabling adds a 🤖 button next to each source file.
+
+What it does differently:
+
+- **The LLM is the active agent**, not a passive transformer. The runner exposes 11 tools (`read_outline`, `read_chunk`, `search_source`, `list_wiki_pages`, `read_wiki_page`, `mark_section_covered`, `surface_gap`, `write_wiki_page`, `update_wiki_page`, `link_pages`, `done`). The model picks which to call in what order to ingest the source.
+- **Long-source friendly**: the source is pre-chunked with `chunkMarkdown`, indexed for BM25 keyword search (CJK-aware), and the agent reads only chunks it actually needs — no Lost-in-the-Middle effect from stuffing a 100K-token source into one context.
+- **Checkpoint per turn**: state lands in `.llm-wiki/agent-checkpoints/<sourceHash>.json` after every turn. A crash, network failure, or cancelled run leaves a clean resume point; the next attempt picks up where the loop stopped. Source-hash invalidation handles "I edited the source between runs" correctly.
+- **Independent verify pass**: after the loop ends, a separate LLM call cross-checks the source outline against the wiki pages produced. Uncovered topics surface in the **Review** tab as `missing-page` items with Create Page / Skip options.
+
+Status: works end-to-end (333 unit tests against the pipeline), but real-long-source prompt tuning is ongoing. Users who flip the Labs toggle are explicitly opting into Phase F validation — the tool surface and prompts may change without a major-version bump while we tune. See `docs/agent-ingest-design.md` for the full architecture, the 11-tool protocol, and the rationale behind the design.
+
 ## Tech Stack
 
 | Layer | Technology |

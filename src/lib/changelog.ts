@@ -26,6 +26,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.23",
+    date: "2026-05-30",
+    highlights: {
+      en: [
+        "Experimental: agentic ingest. Settings → Labs → 'Agent ingest (experimental)' toggle adds a 🤖 button next to each source file. A multi-turn LLM agent reads the source via tool calls (read_chunk / search_source) and writes wiki pages directly (write_wiki_page / update_wiki_page / link_pages) instead of the classic single-shot analyse + generate. Costs more tokens; quality is not yet validated on long real-world documents. Default OFF — flip the toggle to opt in.",
+        "Agent runs are resumable. A checkpoint is written after every turn under `.llm-wiki/agent-checkpoints/`; a crash, network failure, or cancelled run leaves a clean resume point. Successful runs clean up; partial runs leave the file so the next attempt picks up where the loop stopped. Source-hash invalidation means re-editing the source starts fresh instead of resuming stale chunk references.",
+        "After each agent run, a verify pass independently checks the source outline against the wiki pages produced. Uncovered topics land in the Review tab as missing-page items with 'Create Page' / 'Skip' options — you decide which to act on.",
+      ],
+      zh: [
+        "实验性功能：Agent 智能提取。Settings → Labs → 「Agent ingest (experimental)」开关启用后，每个源文件旁出现 🤖 按钮。多轮 LLM agent 通过工具调用（read_chunk / search_source）阅读源文档，直接写 wiki 页面（write_wiki_page / update_wiki_page / link_pages），区别于经典的单次分析 + 生成。token 消耗更高；长文档质量尚未充分验证。默认关闭 —— 自行开启。",
+        "Agent 运行可恢复。每轮自动写 checkpoint 到 `.llm-wiki/agent-checkpoints/`；崩溃、网络中断、或取消的运行都有干净的续跑点。成功 done 后自动清理；部分完成的留文件，下次接着跑。源文档 hash 校验：源被改了就重新开始，不会用过期的 chunk 引用继续。",
+        "每次 agent 运行结束后会跑独立的 verify pass：把源文档大纲跟实际生成的 wiki 页面对照，没覆盖的章节自动进 Review tab 显示成 missing-page 项，带「创建页面」/「跳过」选项 —— 你来决定怎么处理。",
+      ],
+    },
+  },
+  {
     version: "0.4.22",
     date: "2026-05-29",
     highlights: {
