@@ -67,6 +67,11 @@ function ConversationSidebar() {
   const editInputRef = useRef<HTMLInputElement | null>(null)
 
   const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
+  // 200 matches the renameConversation maxLength (and the input's
+  // maxLength prop). Soft threshold for the counter — only show it when
+  // the user gets close so it doesn't clutter the input most of the time.
+  const TITLE_MAX = 200
+  const TITLE_COUNTER_THRESHOLD = 150
 
   function getMessageCount(convId: string): number {
     return messages.filter((m) => m.conversationId === convId).length
@@ -81,6 +86,29 @@ function ConversationSidebar() {
       editInputRef.current?.select()
     }, 0)
   }
+
+  // F2 globally enters rename for the active conversation, matching the
+  // file-manager convention on every major OS. Skip when the user is
+  // already typing somewhere (input / textarea / contenteditable) — F2
+  // inside the chat composer should never hijack focus to the sidebar.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "F2") return
+      const target = e.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName
+        if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) return
+      }
+      const activeId = useChatStore.getState().activeConversationId
+      if (!activeId) return
+      const conv = useChatStore.getState().conversations.find((c) => c.id === activeId)
+      if (!conv) return
+      e.preventDefault()
+      startEdit(conv.id, conv.title)
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [])
 
   function commitEdit() {
     if (!editingId) return
@@ -142,28 +170,41 @@ function ConversationSidebar() {
               >
                 <div className="flex items-start justify-between gap-1">
                   {isEditing ? (
-                    <input
-                      ref={editInputRef}
-                      type="text"
-                      value={editValue}
-                      placeholder={t("chat.renamePlaceholder")}
-                      maxLength={200}
-                      className="flex-1 rounded border bg-background px-1 py-0.5 text-xs font-medium leading-snug text-foreground outline-none focus:border-primary"
-                      onChange={(e) => setEditValue(e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault()
-                          commitEdit()
-                        } else if (e.key === "Escape") {
-                          e.preventDefault()
-                          cancelEdit()
-                        }
-                      }}
-                      // Blur after Enter/Escape would re-fire commit/cancel; the
-                      // editingId guard in commitEdit/cancelEdit makes that safe.
-                      onBlur={commitEdit}
-                    />
+                    <div className="flex flex-1 flex-col gap-0.5">
+                      <input
+                        ref={editInputRef}
+                        type="text"
+                        value={editValue}
+                        placeholder={t("chat.renamePlaceholder")}
+                        maxLength={TITLE_MAX}
+                        className="w-full rounded border bg-background px-1 py-0.5 text-xs font-medium leading-snug text-foreground outline-none focus:border-primary"
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault()
+                            commitEdit()
+                          } else if (e.key === "Escape") {
+                            e.preventDefault()
+                            cancelEdit()
+                          }
+                        }}
+                        // Blur after Enter/Escape would re-fire commit/cancel; the
+                        // editingId guard in commitEdit/cancelEdit makes that safe.
+                        onBlur={commitEdit}
+                      />
+                      {editValue.length >= TITLE_COUNTER_THRESHOLD && (
+                        <span
+                          className={`text-[9px] tabular-nums ${
+                            editValue.length >= TITLE_MAX
+                              ? "text-destructive"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {editValue.length}/{TITLE_MAX}
+                        </span>
+                      )}
+                    </div>
                   ) : (
                     <span
                       className="line-clamp-2 flex-1 text-xs font-medium leading-snug"
@@ -270,6 +311,9 @@ function ConversationHeader() {
   const [value, setValue] = useState("")
   const inputRef = useRef<HTMLInputElement | null>(null)
 
+  const TITLE_MAX = 200
+  const TITLE_COUNTER_THRESHOLD = 150
+
   if (!conv) return null
 
   function start() {
@@ -298,25 +342,38 @@ function ConversationHeader() {
   return (
     <div className="flex items-center gap-1.5 border-b bg-muted/20 px-3 py-1.5">
       {editing ? (
-        <input
-          ref={inputRef}
-          type="text"
-          value={value}
-          placeholder={t("chat.renamePlaceholder")}
-          maxLength={200}
-          className="flex-1 rounded border bg-background px-2 py-0.5 text-xs font-medium outline-none focus:border-primary"
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault()
-              commit()
-            } else if (e.key === "Escape") {
-              e.preventDefault()
-              cancel()
-            }
-          }}
-          onBlur={commit}
-        />
+        <div className="flex flex-1 items-center gap-2">
+          <input
+            ref={inputRef}
+            type="text"
+            value={value}
+            placeholder={t("chat.renamePlaceholder")}
+            maxLength={TITLE_MAX}
+            className="flex-1 rounded border bg-background px-2 py-0.5 text-xs font-medium outline-none focus:border-primary"
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                commit()
+              } else if (e.key === "Escape") {
+                e.preventDefault()
+                cancel()
+              }
+            }}
+            onBlur={commit}
+          />
+          {value.length >= TITLE_COUNTER_THRESHOLD && (
+            <span
+              className={`text-[10px] tabular-nums ${
+                value.length >= TITLE_MAX
+                  ? "text-destructive"
+                  : "text-muted-foreground"
+              }`}
+            >
+              {value.length}/{TITLE_MAX}
+            </span>
+          )}
+        </div>
       ) : (
         <button
           className="flex flex-1 items-center gap-1.5 truncate text-left text-xs font-medium text-foreground hover:text-primary"
