@@ -47,6 +47,26 @@ export interface DisplayMessage {
     path: string
     /** ms epoch when the save happened — for "Saved 3m ago" tooltips. */
     savedAt: number
+    /**
+     * Post-save autoIngest progress. Surfaces the smart-split / page
+     * generation outcome inline next to the Save button so the user
+     * sees what landed where without having to dig through the
+     * Activity panel.
+     *
+     *   - "running": autoIngest is in flight; button shows "ingesting…"
+     *   - "done":    autoIngest finished; `pages` is the list of
+     *                wiki-relative paths that were written (empty
+     *                array is valid — means autoIngest ran but
+     *                produced no new pages).
+     *   - "failed":  autoIngest threw; user sees the error in tooltip
+     *                + can re-trigger via a different path (e.g.
+     *                manual re-ingest). The saved query page itself
+     *                is untouched.
+     */
+    ingest?:
+      | { state: "running" }
+      | { state: "done"; pages: string[] }
+      | { state: "failed"; error: string }
   }
 }
 
@@ -87,6 +107,19 @@ interface ChatState {
    * refreshes the timestamp. No-op for unknown ids.
    */
   markMessageSavedToWiki: (messageId: string, path: string) => void
+  /**
+   * Update the post-save autoIngest state for a message that's
+   * already been saved. No-op if the message isn't marked saved.
+   * `state` accepts the discriminated union from
+   * DisplayMessage.savedToWiki.ingest.
+   */
+  setMessageIngestState: (
+    messageId: string,
+    state:
+      | { state: "running" }
+      | { state: "done"; pages: string[] }
+      | { state: "failed"; error: string },
+  ) => void
   setMessages: (messages: DisplayMessage[]) => void
   setConversations: (conversations: Conversation[]) => void
   setStreaming: (streaming: boolean) => void
@@ -251,6 +284,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? { ...m, savedToWiki: { path, savedAt: Date.now() } }
           : m,
       ),
+    })),
+
+  setMessageIngestState: (messageId, ingestState) =>
+    set((state) => ({
+      messages: state.messages.map((m) => {
+        if (m.id !== messageId || !m.savedToWiki) return m
+        return {
+          ...m,
+          savedToWiki: { ...m.savedToWiki, ingest: ingestState },
+        }
+      }),
     })),
 
   setMessages: (messages) => set({ messages }),

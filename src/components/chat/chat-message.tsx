@@ -258,6 +258,7 @@ function SaveToWikiButton({
   const project = useWikiStore((s) => s.project)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const markMessageSavedToWiki = useChatStore((s) => s.markMessageSavedToWiki)
+  const setMessageIngestState = useChatStore((s) => s.setMessageIngestState)
   // Derived from the message itself, not local state: a previous
   // local-state implementation flashed "Saved!" for 2 seconds then
   // reset, which meant remounts / scroll virtualisation let the user
@@ -295,6 +296,11 @@ function SaveToWikiButton({
         `title: "${title.replace(/"/g, '\\"')}"`,
         `created: ${date}`,
         `tags: []`,
+        // origin marker — autoIngest reads this to decide whether
+        // to run its review-suggestion stage. Chat replies are
+        // already user-vetted answers; they don't need the LLM to
+        // come back and "raise concerns" in the Review queue.
+        `origin: chat-save`,
         "---",
         "",
       ].join("\n")
@@ -346,38 +352,115 @@ function SaveToWikiButton({
       // disables.
       markMessageSavedToWiki(messageId, filePath)
 
-      // Full auto-ingest: extract entities, concepts, cross-references from saved content
+      // Full auto-ingest. We DON'T await — autoIngest is heavy and
+      // we want the user back to chatting immediately. State updates
+      // ride through chat-store, so the button + summary card update
+      // in place as ingest progresses / finishes.
       const llmConfig = useWikiStore.getState().llmConfig
       if (hasUsableLlm(llmConfig)) {
+        setMessageIngestState(messageId, { state: "running" })
         const { autoIngest } = await import("@/lib/ingest")
-        autoIngest(pp, filePath, llmConfig).catch((err) =>
-          console.error("Failed to auto-ingest saved query:", err)
-        )
+        autoIngest(pp, filePath, llmConfig)
+          .then((pages) => {
+            setMessageIngestState(messageId, { state: "done", pages })
+          })
+          .catch((err) => {
+            console.error("Failed to auto-ingest saved query:", err)
+            setMessageIngestState(messageId, {
+              state: "failed",
+              error: err instanceof Error ? err.message : String(err),
+            })
+          })
       }
     } catch (err) {
       console.error("Failed to save to wiki:", err)
     } finally {
       setSaving(false)
     }
-  }, [project, content, saving, isSaved, messageId, markMessageSavedToWiki, setFileTree])
+  }, [
+    project,
+    content,
+    saving,
+    isSaved,
+    messageId,
+    markMessageSavedToWiki,
+    setMessageIngestState,
+    setFileTree,
+  ])
 
   if (!visible && !isSaved) return null
 
+  const ingest = savedToWiki?.ingest
+  const buttonLabel = !isSaved
+    ? saving
+      ? "Saving..."
+      : "Save to Wiki"
+    : !ingest
+      ? "Saved"
+      : ingest.state === "running"
+        ? "Saved · ingesting…"
+        : ingest.state === "done"
+          ? `Saved · ${ingest.pages.length} page${ingest.pages.length === 1 ? "" : "s"}`
+          : "Saved · ingest failed"
+
   return (
-    <button
-      type="button"
-      onClick={handleSave}
-      disabled={saving || isSaved}
-      className="self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-      title={
-        isSaved && savedToWiki
-          ? `Already saved to ${savedToWiki.path}`
-          : "Save to wiki"
-      }
-    >
-      <BookmarkPlus className="h-3 w-3" />
-      {isSaved ? "Saved" : saving ? "Saving..." : "Save to Wiki"}
-    </button>
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving || isSaved}
+        className="self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+        title={
+          ingest?.state === "failed"
+            ? `Save OK but ingest failed: ${ingest.error}`
+            : isSaved && savedToWiki
+              ? `Already saved to ${savedToWiki.path}`
+              : "Save to wiki"
+        }
+      >
+        <BookmarkPlus className="h-3 w-3" />
+        {buttonLabel}
+      </button>
+      {isSaved && ingest?.state === "done" && ingest.pages.length > 0 && (
+        <SavedIngestSummary pages={ingest.pages} />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Inline summary listing the wiki pages autoIngest generated from the
+ * saved chat reply. Click-to-expand keeps the bar tight by default;
+ * the user clicks once to see exactly what concepts/entities landed.
+ */
+function SavedIngestSummary({ pages }: { pages: string[] }) {
+  const [open, setOpen] = useState(false)
+  if (pages.length === 0) return null
+  return (
+    <div className="rounded-md border border-emerald-300/60 bg-emerald-50/60 dark:border-emerald-800/60 dark:bg-emerald-950/30 px-2 py-1 text-[10px] text-emerald-700 dark:text-emerald-400">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-2 hover:underline"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>
+          ✨ {pages.length} wiki page{pages.length === 1 ? "" : "s"} created from this reply
+        </span>
+        <span className="text-[9px]">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <ul className="mt-1 flex flex-col gap-0.5 font-mono">
+          {pages.slice(0, 12).map((p) => (
+            <li key={p} className="truncate">· {p}</li>
+          ))}
+          {pages.length > 12 && (
+            <li className="text-emerald-600/70 dark:text-emerald-400/70">
+              … and {pages.length - 12} more
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
   )
 }
 
