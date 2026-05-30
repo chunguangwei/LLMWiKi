@@ -106,6 +106,20 @@ function assertStructural(
           (e.linkName === undefined || a.detail.includes(e.linkName)),
       )
       expect(match, `no structural finding matching ${JSON.stringify(e)}`).toBeTruthy()
+      if (e.affectedPages) {
+        const matchAffected = (match!.affectedPages ?? []).slice().sort()
+        const expectedAffected = e.affectedPages.slice().sort()
+        // Substring-match each expected entry against the actual list
+        // so basename ("page-a.md") matches an absolute path that
+        // happens to be inside a tmp dir.
+        expect(matchAffected.length).toBe(expectedAffected.length)
+        for (const ep of expectedAffected) {
+          expect(
+            matchAffected.some((ap) => ap.includes(ep)),
+            `affectedPages missing ${ep}: ${JSON.stringify(matchAffected)}`,
+          ).toBe(true)
+        }
+      }
     }
   } catch (err) {
     // eslint-disable-next-line no-console

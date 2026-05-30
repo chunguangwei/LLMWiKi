@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useRef } from "react"
 import {
   Link2Off,
   Unlink,
@@ -71,6 +71,12 @@ export function LintView() {
   const [hasRun, setHasRun] = useState(false)
   const [runSemantic, setRunSemantic] = useState(false)
   const [fixingId, setFixingId] = useState<string | null>(null)
+  // Bulk fix mode — when set, runs runLintFix in sequence over every
+  // matching lint item. Holds the item id currently being processed
+  // so the row can show the same spinner the per-row Fix uses. Null
+  // when no bulk run is active.
+  const [bulkRunning, setBulkRunning] = useState(false)
+  const bulkAbortRef = useRef<{ aborted: boolean } | null>(null)
 
   const handleRunLint = useCallback(async () => {
     if (!project || running) return
@@ -296,6 +302,99 @@ export function LintView() {
     }
   }
 
+  /**
+   * Bulk-fix runner. Iterates the current broken-link items in
+   * sequence and calls runLintFix on each. Sequential (not parallel)
+   * so concurrent agent runs don't race on the same wiki pages or
+   * burn N× the LLM budget at once. Aborts on stop or LLM-config
+   * loss; surfaces aggregate progress in one activity item.
+   */
+  async function handleBulkFixBroken() {
+    if (!project) return
+    if (!hasUsableLlm(llmConfig)) return
+    if (bulkRunning) return
+    const broken = items.filter((i) => i.type === "broken-link")
+    if (broken.length === 0) return
+    const confirmed = window.confirm(
+      t("lint.bulkFixConfirm", {
+        defaultValue: `Run AI fix on all ${broken.length} broken-link items? Each will dispatch a separate agent run; you can Stop mid-batch.`,
+        count: broken.length,
+      }),
+    )
+    if (!confirmed) return
+
+    const activity = useActivityStore.getState()
+    const activityId = activity.addItem({
+      type: "lint",
+      title: `🤖 Bulk AI fix: ${broken.length} broken-link items`,
+      status: "running",
+      detail: `0 / ${broken.length}`,
+      filesWritten: [],
+    })
+
+    bulkAbortRef.current = { aborted: false }
+    setBulkRunning(true)
+    const writtenAll: string[] = []
+    let done = 0
+    let succeeded = 0
+    let failed = 0
+    try {
+      for (const item of broken) {
+        if (bulkAbortRef.current?.aborted) break
+        setFixingId(item.id)
+        try {
+          const result = await runLintFix({
+            item,
+            project,
+            llmConfig,
+          })
+          for (const p of result.pagesUpdated) writtenAll.push(p.slug)
+          for (const p of result.pagesCreated) writtenAll.push(p.slug)
+          for (const g of result.gapsSurfaced) {
+            useReviewStore.getState().addItem({
+              type: "suggestion",
+              title: g.topic,
+              description: g.reason ?? "",
+              affectedPages: [item.page],
+              options: [
+                { label: t("lint.openEdit"), action: `open:${item.page}` },
+                { label: t("review.skip", { defaultValue: "Skip" }), action: "Skip" },
+              ],
+            })
+          }
+          useLintStore.getState().removeItem(item.id)
+          succeeded += 1
+        } catch (err) {
+          failed += 1
+          console.error("[bulk-fix] item failed", item.id, err)
+        }
+        done += 1
+        activity.updateItem(activityId, {
+          detail: `${done} / ${broken.length} (${succeeded} ok · ${failed} failed)`,
+        })
+      }
+      activity.updateItem(activityId, {
+        status: "done",
+        detail:
+          `Done. ${succeeded}/${broken.length} succeeded, ${failed} failed` +
+          (bulkAbortRef.current?.aborted ? " (stopped)" : ""),
+        filesWritten: writtenAll,
+      })
+      const pp = normalizePath(project.path)
+      const tree = await listDirectory(pp)
+      setFileTree(tree)
+      bumpDataVersion()
+    } finally {
+      setFixingId(null)
+      setBulkRunning(false)
+      bulkAbortRef.current = null
+    }
+  }
+
+  function stopBulkFix() {
+    if (bulkAbortRef.current) bulkAbortRef.current.aborted = true
+  }
+
   async function handleDeleteOrphan(item: LintItem) {
     if (!project) return
     const pp = normalizePath(project.path)
@@ -358,6 +457,34 @@ export function LintView() {
             <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${running ? "animate-spin" : ""}`} />
             {running ? t("lint.running") : t("lint.runLint")}
           </Button>
+          {/* Bulk-fix button. Shown only when the AI lint-fix Labs flag
+              is on, an LLM is configured, and at least one broken-link
+              row exists. Sequential runs so concurrent agents don't
+              clobber the same wiki pages — and so the user can Stop
+              mid-batch from the same control. */}
+          {useWikiStore.getState().experimentalAiLintFix &&
+            hasUsableLlm(llmConfig) &&
+            items.some((i) => i.type === "broken-link") && (
+              <Button
+                size="sm"
+                variant={bulkRunning ? "destructive" : "outline"}
+                onClick={bulkRunning ? stopBulkFix : handleBulkFixBroken}
+                disabled={running || !project}
+                title={t("lint.bulkFixBrokenTitle", {
+                  defaultValue:
+                    "Run AI fix on all broken-link items in sequence. Click again to stop.",
+                })}
+              >
+                {bulkRunning
+                  ? t("lint.bulkFixStop", { defaultValue: "Stop bulk fix" })
+                  : t("lint.bulkFixBroken", {
+                      defaultValue: `🤖 Fix all broken links (${
+                        items.filter((i) => i.type === "broken-link").length
+                      })`,
+                      count: items.filter((i) => i.type === "broken-link").length,
+                    })}
+              </Button>
+            )}
         </div>
       </div>
 
@@ -463,7 +590,18 @@ function LintCard({
           }`}
         />
         <div className="flex-1 min-w-0">
-          <div className="font-medium truncate">{item.page}</div>
+          <div className="flex items-center gap-1.5 font-medium">
+            <span className="truncate">{item.page}</span>
+            {/* Quick-scan badge for dedup-grouped findings. The full
+                source list shows below as clickable chips; this badge
+                just makes the "N rows collapsed to 1" signal visible
+                at a glance from the row header. */}
+            {item.affectedPages && item.affectedPages.length > 1 && (
+              <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                × {item.affectedPages.length}
+              </span>
+            )}
+          </div>
           <div className="text-[11px] text-muted-foreground">{config.label}</div>
         </div>
       </div>

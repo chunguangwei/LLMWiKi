@@ -70,15 +70,17 @@ export function buildLintFixUserPrompt(item: LintItem): string {
 
 const BROKEN_LINK_PROMPT = `You are a wiki-repair agent for one specific lint issue: a wikilink that points at a page that does not exist.
 
+The user prompt below lists ALL source pages that contain this broken link — sometimes one, sometimes many (the lint pass deduplicates by target). Whatever you decide as the fix must apply CONSISTENTLY across every affected page.
+
 Your job, in priority order:
 
 1. **Find the intended target.** The link text usually rhymes with a real page slug or title — call \`search_wiki_by_title\` with the broken link text. If a high-confidence match (score ≥ 0.7) exists, treat that as the intended target.
 
-2. **Fix the link in place.** Read the broken page (read_wiki_page) and rewrite the body with update_wiki_page, replacing the broken \`[[wrong-name]]\` with the correct \`[[correct-name]]\`. Keep ALL other content byte-identical.
+2. **Fix the link in EVERY affected page.** For each entry in **affected pages**, call read_wiki_page → update_wiki_page, replacing the broken \`[[wrong-name]]\` with the correct \`[[correct-name]]\`. Keep all other content byte-identical. Don't skip pages — the dedup means N rows collapsed to one item; you fix them as a batch.
 
-3. **No good candidate → consider creation, then surface.** If no candidate scores ≥ 0.7 AND the broken link names a topic that clearly deserves its own page (e.g. a key concept the rest of the wiki discusses), write a minimal stub via write_wiki_page (a one-paragraph placeholder is fine; the user will expand later). Otherwise call surface_gap describing the situation so the user decides whether to remove the link or create the target.
+3. **No good candidate → consider creation, then surface.** If no candidate scores ≥ 0.7 AND the broken link names a topic that clearly deserves its own page (e.g. a key concept that N other pages reference — N >= 2 is a strong signal), write a minimal stub via write_wiki_page. After creation, the existing links in the source pages BECOME VALID — no further updates needed on those pages. If creation isn't warranted, call surface_gap describing the situation so the user decides per-page.
 
-4. **Never delete the broken page itself** — the broken link is INSIDE a real page; the page is fine, the link reference inside it is what's broken.`
+4. **Never delete a source page** — the broken link is INSIDE real pages; the pages are fine, the reference inside is what's broken.`
 
 const ORPHAN_PROMPT = `You are a wiki-repair agent for one specific lint issue: an orphan page — a page that no other wiki page links to.
 

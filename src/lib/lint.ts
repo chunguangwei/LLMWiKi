@@ -113,6 +113,21 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
 
   const results: LintResult[] = []
 
+  // Broken links are GROUPED by target: a single missing target page
+  // referenced from N source pages produces ONE lint item, with
+  // `affectedPages` carrying the source list. Without this grouping,
+  // a popular missing page (e.g. `[[领导梯队模型]]` referenced from
+  // 7 different reports) generates 7 lint rows — readable as "the
+  // same problem 7 times" — which floods the Lint view and makes
+  // bulk AI fix expensive (each row would launch a separate agent
+  // run repeating the same diagnosis).
+  //
+  // Key = the LOWERCASED link text the user typed. We dedupe on this
+  // so case-variant references to the same name (`[[Foo]]` and
+  // `[[foo]]`) collapse, but keep the FIRST-seen original casing in
+  // `target` so the lint row reads like the wiki.
+  const brokenByTarget = new Map<string, { target: string; pages: Set<string> }>()
+
   for (const p of pages) {
     const shortName = getRelativePath(p.path, wikiRoot)
 
@@ -137,20 +152,39 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
       })
     }
 
-    // Broken links — case-insensitive matching.
+    // Broken links — case-insensitive matching. Accumulated into the
+    // by-target map; emitted once below.
     for (const link of p.outlinks) {
       const lookup = link.toLowerCase()
       const basename = getFileName(link).replace(/\.md$/, "").toLowerCase()
       const exists = slugMap.has(lookup) || slugMap.has(basename)
-      if (!exists) {
-        results.push({
-          type: "broken-link",
-          severity: "warning",
-          page: shortName,
-          detail: `Broken link: [[${link}]] — target page not found.`,
-        })
-      }
+      if (exists) continue
+      const key = lookup
+      const entry = brokenByTarget.get(key) ?? { target: link, pages: new Set<string>() }
+      entry.pages.add(shortName)
+      brokenByTarget.set(key, entry)
     }
+  }
+
+  // Emit one broken-link row per missing target. Sort the affected-
+  // pages list so the output is stable across runs (the input page
+  // order depends on the OS's directory enumeration, which isn't).
+  for (const { target, pages: sourcePages } of brokenByTarget.values()) {
+    const pageList = Array.from(sourcePages).sort()
+    const detail =
+      pageList.length === 1
+        ? `Broken link: [[${target}]] — target page not found.`
+        : `Broken link: [[${target}]] — target page not found, referenced from ${pageList.length} pages.`
+    results.push({
+      type: "broken-link",
+      severity: "warning",
+      // `page` is the "primary" row anchor (first affected source);
+      // the full list lives in affectedPages. UI shows page first
+      // then expands to the rest.
+      page: pageList[0],
+      detail,
+      ...(pageList.length > 1 ? { affectedPages: pageList } : {}),
+    })
   }
 
   return results
