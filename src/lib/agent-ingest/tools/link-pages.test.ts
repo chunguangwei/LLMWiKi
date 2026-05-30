@@ -43,6 +43,7 @@ function mockCtx(opts: {
       }
       return { kind: "linked", from_was_new }
     },
+    deletePage: async () => ({ kind: "validation_failed", detail: "mock" }),
   }
   return {
     chunks: new Map(),

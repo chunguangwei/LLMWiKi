@@ -25,6 +25,7 @@ function mockCtx(opts: { chunks: SourceChunk[]; aborted?: boolean }) {
       writePage: async () => ({ kind: "validation_failed", detail: "mock" }),
       updatePage: async () => ({ kind: "validation_failed", detail: "mock" }),
       linkPages: async () => ({ kind: "validation_failed", detail: "mock" }),
+      deletePage: async () => ({ kind: "validation_failed", detail: "mock" }),
     },
     llmConfig: {} as AgentContext["llmConfig"],
     signal: controller.signal,

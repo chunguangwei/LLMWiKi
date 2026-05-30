@@ -164,6 +164,7 @@ export async function loadApiConfig(): Promise<ApiConfig | null> {
  * own boolean key, missing = default off.
  */
 const AGENT_INGEST_FLAG_KEY = "experimentalAgentIngest"
+const AI_LINT_FIX_FLAG_KEY = "experimentalAiLintFix"
 
 export async function saveExperimentalAgentIngest(enabled: boolean): Promise<void> {
   const store = await getStore()
@@ -173,6 +174,16 @@ export async function saveExperimentalAgentIngest(enabled: boolean): Promise<voi
 export async function loadExperimentalAgentIngest(): Promise<boolean> {
   const store = await getStore()
   return (await store.get<boolean>(AGENT_INGEST_FLAG_KEY)) ?? false
+}
+
+export async function saveExperimentalAiLintFix(enabled: boolean): Promise<void> {
+  const store = await getStore()
+  await store.set(AI_LINT_FIX_FLAG_KEY, enabled)
+}
+
+export async function loadExperimentalAiLintFix(): Promise<boolean> {
+  const store = await getStore()
+  return (await store.get<boolean>(AI_LINT_FIX_FLAG_KEY)) ?? false
 }
 
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"

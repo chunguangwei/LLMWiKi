@@ -54,7 +54,9 @@ describe("toolSchemasForLlm", () => {
     }
   })
 
-  it("includes all 11 Phase A tools", () => {
+  it("includes all 13 tools in catalogue order", () => {
+    // 11 from agent-ingest Phase A/E + 2 from agent-lint-fix Phase G1
+    // (search_wiki_by_title + delete_wiki_page).
     const names = toolSchemasForLlm().map((s) => s.name)
     expect(names).toEqual([
       "read_outline",
@@ -62,11 +64,13 @@ describe("toolSchemasForLlm", () => {
       "search_source",
       "list_wiki_pages",
       "read_wiki_page",
+      "search_wiki_by_title",
       "mark_section_covered",
       "surface_gap",
       "write_wiki_page",
       "update_wiki_page",
       "link_pages",
+      "delete_wiki_page",
       "done",
     ])
   })

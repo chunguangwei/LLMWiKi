@@ -68,6 +68,7 @@ function buildCtx(opts: {
       writePage: async () => ({ kind: "validation_failed", detail: "mock" }),
       updatePage: async () => ({ kind: "validation_failed", detail: "mock" }),
       linkPages: async () => ({ kind: "validation_failed", detail: "mock" }),
+      deletePage: async () => ({ kind: "validation_failed", detail: "mock" }),
     },
     llmConfig: {} as AgentContext["llmConfig"],
     signal: new AbortController().signal,

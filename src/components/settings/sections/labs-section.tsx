@@ -1,6 +1,9 @@
 import { useTranslation } from "react-i18next"
 import { useWikiStore } from "@/stores/wiki-store"
-import { saveExperimentalAgentIngest } from "@/lib/project-store"
+import {
+  saveExperimentalAgentIngest,
+  saveExperimentalAiLintFix,
+} from "@/lib/project-store"
 
 /**
  * Labs / experimental features.
@@ -20,6 +23,8 @@ export function LabsSection() {
   const { t } = useTranslation()
   const agentIngest = useWikiStore((s) => s.experimentalAgentIngest)
   const setAgentIngest = useWikiStore((s) => s.setExperimentalAgentIngest)
+  const aiLintFix = useWikiStore((s) => s.experimentalAiLintFix)
+  const setAiLintFix = useWikiStore((s) => s.setExperimentalAiLintFix)
 
   function toggleAgentIngest() {
     const next = !agentIngest
@@ -29,6 +34,14 @@ export function LabsSection() {
     // and the next reload will silently fall back to default off
     // (which is fine for an opt-in feature).
     saveExperimentalAgentIngest(next).catch((err) =>
+      console.warn("[labs] save failed:", err),
+    )
+  }
+
+  function toggleAiLintFix() {
+    const next = !aiLintFix
+    setAiLintFix(next)
+    saveExperimentalAiLintFix(next).catch((err) =>
       console.warn("[labs] save failed:", err),
     )
   }
@@ -99,6 +112,62 @@ export function LabsSection() {
             <span
               className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
                 agentIngest ? "translate-x-4.5" : "translate-x-0.5"
+              }`}
+            />
+          </span>
+        </button>
+      </div>
+
+      {/* AI lint fix toggle. Same emerald accent as agent-ingest above. */}
+      <div
+        className={`flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
+          aiLintFix
+            ? "border-emerald-500/60 bg-emerald-500/10 dark:border-emerald-400/50 dark:bg-emerald-400/10"
+            : "border-border bg-background"
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">
+            {t("settings.sections.labs.aiLintFixLabel", {
+              defaultValue: "AI lint fix (experimental)",
+            })}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {t("settings.sections.labs.aiLintFixHint", {
+              defaultValue:
+                "Replaces the lint Fix button's hardcoded actions (orphan → append to index.md, broken-link → push to Review) with an LLM mini-agent that decides per-item how to repair the wiki — fixing the link, cross-linking the orphan to topic-adjacent pages, adding wikilinks to a no-outlinks page. Costs LLM tokens per click; falls back to classic fix if the agent fails.",
+            })}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={toggleAiLintFix}
+          role="switch"
+          aria-checked={aiLintFix}
+          aria-label={t("settings.sections.labs.aiLintFixLabel", {
+            defaultValue: "AI lint fix (experimental)",
+          })}
+          className="ml-3 flex shrink-0 items-center gap-2"
+        >
+          <span
+            className={`text-xs font-semibold ${
+              aiLintFix
+                ? "text-emerald-700 dark:text-emerald-300"
+                : "text-muted-foreground"
+            }`}
+          >
+            {aiLintFix
+              ? t("settings.sections.labs.stateOn", { defaultValue: "ON" })
+              : t("settings.sections.labs.stateOff", { defaultValue: "OFF" })}
+          </span>
+          <span
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+              aiLintFix ? "bg-emerald-500 dark:bg-emerald-400" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                aiLintFix ? "translate-x-4.5" : "translate-x-0.5"
               }`}
             />
           </span>

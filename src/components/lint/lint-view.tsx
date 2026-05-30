@@ -16,7 +16,9 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore, type LintItem } from "@/stores/lint-store"
 import { runStructuralLint, runSemanticLint } from "@/lib/lint"
+import { runLintFix } from "@/lib/agent-lint-fix"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { useActivityStore } from "@/stores/activity-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { useTranslation } from "react-i18next"
@@ -119,6 +121,99 @@ export function LintView() {
     if (!project) return
     const pp = normalizePath(project.path)
     setFixingId(item.id)
+
+    // AI lint-fix path. Gated on the Labs flag + a usable LLM config —
+    // missing config silently falls through to the classic per-type
+    // handler below so the button stays useful in offline mode. We
+    // also fall through on any runLintFix error so a flaky model
+    // doesn't strand the user with a broken Fix button.
+    const aiEnabled = useWikiStore.getState().experimentalAiLintFix
+    if (aiEnabled && hasUsableLlm(llmConfig) && item.type !== "semantic") {
+      const activity = useActivityStore.getState()
+      const activityId = activity.addItem({
+        type: "lint",
+        title: `🤖 AI fix: ${item.page} (${item.type})`,
+        status: "running",
+        detail: item.detail,
+        filesWritten: [],
+      })
+      try {
+        const result = await runLintFix({
+          item,
+          project,
+          llmConfig,
+          onTurn: (turn, tokens) =>
+            activity.updateItem(activityId, {
+              detail: `Turn ${turn + 1} · ${Math.round(tokens / 1000)}k tokens`,
+            }),
+        })
+        const lines = [
+          result.reason,
+          `Turns: ${result.turnsUsed} · tokens: ${Math.round(result.tokensSpent / 1000)}k`,
+          result.pagesUpdated.length > 0
+            ? `Updated: ${result.pagesUpdated.map((p) => p.slug).join(", ")}`
+            : "",
+          result.pagesCreated.length > 0
+            ? `Created: ${result.pagesCreated.map((p) => p.slug).join(", ")}`
+            : "",
+          result.pagesDeleted.length > 0
+            ? `Deleted: ${result.pagesDeleted.map((p) => `${p.slug} (${p.reason})`).join(", ")}`
+            : "",
+          result.gapsSurfaced.length > 0
+            ? `Surfaced gaps: ${result.gapsSurfaced.length} (see Review)`
+            : "",
+        ].filter(Boolean)
+        activity.updateItem(activityId, {
+          status: "done",
+          detail: lines.join("\n"),
+          filesWritten: [
+            ...result.pagesUpdated.map((p) => p.slug),
+            ...result.pagesCreated.map((p) => p.slug),
+          ],
+        })
+        // Push gaps to Review so the user can decide on each. Each gap
+        // gets both "Open page" (so the user can act on it manually
+        // — the agent's surface_gap is a "needs human attention"
+        // signal, not a dead end) and "Skip" (dismiss). The page
+        // path is the original lint item's page since that's the
+        // thing the agent was investigating; if the gap is about a
+        // related page, the user can still open it from the file
+        // tree.
+        for (const g of result.gapsSurfaced) {
+          useReviewStore.getState().addItem({
+            type: "suggestion",
+            title: g.topic,
+            description: g.reason ?? "",
+            affectedPages: [item.page],
+            options: [
+              { label: t("lint.openEdit"), action: `open:${item.page}` },
+              { label: t("review.skip", { defaultValue: "Skip" }), action: "Skip" },
+            ],
+          })
+        }
+        useLintStore.getState().removeItem(item.id)
+        // Refresh tree + bump data version.
+        const tree = await listDirectory(pp)
+        setFileTree(tree)
+        bumpDataVersion()
+        // Release the per-item "fixing" lock before the early return.
+        // The outer `finally { setFixingId(null) }` below ONLY fires
+        // when we fall through to the classic handler; bailing here
+        // without resetting would leave the button stuck disabled
+        // after a successful AI fix until the next render reseeds the
+        // state. Discovered during self-review.
+        setFixingId(null)
+        return
+      } catch (err) {
+        activity.updateItem(activityId, {
+          status: "error",
+          detail: `AI fix failed (falling back to classic): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        })
+        // Fall through to the classic handler below.
+      }
+    }
 
     try {
       switch (item.type) {
