@@ -157,6 +157,24 @@ export async function loadApiConfig(): Promise<ApiConfig | null> {
   return (await store.get<ApiConfig>(API_CONFIG_KEY)) ?? null
 }
 
+/**
+ * Labs / experimental flags. Currently just the agent-ingest toggle
+ * — kept as its own key (not bundled into a generic experimentalConfig
+ * object) so future toggles can land without a migration: each is its
+ * own boolean key, missing = default off.
+ */
+const AGENT_INGEST_FLAG_KEY = "experimentalAgentIngest"
+
+export async function saveExperimentalAgentIngest(enabled: boolean): Promise<void> {
+  const store = await getStore()
+  await store.set(AGENT_INGEST_FLAG_KEY, enabled)
+}
+
+export async function loadExperimentalAgentIngest(): Promise<boolean> {
+  const store = await getStore()
+  return (await store.get<boolean>(AGENT_INGEST_FLAG_KEY)) ?? false
+}
+
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"
 
 function scheduledImportKey(projectPath: string): string {
