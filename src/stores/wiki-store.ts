@@ -285,6 +285,16 @@ interface WikiState {
   scheduledImportConfig: ScheduledImportConfig
   sourceWatchConfig: SourceWatchConfig
   apiConfig: ApiConfig
+  /**
+   * **Labs / experimental** — turn on the 🤖 agent-ingest button on
+   * source files. Off by default in v0.4.23 because the pipeline is
+   * not yet validated on real long sources; users who opt in are
+   * implicitly volunteering for Phase F. See
+   * `docs/agent-ingest-design.md` for the architecture.
+   *
+   * Persisted via `saveExperimentalConfig` (project-store.ts).
+   */
+  experimentalAgentIngest: boolean
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -305,6 +315,7 @@ interface WikiState {
   setScheduledImportConfig: (config: ScheduledImportConfig) => void
   setSourceWatchConfig: (config: SourceWatchConfig) => void
   setApiConfig: (config: ApiConfig) => void
+  setExperimentalAgentIngest: (enabled: boolean) => void
   bumpDataVersion: () => void
 }
 
@@ -400,6 +411,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     token: "",
   },
 
+  experimentalAgentIngest: false,
+
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
   setActivePresetId: (activePresetId) => set({ activePresetId }),
@@ -411,6 +424,8 @@ export const useWikiStore = create<WikiState>((set) => ({
   setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
   setApiConfig: (apiConfig) => set({ apiConfig }),
+  setExperimentalAgentIngest: (experimentalAgentIngest) =>
+    set({ experimentalAgentIngest }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 

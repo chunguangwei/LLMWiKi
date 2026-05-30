@@ -256,6 +256,7 @@
       "llm": "LLM Models",
       "embedding": "Embeddings",
       "multimodal": "Vision / Image OCR",
+      "labs": "Labs (Experimental)",
       "webSearch": "Web Search",
       "network": "Network",
       "sourceWatch": "Source Watch",

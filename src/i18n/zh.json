@@ -259,6 +259,7 @@
       "llm": "LLM 模型",
       "embedding": "向量嵌入",
       "multimodal": "视觉 / 图片识别",
+      "labs": "实验室（Labs）",
       "webSearch": "网页搜索",
       "network": "网络",
       "sourceWatch": "资料文件夹监控",

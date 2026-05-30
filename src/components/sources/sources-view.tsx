@@ -43,6 +43,7 @@ export function SourcesView() {
   const [agentRunningPath, setAgentRunningPath] = useState<string | null>(null)
   const [reingestingAll, setReingestingAll] = useState(false)
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
+  const experimentalAgentIngest = useWikiStore((s) => s.experimentalAgentIngest)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   /**
@@ -603,7 +604,7 @@ export function SourcesView() {
               nodes={sources}
               onOpen={handleOpenSource}
               onIngest={handleIngest}
-              onAgentIngest={handleAgentIngest}
+              onAgentIngest={experimentalAgentIngest ? handleAgentIngest : undefined}
               agentRunningPath={agentRunningPath}
               onDelete={handleDelete}
               onDeleteFolder={handleDeleteFolder}
@@ -709,7 +710,9 @@ function SourceTree({
   nodes: FileNode[]
   onOpen: (node: FileNode) => void
   onIngest: (node: FileNode) => void
-  onAgentIngest: (node: FileNode) => void
+  /** Optional — when undefined the 🤖 button is hidden. Gated behind
+   *  the Labs `experimentalAgentIngest` flag in v0.4.23. */
+  onAgentIngest?: (node: FileNode) => void
   onDelete: (node: FileNode) => void
   onDeleteFolder: (node: FileNode) => void
   /** Path of the node currently in "click again to confirm" state.
@@ -840,25 +843,27 @@ function SourceTree({
             >
               <Wand2 className={`h-4 w-4 ${ingestingPath === node.path ? "animate-pulse" : ""}`} />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 shrink-0"
-              title={t("sources.agentIngest", {
-                defaultValue:
-                  "🤖 Agent ingest (experimental) — multi-turn LLM agent reads the source and writes wiki pages. Uses more tokens than classic ingest; quality not yet validated on real long docs.",
-              })}
-              disabled={agentRunningPath === node.path || agentRunningPath !== null}
-              onClick={() => onAgentIngest(node)}
-            >
-              <Bot
-                className={`h-4 w-4 ${
-                  agentRunningPath === node.path
-                    ? "animate-pulse text-emerald-600 dark:text-emerald-400"
-                    : "text-emerald-600/70 dark:text-emerald-400/70"
-                }`}
-              />
-            </Button>
+            {onAgentIngest && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0"
+                title={t("sources.agentIngest", {
+                  defaultValue:
+                    "🤖 Agent ingest (experimental) — multi-turn LLM agent reads the source and writes wiki pages. Uses more tokens than classic ingest; quality not yet validated on real long docs.",
+                })}
+                disabled={agentRunningPath === node.path || agentRunningPath !== null}
+                onClick={() => onAgentIngest(node)}
+              >
+                <Bot
+                  className={`h-4 w-4 ${
+                    agentRunningPath === node.path
+                      ? "animate-pulse text-emerald-600 dark:text-emerald-400"
+                      : "text-emerald-600/70 dark:text-emerald-400/70"
+                  }`}
+                />
+              </Button>
+            )}
             <DeleteButton
               isPending={isPendingDelete}
               onClick={() => handleDeleteClick(node)}

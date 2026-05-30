@@ -19,6 +19,7 @@ import {
   Server,
   Sparkles,
   ShieldCheck,
+  FlaskConical,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -33,6 +34,7 @@ import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
 import { MultimodalSection } from "./sections/multimodal-section"
+import { LabsSection } from "./sections/labs-section"
 import { WebSearchSection } from "./sections/web-search-section"
 import { OutputSection } from "./sections/output-section"
 import { InterfaceSection } from "./sections/interface-section"
@@ -68,6 +70,7 @@ type CategoryId =
   | "user-manual"
   | "schema-upgrade"
   | "config-backup"
+  | "labs"
   | "changelog"
   | "about"
 
@@ -98,6 +101,7 @@ const CATEGORIES: Category[] = [
   { id: "user-manual", labelKey: "settings.categories.userManual", icon: BookOpen },
   { id: "schema-upgrade", labelKey: "settings.categories.schemaUpgrade", icon: Sparkles },
   { id: "config-backup", labelKey: "settings.categories.configBackup", icon: ShieldCheck },
+  { id: "labs", labelKey: "settings.categories.labs", icon: FlaskConical },
   { id: "changelog", labelKey: "settings.categories.changelog", icon: History },
   { id: "about", labelKey: "settings.categories.about", icon: Info },
 ]
@@ -474,6 +478,8 @@ export function SettingsView() {
         return <SchemaUpgradeSection />
       case "config-backup":
         return <ConfigBackupSection />
+      case "labs":
+        return <LabsSection />
       case "changelog":
         return <ChangelogSection />
       case "about":
