@@ -22,13 +22,62 @@
 import type { ToolSchema } from "./llm-interface"
 import { TOOLS } from "./tools"
 
-export function toolSchemasForLlm(): ToolSchema[] {
-  return TOOLS.map((t) => ({
+/**
+ * Convert the catalogue into the LLM-facing shape.
+ *
+ * When `filter` is provided, only the named tools are included AND
+ * the original catalogue order is preserved (filter doesn't reorder).
+ * Names in `filter` that don't match any registered tool are silently
+ * ignored — assertSchemasUnique should have caught registration bugs
+ * upstream.
+ *
+ * Use cases for the filter:
+ *
+ *   - agent-ingest: omit filter, ship all tools (default)
+ *   - agent-lint-fix: omit filter, all tools are reachable (the
+ *     prompt narrows the agent's choices)
+ *   - chat-agent: pass `getChatAgentToolNames()` so the LLM only
+ *     sees web/wiki tools, not source-chunk / coverage tools that
+ *     have no chunks to operate on
+ */
+export function toolSchemasForLlm(filter?: readonly string[]): ToolSchema[] {
+  const allow = filter ? new Set(filter) : null
+  return TOOLS.filter((t) => (allow ? allow.has(t.name) : true)).map((t) => ({
     name: t.name,
     description: t.description,
     input_schema: t.inputSchema,
   }))
 }
+
+/**
+ * Catalogue selector for the chat-agent path.
+ *
+ * Chat doesn't have a source document or coverage tracker — so
+ * read_outline / read_chunk / search_source / mark_section_covered
+ * don't apply. write/update/delete/link are also off-limits in chat
+ * to keep wiki mutation a deliberate ingest-time action (the user
+ * has to opt into the agent-ingest path for those). What chat DOES
+ * need:
+ *
+ *   - inspection: list_wiki_pages, read_wiki_page, search_wiki_by_title
+ *   - external: web_fetch, web_search, search_local_files
+ *   - control: done
+ *
+ * Excludes: surface_gap (chat doesn't surface lint items).
+ */
+export function getChatAgentToolNames(): readonly string[] {
+  return CHAT_AGENT_TOOL_NAMES
+}
+
+const CHAT_AGENT_TOOL_NAMES = [
+  "list_wiki_pages",
+  "read_wiki_page",
+  "search_wiki_by_title",
+  "web_fetch",
+  "web_search",
+  "search_local_files",
+  "done",
+] as const
 
 /**
  * Throw if the catalogue contains two tools with the same name.

@@ -7,7 +7,7 @@
  * canonical specification — types here mirror the doc 1:1.
  */
 import type { WikiProject } from "@/types/wiki"
-import type { LlmConfig } from "@/stores/wiki-store"
+import type { LlmConfig, SearchApiConfig } from "@/stores/wiki-store"
 
 /**
  * One smart-split chunk of the source document. The agent navigates
@@ -269,6 +269,14 @@ export interface AgentContext {
   tracker: CoverageTracker
   /** LLM config — used by sub-tasks that need their own LLM call (verify pass, future agents). */
   llmConfig: LlmConfig
+  /**
+   * Web-search provider config — optional because agent-ingest /
+   * agent-lint-fix don't use it. The chat-agent (Phase G2) sets it
+   * so the `web_search` tool can dispatch through whichever provider
+   * the user has configured. When absent, `web_search` returns
+   * structured "no provider configured" instead of crashing.
+   */
+  searchApiConfig?: SearchApiConfig
   /** Abort signal from the loop runner — every tool MUST check this before any IO. */
   signal: AbortSignal
 }
