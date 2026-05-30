@@ -4,6 +4,7 @@ import {
   saveExperimentalAgentIngest,
   saveExperimentalAiLintFix,
   saveExperimentalChatAgent,
+  saveExperimentalChatAgentCanWrite,
 } from "@/lib/project-store"
 
 /**
@@ -27,6 +28,8 @@ export function LabsSection() {
   const aiLintFix = useWikiStore((s) => s.experimentalAiLintFix)
   const setAiLintFix = useWikiStore((s) => s.setExperimentalAiLintFix)
   const chatAgent = useWikiStore((s) => s.experimentalChatAgent)
+  const chatAgentCanWrite = useWikiStore((s) => s.experimentalChatAgentCanWrite)
+  const setChatAgentCanWrite = useWikiStore((s) => s.setExperimentalChatAgentCanWrite)
   const setChatAgent = useWikiStore((s) => s.setExperimentalChatAgent)
 
   function toggleAgentIngest() {
@@ -53,6 +56,26 @@ export function LabsSection() {
     const next = !chatAgent
     setChatAgent(next)
     saveExperimentalChatAgent(next).catch((err) =>
+      console.warn("[labs] save failed:", err),
+    )
+    // Turning off the parent flag also implicitly disables the
+    // write-tool sub-flag in memory + on disk. Avoids a stale state
+    // where chat is back to streaming mode but the agent still
+    // technically has write tools "queued" — which would only matter
+    // if the user re-enables chat-agent later but is easier to reason
+    // about if we just clear both.
+    if (!next && chatAgentCanWrite) {
+      setChatAgentCanWrite(false)
+      saveExperimentalChatAgentCanWrite(false).catch((err) =>
+        console.warn("[labs] save failed:", err),
+      )
+    }
+  }
+
+  function toggleChatAgentCanWrite() {
+    const next = !chatAgentCanWrite
+    setChatAgentCanWrite(next)
+    saveExperimentalChatAgentCanWrite(next).catch((err) =>
       console.warn("[labs] save failed:", err),
     )
   }
@@ -235,6 +258,74 @@ export function LabsSection() {
             <span
               className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
                 chatAgent ? "translate-x-4.5" : "translate-x-0.5"
+              }`}
+            />
+          </span>
+        </button>
+      </div>
+
+      {/* Chat-agent write tools — nested under Chat agent. Visually
+          indented + disabled when the parent flag is off so the
+          dependency is obvious. */}
+      <div
+        className={`ml-6 flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
+          !chatAgent
+            ? "border-dashed border-border bg-muted/20 opacity-60"
+            : chatAgentCanWrite
+              ? "border-emerald-500/60 bg-emerald-500/10 dark:border-emerald-400/50 dark:bg-emerald-400/10"
+              : "border-border bg-background"
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">
+            {t("settings.sections.labs.chatAgentCanWriteLabel", {
+              defaultValue: "Chat agent can write wiki pages (experimental)",
+            })}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {t("settings.sections.labs.chatAgentCanWriteHint", {
+              defaultValue:
+                "Adds write_wiki_page + update_wiki_page to the chat agent's tools. Use this when you want the agent to create / update pages directly from chat (\"save this as a wiki page\", \"update concepts/foo with this\"). The prompt rails it to write ONLY when you explicitly ask. delete + link tools are NOT included — those stay in ingest / lint-fix paths. Requires Chat agent ON.",
+            })}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={toggleChatAgentCanWrite}
+          role="switch"
+          aria-checked={chatAgentCanWrite}
+          disabled={!chatAgent}
+          aria-label={t("settings.sections.labs.chatAgentCanWriteLabel", {
+            defaultValue: "Chat agent can write wiki pages (experimental)",
+          })}
+          className="ml-3 flex shrink-0 items-center gap-2 disabled:cursor-not-allowed"
+          title={
+            !chatAgent
+              ? t("settings.sections.labs.chatAgentCanWriteParentOff", {
+                  defaultValue: "Enable Chat agent first to use this sub-flag.",
+                })
+              : undefined
+          }
+        >
+          <span
+            className={`text-xs font-semibold ${
+              chatAgentCanWrite
+                ? "text-emerald-700 dark:text-emerald-300"
+                : "text-muted-foreground"
+            }`}
+          >
+            {chatAgentCanWrite
+              ? t("settings.sections.labs.stateOn", { defaultValue: "ON" })
+              : t("settings.sections.labs.stateOff", { defaultValue: "OFF" })}
+          </span>
+          <span
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+              chatAgentCanWrite ? "bg-emerald-500 dark:bg-emerald-400" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                chatAgentCanWrite ? "translate-x-4.5" : "translate-x-0.5"
               }`}
             />
           </span>

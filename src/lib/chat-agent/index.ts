@@ -75,6 +75,16 @@ export interface RunChatAgentOpts {
   /** Progress hook fired after each LLM turn. Useful for the UI to show
    *  "thinking… tool X" without re-rendering the entire chat. */
   onTurn?: (turnIndex: number, toolNames: string[]) => void
+  /**
+   * When true, the agent's tool catalogue includes write_wiki_page +
+   * update_wiki_page in addition to the read-only set. Gated by the
+   * `experimentalChatAgentCanWrite` Labs sub-flag at the caller.
+   * The system prompt teaches the agent to use these tools ONLY when
+   * the user explicitly asks for a wiki mutation. delete_wiki_page
+   * and link_pages are NOT included — those stay in agent-ingest /
+   * agent-lint-fix where the workflow context is clearer.
+   */
+  canWrite?: boolean
 }
 
 export interface ChatAgentResult {
@@ -137,6 +147,7 @@ export async function runChatAgent(opts: RunChatAgentOpts): Promise<ChatAgentRes
     hasSearchProvider,
     outputLanguage: opts.outputLanguage,
     today: todayIsoDate(),
+    canWrite: opts.canWrite === true,
   })
 
   // Recent exchange — last N messages from this conversation, role +
@@ -160,7 +171,7 @@ export async function runChatAgent(opts: RunChatAgentOpts): Promise<ChatAgentRes
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ],
-    tools: toolSchemasForLlm(getChatAgentToolNames()),
+    tools: toolSchemasForLlm(getChatAgentToolNames({ canWrite: opts.canWrite === true })),
     maxTurns: opts.maxTurns ?? DEFAULT_MAX_TURNS,
     maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
     onTurn: opts.onTurn

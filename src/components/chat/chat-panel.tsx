@@ -679,6 +679,11 @@ export function ChatPanel() {
           const outputLanguage = useWikiStore.getState().outputLanguage
           const allMessages = useChatStore.getState().messages
           const history = allMessages.filter((m) => m.conversationId === convId)
+          // canWrite sub-flag: when on, runChatAgent exposes
+          // write_wiki_page + update_wiki_page to the LLM. The prompt
+          // teaches the agent to use those tools only when the user
+          // explicitly asks for a wiki mutation.
+          const canWrite = useWikiStore.getState().experimentalChatAgentCanWrite
           const result = await runChatAgent({
             userMessage: text,
             history: history.slice(0, -1),  // exclude the user message we just added
@@ -687,6 +692,7 @@ export function ChatPanel() {
             searchApiConfig,
             outputLanguage,
             signal: controller.signal,
+            canWrite,
           })
           addAssistantTurn(result.text || `_(${result.reason})_`, {
             toolCalls: result.toolCalls,

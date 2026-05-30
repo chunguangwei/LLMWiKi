@@ -319,6 +319,22 @@ interface WikiState {
    * Persisted via `saveExperimentalChatAgent` (project-store.ts).
    */
   experimentalChatAgent: boolean
+  /**
+   * **Labs / experimental — REQUIRES `experimentalChatAgent`**.
+   *
+   * When set, the chat-agent tool catalogue includes write_wiki_page
+   * and update_wiki_page in addition to the read-only set. This lets
+   * the agent directly write to the wiki on the user's behalf
+   * ("create a page about X", "update concepts/foo with this"). The
+   * system prompt instructs the agent to use these tools ONLY when
+   * the user explicitly asks for a wiki mutation — pure-answer
+   * questions still get plain text replies.
+   *
+   * Deliberately omits delete_wiki_page and link_pages — those are
+   * higher-blast-radius and should stay in agent-ingest / agent-lint-fix
+   * mode for now. Off by default.
+   */
+  experimentalChatAgentCanWrite: boolean
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -342,6 +358,7 @@ interface WikiState {
   setExperimentalAgentIngest: (enabled: boolean) => void
   setExperimentalAiLintFix: (enabled: boolean) => void
   setExperimentalChatAgent: (enabled: boolean) => void
+  setExperimentalChatAgentCanWrite: (enabled: boolean) => void
   bumpDataVersion: () => void
 }
 
@@ -440,6 +457,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   experimentalAgentIngest: false,
   experimentalAiLintFix: false,
   experimentalChatAgent: false,
+  experimentalChatAgentCanWrite: false,
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
@@ -458,6 +476,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     set({ experimentalAiLintFix }),
   setExperimentalChatAgent: (experimentalChatAgent) =>
     set({ experimentalChatAgent }),
+  setExperimentalChatAgentCanWrite: (experimentalChatAgentCanWrite) =>
+    set({ experimentalChatAgentCanWrite }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
