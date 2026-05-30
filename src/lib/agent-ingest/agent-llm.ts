@@ -235,7 +235,16 @@ function pickAnthropicBase(config: LlmConfig): string {
   if (config.provider === "minimax") {
     return config.customEndpoint || "https://api.minimax.io/anthropic"
   }
-  // custom with apiMode=anthropic_messages
+  // custom with apiMode=anthropic_messages. Guard at createAgentLlm
+  // already rejects an empty customEndpoint, so this is just a
+  // defence-in-depth assertion against a code path that bypasses
+  // the factory.
+  if (!config.customEndpoint) {
+    throw new Error(
+      'agent ingest: provider="custom" with apiMode="anthropic_messages" requires ' +
+        "customEndpoint to be set. Open Settings → LLM and fill in the endpoint URL.",
+    )
+  }
   return config.customEndpoint
 }
 
@@ -543,7 +552,24 @@ export function createAgentLlm(config: LlmConfig): AgentLlm {
     return new AnthropicAgentLlm(config)
   }
   if (provider === "custom" && config.apiMode === "anthropic_messages") {
+    // Fail fast with a clear, user-fixable message instead of letting
+    // the first HTTP request hit an empty URL and surface as
+    // "fetch failed" / "invalid URL". Same guard for Azure-shape
+    // custom is in pickOpenAiUrl's downstream callers.
+    if (!config.customEndpoint || config.customEndpoint.trim().length === 0) {
+      throw new Error(
+        'agent ingest: provider="custom" with apiMode="anthropic_messages" ' +
+          "requires customEndpoint to be set. Open Settings → LLM and fill " +
+          "in the Anthropic-compatible endpoint URL.",
+      )
+    }
     return new AnthropicAgentLlm(config)
+  }
+  if (provider === "custom" && (!config.customEndpoint || config.customEndpoint.trim().length === 0)) {
+    throw new Error(
+      'agent ingest: provider="custom" requires customEndpoint to be set. ' +
+        "Open Settings → LLM and fill in the endpoint URL.",
+    )
   }
   if (
     provider === "openai" ||

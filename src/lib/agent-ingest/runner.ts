@@ -68,8 +68,15 @@ export interface RunAgentLoopOpts {
   tools: ToolSchema[]
   /** Hard cap on loop turns. Default 50. */
   maxTurns?: number
-  /** Hard cap on total tokens (input + output across all turns).
-   *  Default 200_000. */
+  /**
+   * Hard cap on cumulative BILLED tokens across every turn — i.e.
+   * the same number the LLM provider charges for. Each turn's
+   * `usage.input_tokens` counts the FULL conversation re-sent that
+   * turn, so a 20-turn loop with a 5K system prompt + growing
+   * transcript easily reaches 100K+ even though the unique-content
+   * size is far smaller. Treat this as a money/quota ceiling, not
+   * a "conversation capacity" budget. Default 200_000.
+   */
   maxTokens?: number
   /** Hook fired after each turn — useful for tests / activity-panel
    *  progress. */

@@ -303,4 +303,15 @@ export interface AgentIngestResult {
    * "user aborted", ...).
    */
   reason: string
+  /**
+   * Set to a non-null message when the FINAL checkpoint save (after a
+   * partial run that didn't reach `done`) failed. Mid-loop saves are
+   * fire-and-forget on purpose — they retry next turn — but the final
+   * save is the only one the user gets for a partial run. A failure
+   * here means resume won't work; the activity panel surfaces this so
+   * the user can re-run rather than silently losing progress.
+   * `null` means either: the run completed normally (no checkpoint
+   * needed), or the final save succeeded.
+   */
+  finalCheckpointError?: string | null
 }

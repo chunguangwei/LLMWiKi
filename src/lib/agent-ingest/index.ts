@@ -57,7 +57,13 @@ export interface RunAgentIngestOpts {
   project: WikiProject
   llmConfig: LlmConfig
   signal?: AbortSignal
-  /** Token budget across all turns. Defaults to 200_000. */
+  /**
+   * Cumulative BILLED-tokens budget across the whole run. Each turn
+   * re-sends the growing conversation, so this is "total tokens the
+   * provider charges for", NOT "max conversation size". Defaults to
+   * 200_000 — enough for a moderate source on a verbose model; bump
+   * for long sources or chatty agents. See runner.ts for full notes.
+   */
   maxTokens?: number
   /** Hard cap on turns. Defaults to 50. */
   maxTurns?: number
@@ -93,14 +99,42 @@ export async function runAgentIngest(
   //    disk for this exact sourceHash — sourceHash invalidation
   //    handled inside loadCheckpoint (re-edited source returns
   //    null and we start fresh).
+  //
+  //    isCheckpoint() in checkpoint.ts is a SHALLOW shape guard —
+  //    it doesn't verify the tracker snapshot's inner shape. A
+  //    malformed `tracker: {}` (e.g. a future version's checkpoint
+  //    that loadCheckpoint failed to filter, or a hand-edited file)
+  //    would crash fromSnapshot here. Wrap defensively: log + start
+  //    fresh on throw. We also drop the resumed message history in
+  //    that case — the tracker is the source of truth for "what's
+  //    been done", and resuming the transcript without that context
+  //    just makes the LLM redo work it already paid for.
   const checkpoint = await loadCheckpoint(projectPath, preprocessed.sourceHash)
-  const tracker = checkpoint
-    ? InMemoryCoverageTracker.fromSnapshot(checkpoint.tracker)
-    : new InMemoryCoverageTracker(
+  let tracker: InMemoryCoverageTracker
+  let resumedFromCheckpoint = false
+  if (checkpoint) {
+    try {
+      tracker = InMemoryCoverageTracker.fromSnapshot(checkpoint.tracker)
+      resumedFromCheckpoint = true
+    } catch (err) {
+      console.warn(
+        `[agent-ingest] checkpoint tracker malformed (${
+          err instanceof Error ? err.message : String(err)
+        }); starting fresh`,
+      )
+      tracker = new InMemoryCoverageTracker(
         opts.sourcePath,
         preprocessed.sourceHash,
         preprocessed.chunkList.length,
       )
+    }
+  } else {
+    tracker = new InMemoryCoverageTracker(
+      opts.sourcePath,
+      preprocessed.sourceHash,
+      preprocessed.chunkList.length,
+    )
+  }
 
   // 7. AgentContext bag.
   const ctx: AgentContext = {
@@ -131,7 +165,7 @@ export async function runAgentIngest(
   //    so the model picks up mid-conversation (it sees its own
   //    prior tool_use blocks + the tool_results). Otherwise start
   //    with system + initial user prompts.
-  const initialMessages: AgentMessage[] = checkpoint
+  const initialMessages: AgentMessage[] = resumedFromCheckpoint && checkpoint
     ? checkpoint.messages
     : [
         { role: "system", content: systemPrompt },
@@ -193,18 +227,31 @@ export async function runAgentIngest(
   // next call resumes. NOTE: cleanup runs AFTER verify so the
   // verifier's gaps land in the snapshot one last time (in case
   // the user inspects the file).
+  let finalCheckpointError: string | null = null
   if (runResult.stopReason === "done_called") {
     await deleteCheckpoint(projectPath, preprocessed.sourceHash).catch(() => {})
   } else if (verifyResult.ran) {
     // Run was partial AND verify added gaps; persist the latest
     // tracker state so the next resume starts from the same gap
-    // list. Fire-and-forget — checkpoint failure here is non-fatal.
-    saveCheckpoint(projectPath, {
-      sourcePath: opts.sourcePath,
-      sourceHash: preprocessed.sourceHash,
-      tracker: tracker.snapshot(),
-      messages: runResult.finalMessages,
-    }).catch(() => {})
+    // list. AWAITED (not fire-and-forget like mid-loop saves) —
+    // this is the only checkpoint the user gets for a partial run;
+    // a silent failure here means resume won't work even though
+    // the user already paid for the LLM calls. Errors propagate to
+    // AgentIngestResult.finalCheckpointError so the activity panel
+    // can surface them.
+    try {
+      await saveCheckpoint(projectPath, {
+        sourcePath: opts.sourcePath,
+        sourceHash: preprocessed.sourceHash,
+        tracker: tracker.snapshot(),
+        messages: runResult.finalMessages,
+      })
+    } catch (err) {
+      finalCheckpointError = err instanceof Error ? err.message : String(err)
+      console.warn(
+        `[agent-ingest] final checkpoint save failed; resume will not work: ${finalCheckpointError}`,
+      )
+    }
   }
 
   // 10. Aggregate result.
@@ -217,6 +264,7 @@ export async function runAgentIngest(
     tokensSpent: runResult.tokensSpent,
     budgetExhausted: runResult.stopReason === "max_tokens",
     reason: humaniseStopReason(runResult.stopReason),
+    finalCheckpointError,
   }
 }
 
@@ -242,7 +290,10 @@ function humaniseStopReason(reason: string): string {
     case "max_turns":
       return "Hit the turn budget. Increase maxTurns or split the source."
     case "max_tokens":
-      return "Hit the token budget. Increase maxTokens or use a cheaper model."
+      return (
+        "Hit the cumulative-billed-tokens budget across turns. " +
+        "Increase maxTokens, use a cheaper model, or split the source."
+      )
     case "aborted":
       return "Run was aborted by the user."
     default:

@@ -206,10 +206,28 @@ export class FileSystemWikiAccess implements WikiAccess {
       }
     }
     const { frontmatter: prevFm, body: prevBody } = parseFrontmatter(prevContent)
-    const fm = mergeFrontmatterForUpdate(
-      (prevFm ?? {}) as Record<string, unknown>,
-      opts,
-    )
+    const prevFmObj = (prevFm ?? {}) as Record<string, unknown>
+
+    // No-op short-circuit. The agent calls update_wiki_page in a loop;
+    // some calls are "re-record coverage" with identical body and no
+    // new related/tags. Without this guard, every such call bumps
+    // `updated:` to today and dirties git — noisy diff for zero
+    // semantic change. Bail when the body is byte-identical AND the
+    // related/tags patches would not introduce any new entries.
+    const bodyUnchanged = opts.body === prevBody
+    const noNewRelated =
+      !opts.related ||
+      opts.related.length === 0 ||
+      opts.related.every((s) => stringArrayField(prevFmObj.related).includes(s))
+    const noNewTags =
+      !opts.tags ||
+      opts.tags.length === 0 ||
+      opts.tags.every((s) => stringArrayField(prevFmObj.tags).includes(s))
+    if (bodyUnchanged && noNewRelated && noNewTags) {
+      return { kind: "updated", path, added_chars: 0 }
+    }
+
+    const fm = mergeFrontmatterForUpdate(prevFmObj, opts)
     const content = composeMarkdown(fm, opts.body)
     await writeFileAtomic(path, content)
     return {
