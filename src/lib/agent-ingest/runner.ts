@@ -171,13 +171,38 @@ export async function runAgentLoop(opts: RunAgentLoopOpts): Promise<RunAgentLoop
 
     // Dispatch tools sequentially. Each tool's result becomes a
     // tool_result block in the next user turn so the LLM sees what
-    // happened. Mid-batch abort short-circuits the remaining tools
-    // and pushes whatever results we have so the transcript stays
-    // well-formed.
+    // happened. Two short-circuits inside the batch:
+    //
+    //   - Abort signal: drop the remaining tools, push whatever
+    //     we have so the transcript stays well-formed (the API
+    //     requires a tool_result per tool_use it just received).
+    //   - `done` tool: stop dispatching the rest of the batch.
+    //     The LLM almost never INTENDS for "[surface_gap, done,
+    //     write_wiki_page]" to write the page after declaring done
+    //     — that pattern is a tool-call ordering glitch, not a
+    //     considered sequence. We still emit tool_results for the
+    //     undispatched calls (filler "skipped: done was called")
+    //     so the assistant turn's tool_use blocks all have
+    //     matching tool_result blocks — the API rejects partial
+    //     dispatches.
     const toolResults: ToolResultBlock[] = []
+    let doneDispatched = false
     for (const use of toolUses) {
       if (opts.ctx.signal.aborted) break
+      if (doneDispatched) {
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: use.id,
+          content: JSON.stringify({
+            error: "skipped",
+            detail: "done was called earlier in this batch; the rest of the batch is intentionally skipped.",
+          }),
+          is_error: true,
+        })
+        continue
+      }
       toolResults.push(await dispatchTool(use, opts.ctx))
+      if (use.name === "done") doneDispatched = true
     }
     messages.push({ role: "user", content: toolResults })
 

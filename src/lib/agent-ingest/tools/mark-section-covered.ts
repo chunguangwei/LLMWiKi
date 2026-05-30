@@ -6,13 +6,12 @@
  * covered_by) tuple in the coverage tracker, which feeds:
  *
  *   - The `coverage_percent` returned to the user at end-of-run
- *     (visual completion indicator).
- *   - The `isComplete()` early-exit heuristic (≥85% covered → stop
- *     the loop unless the LLM explicitly wants more turns).
- *   - The verify pass (Phase E): chunks that were NEVER marked
- *     covered become candidate gaps. Verify cross-checks against
- *     the source outline to avoid false positives (chunks that are
- *     boilerplate / refs / TOCs).
+ *     (visual completion indicator only — the loop exits on `done`,
+ *     budget, or abort, never on coverage threshold).
+ *   - The verify pass: chunks that were NEVER marked covered become
+ *     candidate gaps. Verify cross-checks against the source outline
+ *     to avoid false positives (chunks that are boilerplate / refs
+ *     / TOCs).
  *
  * Validation:
  *
@@ -38,7 +37,16 @@ export interface MarkSectionCoveredInput {
 }
 
 export type MarkSectionCoveredResult =
-  | { ok: true; chunk_id: string; page_count: number }
+  | {
+      ok: true
+      chunk_id: string
+      page_count: number
+      /** Set when one or more covered_by entries weren't valid slug
+       *  strings and were dropped. Lets the LLM notice + self-correct
+       *  on the next turn (e.g. it emitted `null` in the array). */
+      dropped_count?: number
+      dropped_warning?: string
+    }
   | { error: "chunk_not_found"; detail: string }
   | { error: "invalid_input"; detail: string }
 
@@ -89,11 +97,22 @@ export const markSectionCoveredTool: ToolDefinition<
     // Per-item validation: slug strings only. We DROP non-strings
     // rather than rejecting the whole call, because losing one
     // wiki slug to a sentinel value (LLM emitted `null` in the
-    // array) shouldn't block the chunk from being marked covered —
-    // the chunk is still processed.
-    const slugs = input.covered_by.filter(
-      (s): s is string => typeof s === "string" && s.length > 0,
-    )
+    // array) shouldn't block the chunk from being marked covered.
+    // BUT we surface the drop count back to the LLM so it can
+    // notice and self-correct on the next turn — silently swallowing
+    // its mistakes was the old behaviour and made bad slugs
+    // invisible.
+    const slugs: string[] = []
+    let droppedCount = 0
+    for (const s of input.covered_by) {
+      if (typeof s === "string" && s.length > 0) slugs.push(s)
+      else droppedCount += 1
+    }
+    if (droppedCount > 0) {
+      console.warn(
+        `[mark_section_covered] dropped ${droppedCount} non-string covered_by entries for chunk ${input.chunk_id}`,
+      )
+    }
 
     if (!ctx.chunks.has(input.chunk_id)) {
       const known = Array.from(ctx.chunks.keys()).slice(0, 5).join(", ")
@@ -107,6 +126,19 @@ export const markSectionCoveredTool: ToolDefinition<
       }
     }
     ctx.tracker.markCovered(input.chunk_id, slugs)
-    return { ok: true, chunk_id: input.chunk_id, page_count: slugs.length }
+    return {
+      ok: true,
+      chunk_id: input.chunk_id,
+      page_count: slugs.length,
+      ...(droppedCount > 0
+        ? {
+            dropped_count: droppedCount,
+            dropped_warning:
+              `${droppedCount} entries in covered_by were not non-empty strings and ` +
+              "were dropped. The chunk is still marked covered; re-call with valid " +
+              "slugs if those entries were meant to be real wiki pages.",
+          }
+        : {}),
+    }
   },
 }

@@ -6,12 +6,17 @@
  * See `docs/agent-ingest-design.md` §5 for the full spec; this file
  * is the runtime + JSON-roundtrip implementation.
  *
- * Phase E will land:
- *   - file load / save under `<project>/.llm-wiki/agent-checkpoints/`
- *   - the 0.85 coverage threshold + monotonicity check (don't loop
- *     forever on the same chunks)
- *   - sourceHash invalidation (a re-edited source file invalidates
- *     the checkpoint instead of resuming stale)
+ * Completion: `isComplete()` returns true ONLY when the agent has
+ * explicitly called the `done` tool (which sets `_completed`). The
+ * older design used a 0.85 chunk-coverage threshold as an early-exit,
+ * but that fired on sequential ingestion of intro material before the
+ * agent reached the high-signal closing sections — and silently
+ * deleted the checkpoint because the runner treats isComplete() as
+ * `done_called`. coveragePercent() is still exposed for the activity
+ * panel; it's a UI indicator, not a control signal.
+ *
+ * Checkpoint load/save lives in `./checkpoint.ts`; sourceHash
+ * invalidation is enforced there too.
  */
 import type { CoverageTracker, CoverageSnapshot } from "./types"
 
@@ -67,7 +72,14 @@ export class InMemoryCoverageTracker implements CoverageTracker {
     return this.totalChunks > 0 ? this.covered.size / this.totalChunks : 0
   }
   isComplete(): boolean {
-    return this._completed || this.coveragePercent() >= 0.85
+    // Only `done` tool sets _completed. The previous 0.85-coverage
+    // auto-complete was a footgun: sequential ingestion of a long
+    // source would cross the threshold on intro material before
+    // reaching the high-signal closing sections, the runner would
+    // map isComplete() to stopReason="done_called", and the
+    // checkpoint would be deleted. The threshold lived too low in
+    // the stack to know whether 85% covered the *important* 85%.
+    return this._completed
   }
   createdPages(): Array<{ slug: string; fromChunks: string[] }> {
     return this.created.slice()

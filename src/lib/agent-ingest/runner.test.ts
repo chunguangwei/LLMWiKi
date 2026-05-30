@@ -161,6 +161,78 @@ describe("runner — multi-turn", () => {
   })
 })
 
+describe("runner — done short-circuits its own batch", () => {
+  it("skips tools that come after `done` in the same assistant turn", async () => {
+    const ctx = buildCtx({
+      chunks: [{ chunk_id: "c0", line_range: [1, 10], content: "x" }],
+    })
+    // Single assistant turn with THREE tool calls: a benign
+    // mark_section_covered, then done, then a mark that should NOT run.
+    const llm = new ScriptedLlm([
+      {
+        content: [
+          {
+            type: "tool_use",
+            id: "t1",
+            name: "mark_section_covered",
+            input: { chunk_id: "c0", covered_by: [] },
+          },
+          {
+            type: "tool_use",
+            id: "t2",
+            name: "done",
+            input: { reason: "wrapping up" },
+          },
+          {
+            type: "tool_use",
+            id: "t3",
+            // Bogus chunk id — if this ran, it would surface as
+            // chunk_not_found. With the short-circuit, the runner
+            // emits a "skipped" tool_result instead.
+            name: "mark_section_covered",
+            input: { chunk_id: "bogus", covered_by: [] },
+          },
+        ],
+        stop_reason: "tool_use",
+        usage: { input_tokens: 50, output_tokens: 20 },
+      },
+    ])
+
+    const result = await runAgentLoop({
+      llm,
+      ctx,
+      initialMessages: INIT_MESSAGES,
+      tools: toolSchemasForLlm(),
+    })
+
+    expect(result.stopReason).toBe("done_called")
+    expect(ctx.tracker.isComplete()).toBe(true)
+
+    const userMsg = result.finalMessages[result.finalMessages.length - 1]
+    if (userMsg.role !== "user" || typeof userMsg.content === "string") {
+      throw new Error("expected tool_result user turn")
+    }
+    const results = userMsg.content as Array<{
+      type: string
+      tool_use_id: string
+      content: string
+      is_error?: boolean
+    }>
+    expect(results).toHaveLength(3)
+    // First two dispatched normally.
+    expect(results[0].tool_use_id).toBe("t1")
+    expect(JSON.parse(results[0].content)).toMatchObject({ ok: true })
+    expect(results[1].tool_use_id).toBe("t2")
+    expect(JSON.parse(results[1].content)).toMatchObject({ ok: true })
+    // Third short-circuited with the skipped sentinel.
+    expect(results[2].tool_use_id).toBe("t3")
+    expect(results[2].is_error).toBe(true)
+    expect(JSON.parse(results[2].content)).toMatchObject({
+      error: "skipped",
+    })
+  })
+})
+
 describe("runner — implicit done", () => {
   it("stop_reason 'no_tools_called' when the LLM replies with text only", async () => {
     const ctx = buildCtx({})

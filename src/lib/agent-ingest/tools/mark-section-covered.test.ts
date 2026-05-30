@@ -73,7 +73,7 @@ describe("mark_section_covered — happy path", () => {
     expect(tracker.coveragePercent()).toBeCloseTo(1 / 3)
   })
 
-  it("filters non-string / empty entries from covered_by silently", async () => {
+  it("filters non-string / empty entries from covered_by and reports drops", async () => {
     const { ctx } = mockCtx({ chunks: CHUNKS })
     const r = (await markSectionCoveredTool.execute(
       {
@@ -83,6 +83,22 @@ describe("mark_section_covered — happy path", () => {
       ctx,
     )) as Extract<MarkSectionCoveredResult, { ok: true }>
     expect(r.page_count).toBe(2)
+    // Two drops: the empty string + the null. Surfaced so the LLM can
+    // see its own malformed array on the next turn instead of moving
+    // on with the wrong slug count silently committed.
+    expect(r.dropped_count).toBe(2)
+    expect(r.dropped_warning).toMatch(/dropped/)
+  })
+
+  it("omits dropped_count when all covered_by entries are valid", async () => {
+    const { ctx } = mockCtx({ chunks: CHUNKS })
+    const r = (await markSectionCoveredTool.execute(
+      { chunk_id: "c0", covered_by: ["concepts/foo"] },
+      ctx,
+    )) as Extract<MarkSectionCoveredResult, { ok: true }>
+    expect(r.page_count).toBe(1)
+    expect(r.dropped_count).toBeUndefined()
+    expect(r.dropped_warning).toBeUndefined()
   })
 
   it("marking the same chunk twice is idempotent (still 1 covered chunk)", async () => {

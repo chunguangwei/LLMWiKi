@@ -198,12 +198,22 @@ export class FileSystemWikiAccess implements WikiAccess {
     try {
       prevContent = await readFile(path)
     } catch (err) {
-      return {
-        kind: "validation_failed",
-        detail: `failed to read existing page: ${
+      // Two reasons this can fire after fileExists returned true:
+      // (a) the file was removed between the check and the read
+      //     (race with a concurrent agent or the user editing the
+      //     wiki); (b) a permission / IO error.
+      // Both surface to the LLM as `slug_not_found` rather than the
+      // previous `validation_failed`: case (a) genuinely IS the slug
+      // disappearing, and case (b) is rare enough that pushing the
+      // LLM toward "create instead" is the right recovery — the
+      // underlying error message rides along in the warn log for
+      // the user to see.
+      console.warn(
+        `[wiki-access] post-exists read failed for ${path}, treating as slug_not_found: ${
           err instanceof Error ? err.message : String(err)
         }`,
-      }
+      )
+      return { kind: "slug_not_found" }
     }
     const { frontmatter: prevFm, body: prevBody } = parseFrontmatter(prevContent)
     const prevFmObj = (prevFm ?? {}) as Record<string, unknown>
