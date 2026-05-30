@@ -171,7 +171,14 @@ export function LintView() {
             ...result.pagesCreated.map((p) => p.slug),
           ],
         })
-        // Push gaps to Review so the user can decide on each.
+        // Push gaps to Review so the user can decide on each. Each gap
+        // gets both "Open page" (so the user can act on it manually
+        // — the agent's surface_gap is a "needs human attention"
+        // signal, not a dead end) and "Skip" (dismiss). The page
+        // path is the original lint item's page since that's the
+        // thing the agent was investigating; if the gap is about a
+        // related page, the user can still open it from the file
+        // tree.
         for (const g of result.gapsSurfaced) {
           useReviewStore.getState().addItem({
             type: "suggestion",
@@ -179,6 +186,7 @@ export function LintView() {
             description: g.reason ?? "",
             affectedPages: [item.page],
             options: [
+              { label: t("lint.openEdit"), action: `open:${item.page}` },
               { label: t("review.skip", { defaultValue: "Skip" }), action: "Skip" },
             ],
           })
@@ -188,6 +196,13 @@ export function LintView() {
         const tree = await listDirectory(pp)
         setFileTree(tree)
         bumpDataVersion()
+        // Release the per-item "fixing" lock before the early return.
+        // The outer `finally { setFixingId(null) }` below ONLY fires
+        // when we fall through to the classic handler; bailing here
+        // without resetting would leave the button stuck disabled
+        // after a successful AI fix until the next render reseeds the
+        // state. Discovered during self-review.
+        setFixingId(null)
         return
       } catch (err) {
         activity.updateItem(activityId, {

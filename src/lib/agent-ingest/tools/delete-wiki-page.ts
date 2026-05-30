@@ -115,14 +115,11 @@ export const deleteWikiPageTool: ToolDefinition<DeleteWikiPageInput, DeleteWikiP
       return { error: "validation_failed", detail: result.detail }
     }
 
-    // Tracker hook — optional. agent-ingest's tracker doesn't have
-    // markDeleted (deletion isn't part of extraction); the lint-fix
-    // tracker uses it for the activity log. Optional-chain so missing
-    // impls silently no-op.
-    const trackerWithDelete = ctx.tracker as unknown as {
-      markDeleted?: (slug: string, reason: string) => void
-    }
-    trackerWithDelete.markDeleted?.(slug, reason)
+    // Tracker hook — optional method on the interface. agent-ingest's
+    // InMemoryCoverageTracker doesn't implement it (extraction never
+    // deletes); LintFixTracker overrides it for the activity log.
+    // Optional-chain so missing impls silently no-op.
+    ctx.tracker.markDeleted?.(slug, reason)
 
     return { ok: true, path: result.path, slug, reason }
   },

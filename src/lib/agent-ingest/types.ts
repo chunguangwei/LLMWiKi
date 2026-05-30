@@ -316,6 +316,14 @@ export interface CoverageTracker {
    * runner does a typeof-check before calling.
    */
   recordTurn?(tokensThisTurn: number): void
+  /**
+   * Optional delete-recording hook for tools that remove wiki pages.
+   * The agent-ingest InMemoryCoverageTracker does NOT implement this
+   * (extraction never deletes); agent-lint-fix's LintFixTracker
+   * overrides it for the activity-panel audit. Tools call it via
+   * optional-chain so missing impls silently no-op.
+   */
+  markDeleted?(slug: string, reason: string): void
   snapshot(): CoverageSnapshot
 }
 

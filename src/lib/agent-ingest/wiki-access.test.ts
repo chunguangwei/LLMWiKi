@@ -37,6 +37,9 @@ vi.mock("@/commands/fs", () => ({
   writeFileAtomic: async (p: string, c: string) => {
     fs.files.set(p, c)
   },
+  deleteFile: async (p: string) => {
+    fs.files.delete(p)
+  },
   listDirectory: async (p: string) => {
     const tree = fs.tree.get(p)
     if (!tree) throw new Error(`mock: dir not in tree: ${p}`)
@@ -419,5 +422,53 @@ describe("FileSystemWikiAccess — linkPages", () => {
     const wa = new FileSystemWikiAccess(PROJECT)
     const r = await wa.linkPages({ from: "a", to: "b", bidirectional: true })
     expect(r).toEqual({ kind: "linked", from_was_new: false, to_was_new: true })
+  })
+})
+
+describe("FileSystemWikiAccess — deletePage", () => {
+  it("deletes a regular page and returns the absolute path", async () => {
+    setFile(`${WIKI}/concepts/stale.md`, "---\ntype: concept\ntitle: Stale\n---\n\nbody")
+    const wa = new FileSystemWikiAccess(PROJECT)
+    const r = await wa.deletePage({ slug: "concepts/stale", reason: "obsolete" })
+    expect(r).toEqual({ kind: "deleted", path: `${WIKI}/concepts/stale.md` })
+    expect(fs.files.has(`${WIKI}/concepts/stale.md`)).toBe(false)
+  })
+
+  it("slug_not_found for a slug with no .md", async () => {
+    const wa = new FileSystemWikiAccess(PROJECT)
+    const r = await wa.deletePage({ slug: "concepts/ghost", reason: "n/a" })
+    expect(r).toEqual({ kind: "slug_not_found" })
+  })
+
+  it("rejects top-level structural pages (index / log / overview)", async () => {
+    setFile(`${WIKI}/index.md`, "# Index")
+    setFile(`${WIKI}/log.md`, "# Log")
+    setFile(`${WIKI}/overview.md`, "# Overview")
+    const wa = new FileSystemWikiAccess(PROJECT)
+    for (const slug of ["index", "log", "overview"]) {
+      const r = await wa.deletePage({ slug, reason: "trying" })
+      expect(r.kind).toBe("validation_failed")
+      if (r.kind === "validation_failed") {
+        expect(r.detail).toMatch(/structural/)
+      }
+      // File untouched.
+      expect(fs.files.has(`${WIKI}/${slug}.md`)).toBe(true)
+    }
+  })
+
+  it("ALLOWS subdir pages named index.md / log.md / overview.md", async () => {
+    // concepts/index.md is a perfectly ordinary per-folder index in
+    // many wiki layouts. The structural guard is for top-level only.
+    setFile(
+      `${WIKI}/concepts/index.md`,
+      "---\ntype: concept\ntitle: Concepts hub\n---\n\nlinks",
+    )
+    const wa = new FileSystemWikiAccess(PROJECT)
+    const r = await wa.deletePage({
+      slug: "concepts/index",
+      reason: "no longer needed",
+    })
+    expect(r.kind).toBe("deleted")
+    expect(fs.files.has(`${WIKI}/concepts/index.md`)).toBe(false)
   })
 })

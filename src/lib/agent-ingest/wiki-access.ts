@@ -324,18 +324,24 @@ export class FileSystemWikiAccess implements WikiAccess {
     | { kind: "validation_failed"; detail: string }
   > {
     // Structural-page guard. The agent's slug here has been validated
-    // by the tool layer (no traversal / no illegal chars), but
-    // STRUCTURAL_PAGES — index / log / overview — still need an
-    // explicit reject because they're load-bearing for the wiki UI.
-    // Deleting them via the agent would surface as a broken nav,
-    // not a clean "page gone".
+    // by the tool layer (no traversal / no illegal chars), but the
+    // TOP-LEVEL structural pages — index / log / overview — still
+    // need an explicit reject because they're load-bearing for the
+    // wiki UI. Deleting them via the agent would surface as broken
+    // nav, not a clean "page gone".
+    //
+    // Scoped to top-level only: `concepts/index.md` is a perfectly
+    // ordinary page (some folder layouts use a per-folder index),
+    // and rejecting it would surprise the agent.
     const path = this.slugToAbsPath(opts.slug)
-    const base = pathBasename(path).toLowerCase()
-    if (STRUCTURAL_PAGES.has(base)) {
+    const slugLower = opts.slug.toLowerCase()
+    const isTopLevelStructural =
+      STRUCTURAL_PAGES.has(`${slugLower}.md`) && !slugLower.includes("/")
+    if (isTopLevelStructural) {
       return {
         kind: "validation_failed",
         detail:
-          `"${opts.slug}" resolves to a structural page (${base}). ` +
+          `"${opts.slug}" is a top-level structural page (index / log / overview). ` +
           "Structural pages cannot be deleted by the agent — they're the " +
           "wiki's TOC / log / overview and must be edited directly.",
       }
