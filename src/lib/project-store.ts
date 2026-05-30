@@ -186,6 +186,18 @@ export async function loadExperimentalAiLintFix(): Promise<boolean> {
   return (await store.get<boolean>(AI_LINT_FIX_FLAG_KEY)) ?? false
 }
 
+const CHAT_AGENT_FLAG_KEY = "experimentalChatAgent"
+
+export async function saveExperimentalChatAgent(enabled: boolean): Promise<void> {
+  const store = await getStore()
+  await store.set(CHAT_AGENT_FLAG_KEY, enabled)
+}
+
+export async function loadExperimentalChatAgent(): Promise<boolean> {
+  const store = await getStore()
+  return (await store.get<boolean>(CHAT_AGENT_FLAG_KEY)) ?? false
+}
+
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"
 
 function scheduledImportKey(projectPath: string): string {

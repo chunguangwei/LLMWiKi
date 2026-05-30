@@ -3,6 +3,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import {
   saveExperimentalAgentIngest,
   saveExperimentalAiLintFix,
+  saveExperimentalChatAgent,
 } from "@/lib/project-store"
 
 /**
@@ -25,6 +26,8 @@ export function LabsSection() {
   const setAgentIngest = useWikiStore((s) => s.setExperimentalAgentIngest)
   const aiLintFix = useWikiStore((s) => s.experimentalAiLintFix)
   const setAiLintFix = useWikiStore((s) => s.setExperimentalAiLintFix)
+  const chatAgent = useWikiStore((s) => s.experimentalChatAgent)
+  const setChatAgent = useWikiStore((s) => s.setExperimentalChatAgent)
 
   function toggleAgentIngest() {
     const next = !agentIngest
@@ -42,6 +45,14 @@ export function LabsSection() {
     const next = !aiLintFix
     setAiLintFix(next)
     saveExperimentalAiLintFix(next).catch((err) =>
+      console.warn("[labs] save failed:", err),
+    )
+  }
+
+  function toggleChatAgent() {
+    const next = !chatAgent
+    setChatAgent(next)
+    saveExperimentalChatAgent(next).catch((err) =>
       console.warn("[labs] save failed:", err),
     )
   }
@@ -168,6 +179,62 @@ export function LabsSection() {
             <span
               className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
                 aiLintFix ? "translate-x-4.5" : "translate-x-0.5"
+              }`}
+            />
+          </span>
+        </button>
+      </div>
+
+      {/* Chat agent toggle. Same emerald accent as the other Labs toggles. */}
+      <div
+        className={`flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
+          chatAgent
+            ? "border-emerald-500/60 bg-emerald-500/10 dark:border-emerald-400/50 dark:bg-emerald-400/10"
+            : "border-border bg-background"
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">
+            {t("settings.sections.labs.chatAgentLabel", {
+              defaultValue: "Chat agent (experimental)",
+            })}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {t("settings.sections.labs.chatAgentHint", {
+              defaultValue:
+                "Upgrades chat from a single-turn stream into a tool-calling agent. When the LLM needs info it can call web_fetch (any URL, zero config), web_search (your configured Tavily / SerpApi / SearXNG / Ollama), search_local_files (project-scoped), and wiki inspection tools. Costs more tokens and drops the per-token streaming UX in agent mode — the first response arrives as a complete block once the agent finishes its tool calls.",
+            })}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={toggleChatAgent}
+          role="switch"
+          aria-checked={chatAgent}
+          aria-label={t("settings.sections.labs.chatAgentLabel", {
+            defaultValue: "Chat agent (experimental)",
+          })}
+          className="ml-3 flex shrink-0 items-center gap-2"
+        >
+          <span
+            className={`text-xs font-semibold ${
+              chatAgent
+                ? "text-emerald-700 dark:text-emerald-300"
+                : "text-muted-foreground"
+            }`}
+          >
+            {chatAgent
+              ? t("settings.sections.labs.stateOn", { defaultValue: "ON" })
+              : t("settings.sections.labs.stateOff", { defaultValue: "OFF" })}
+          </span>
+          <span
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+              chatAgent ? "bg-emerald-500 dark:bg-emerald-400" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                chatAgent ? "translate-x-4.5" : "translate-x-0.5"
               }`}
             />
           </span>

@@ -93,6 +93,9 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
       </div>
       <div className="max-w-[80%] flex flex-col gap-1.5">
+        {isAssistant && message.toolCalls && message.toolCalls.length > 0 && (
+          <ToolCallsBlock toolCalls={message.toolCalls} />
+        )}
         <div
           className={`rounded-lg px-3 py-2 text-sm ${
             isUser
@@ -134,6 +137,62 @@ export const ChatMessage = memo(ChatMessageImpl, (prev, next) =>
   && prev.isLastAssistant === next.isLastAssistant
   && prev.onRegenerate === next.onRegenerate
 )
+
+/**
+ * Tool calls rendered above the assistant message body. Defaults to a
+ * compact "🔧 used N tools" header that the user can click to expand
+ * into per-tool name / input / result rows. Read-only — the user can
+ * inspect what the agent did but can't replay it.
+ *
+ * One row per tool call, in the order the agent emitted them. Result
+ * summaries are colour-coded loosely: gray = ok, amber = skipped or
+ * structured error, never destructive.
+ */
+function ToolCallsBlock({
+  toolCalls,
+}: {
+  toolCalls: NonNullable<DisplayMessage["toolCalls"]>
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-2 hover:text-foreground"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>
+          🔧 {toolCalls.length} tool call{toolCalls.length === 1 ? "" : "s"}:{" "}
+          <span className="font-mono">
+            {Array.from(new Set(toolCalls.map((t) => t.name))).join(", ")}
+          </span>
+        </span>
+        <span className="text-[10px]">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="mt-1.5 flex flex-col gap-1 border-t border-border pt-1.5">
+          {toolCalls.map((t, i) => (
+            <div key={i} className="flex flex-col gap-0.5 font-mono text-[10px]">
+              <div>
+                <span className="text-primary">{t.name}</span>
+                <span className="ml-1 text-muted-foreground/80">({t.inputSummary})</span>
+              </div>
+              <div
+                className={`pl-3 ${
+                  t.resultSummary.startsWith("error:")
+                    ? "text-amber-600 dark:text-amber-400"
+                    : ""
+                }`}
+              >
+                → {t.resultSummary}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function CopyButton({ content }: { content: string }) {
   const [copied, setCopied] = useState(false)

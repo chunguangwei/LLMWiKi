@@ -21,6 +21,19 @@ export interface DisplayMessage {
   timestamp: number
   conversationId: string
   references?: MessageReference[]  // pages cited in this response, saved at creation time
+  /**
+   * Tool calls that produced this assistant response. Populated by the
+   * chat-agent path (Phase G2.2); undefined / empty for classic-chat
+   * messages. The chat-message renderer shows them as a foldable block
+   * above the body so the user can audit what the agent looked at.
+   */
+  toolCalls?: Array<{
+    name: string
+    /** JSON-stringified summary of the tool's input args (truncated). */
+    inputSummary: string
+    /** Short one-line description of the result: "ok", "skipped", "error: X", etc. */
+    resultSummary: string
+  }>
 }
 
 interface ChatState {
@@ -41,6 +54,19 @@ interface ChatState {
 
   // Message management
   addMessage: (role: DisplayMessage["role"], content: string) => void
+  /**
+   * Append a finalised assistant message that already carries its
+   * full content + (optional) tool call summaries. Used by the
+   * chat-agent path which doesn't stream tokens — the LLM completes
+   * its loop, then this action commits the result in one go.
+   */
+  addAssistantTurn: (
+    content: string,
+    opts?: {
+      references?: MessageReference[]
+      toolCalls?: DisplayMessage["toolCalls"]
+    },
+  ) => void
   setMessages: (messages: DisplayMessage[]) => void
   setConversations: (conversations: Conversation[]) => void
   setStreaming: (streaming: boolean) => void
@@ -166,6 +192,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 : c
             )
 
+      return {
+        messages: [...state.messages, newMessage],
+        conversations: updatedConversations,
+      }
+    }),
+
+  addAssistantTurn: (content, opts) =>
+    set((state) => {
+      const { activeConversationId, conversations } = state
+      if (!activeConversationId) return state
+      const newMessage: DisplayMessage = {
+        id: nextId(),
+        role: "assistant",
+        content,
+        timestamp: Date.now(),
+        conversationId: activeConversationId,
+        ...(opts?.references ? { references: opts.references } : {}),
+        ...(opts?.toolCalls && opts.toolCalls.length > 0
+          ? { toolCalls: opts.toolCalls }
+          : {}),
+      }
+      const updatedConversations = conversations.map((c) =>
+        c.id === activeConversationId
+          ? { ...c, updatedAt: Date.now() }
+          : c,
+      )
       return {
         messages: [...state.messages, newMessage],
         conversations: updatedConversations,
