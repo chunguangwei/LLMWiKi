@@ -12,13 +12,15 @@
  * boundary** — schema-validated input, structured output, no
  * exceptions surface to the LLM.
  *
- * Tools split into four layers (no enforced runtime category — just
- * a mental model when reading the code):
+ * Tools split into mental-model groups (no runtime enforcement — the
+ * filter argument to toolSchemasForLlm() is what gates which group
+ * each caller exposes to its LLM):
  *
  *   - Source inspection: read_outline, read_chunk, search_source
- *   - Wiki inspection:   list_wiki_pages, read_wiki_page
+ *   - Wiki inspection:   list_wiki_pages, read_wiki_page, search_wiki_by_title
  *   - Tracker mutation:  mark_section_covered, surface_gap
- *   - Wiki mutation:     write_wiki_page, update_wiki_page, link_pages
+ *   - Wiki mutation:     write_wiki_page, update_wiki_page, link_pages, delete_wiki_page
+ *   - External (chat):   web_fetch, web_search, search_local_files
  *   - Loop control:      done
  *
  * Order in the TOOLS array below matches the LLM-facing catalogue
@@ -45,6 +47,9 @@ import { writeWikiPageTool } from "./write-wiki-page"
 import { updateWikiPageTool } from "./update-wiki-page"
 import { linkPagesTool } from "./link-pages"
 import { deleteWikiPageTool } from "./delete-wiki-page"
+import { webFetchTool } from "./web-fetch"
+import { webSearchTool } from "./web-search"
+import { searchLocalFilesTool } from "./search-local-files"
 import { doneTool } from "./done"
 
 // The runner iterates this array to build the tool catalogue passed
@@ -63,6 +68,9 @@ export const TOOLS: Array<ToolDefinition<unknown, unknown>> = [
   updateWikiPageTool as ToolDefinition<unknown, unknown>,
   linkPagesTool as ToolDefinition<unknown, unknown>,
   deleteWikiPageTool as ToolDefinition<unknown, unknown>,
+  webFetchTool as ToolDefinition<unknown, unknown>,
+  webSearchTool as ToolDefinition<unknown, unknown>,
+  searchLocalFilesTool as ToolDefinition<unknown, unknown>,
   doneTool as ToolDefinition<unknown, unknown>,
 ]
 

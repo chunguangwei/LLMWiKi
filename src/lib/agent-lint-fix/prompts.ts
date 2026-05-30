@@ -24,6 +24,13 @@ export function buildLintFixSystemPrompt(item: LintItem, projectPurpose: string)
     ? `\n## Project purpose\n\n${projectPurpose.trim()}\n`
     : ""
 
+  // The caller (lint-view.tsx handleFix) only routes broken-link /
+  // orphan / no-outlinks to this path — semantic items go to Review
+  // directly without ever calling runLintFix. If the routing changes
+  // later and a new lint type arrives without a matching prompt,
+  // throwing is preferable to silently shipping a generic prompt
+  // that under-directs the agent and burns tokens producing a vague
+  // fix.
   switch (item.type) {
     case "broken-link":
       return BROKEN_LINK_PROMPT + purposeBlock + COMMON_TAIL
@@ -32,7 +39,11 @@ export function buildLintFixSystemPrompt(item: LintItem, projectPurpose: string)
     case "no-outlinks":
       return NO_OUTLINKS_PROMPT + purposeBlock + COMMON_TAIL
     default:
-      return GENERIC_PROMPT + purposeBlock + COMMON_TAIL
+      throw new Error(
+        `agent-lint-fix has no prompt for item.type="${item.type}". ` +
+          "Add one in prompts.ts and update lint-view.tsx routing if " +
+          "this type should be fixable by the agent.",
+      )
   }
 }
 
@@ -98,10 +109,6 @@ This is the inverse of the orphan case. The page exists in isolation: nothing it
 5. **Genuinely no candidates → surface_gap.** If the page legitimately doesn't reference any other wiki topic, call surface_gap noting that this page's subject is currently isolated from the rest of the wiki's scope. Don't force fake links.
 
 Never delete or replace the body's substance; only add wikilink syntax around existing words.`
-
-const GENERIC_PROMPT = `You are a wiki-repair agent. A lint pass flagged a problem on one specific page; your job is to inspect it and apply a minimal, targeted fix.
-
-When the right action isn't obvious from the lint detail, call surface_gap with your assessment instead of guessing. The user reviews surfaced gaps and chooses what to do — that's far better than a bad mutation that has to be undone.`
 
 const COMMON_TAIL = `
 

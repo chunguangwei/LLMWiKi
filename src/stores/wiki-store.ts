@@ -306,6 +306,19 @@ interface WikiState {
    * Persisted via `saveExperimentalConfig` (project-store.ts).
    */
   experimentalAiLintFix: boolean
+  /**
+   * **Labs / experimental** — upgrade chat from a single-turn stream
+   * to a tool-calling agent loop. When the LLM decides it needs
+   * external information (wiki page lookup, web fetch, local file
+   * search), it emits tool_use blocks and the runner drives the loop
+   * until the model has enough context to answer. Costs more tokens
+   * per turn AND drops the streaming UX in agent mode (the first
+   * response arrives as a complete block, not token-by-token). Off
+   * by default. See `src/lib/chat-agent/` for the implementation.
+   *
+   * Persisted via `saveExperimentalChatAgent` (project-store.ts).
+   */
+  experimentalChatAgent: boolean
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -328,6 +341,7 @@ interface WikiState {
   setApiConfig: (config: ApiConfig) => void
   setExperimentalAgentIngest: (enabled: boolean) => void
   setExperimentalAiLintFix: (enabled: boolean) => void
+  setExperimentalChatAgent: (enabled: boolean) => void
   bumpDataVersion: () => void
 }
 
@@ -425,6 +439,7 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   experimentalAgentIngest: false,
   experimentalAiLintFix: false,
+  experimentalChatAgent: false,
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
@@ -441,6 +456,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     set({ experimentalAgentIngest }),
   setExperimentalAiLintFix: (experimentalAiLintFix) =>
     set({ experimentalAiLintFix }),
+  setExperimentalChatAgent: (experimentalChatAgent) =>
+    set({ experimentalChatAgent }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 

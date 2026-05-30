@@ -54,9 +54,10 @@ describe("toolSchemasForLlm", () => {
     }
   })
 
-  it("includes all 13 tools in catalogue order", () => {
+  it("includes all 16 tools in catalogue order", () => {
     // 11 from agent-ingest Phase A/E + 2 from agent-lint-fix Phase G1
-    // (search_wiki_by_title + delete_wiki_page).
+    // (search_wiki_by_title + delete_wiki_page) + 3 from chat-agent
+    // Phase G2.1 (web_fetch + web_search + search_local_files).
     const names = toolSchemasForLlm().map((s) => s.name)
     expect(names).toEqual([
       "read_outline",
@@ -71,8 +72,28 @@ describe("toolSchemasForLlm", () => {
       "update_wiki_page",
       "link_pages",
       "delete_wiki_page",
+      "web_fetch",
+      "web_search",
+      "search_local_files",
       "done",
     ])
+  })
+
+  it("filter selects a subset and preserves catalogue order", () => {
+    const names = toolSchemasForLlm([
+      "web_search",
+      "web_fetch",
+      "read_wiki_page",
+    ]).map((s) => s.name)
+    // Filter preserves catalogue order, not the order of the filter array.
+    expect(names).toEqual(["read_wiki_page", "web_fetch", "web_search"])
+  })
+
+  it("unknown names in the filter are silently ignored", () => {
+    const names = toolSchemasForLlm(["web_fetch", "does_not_exist"]).map(
+      (s) => s.name,
+    )
+    expect(names).toEqual(["web_fetch"])
   })
 })
 

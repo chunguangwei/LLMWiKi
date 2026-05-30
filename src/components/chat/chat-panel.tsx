@@ -7,6 +7,8 @@ import { ChatInput } from "./chat-input"
 import { useChatStore, chatMessagesToLLM } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
+import { runChatAgent } from "@/lib/chat-agent"
+import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { executeIngestWrites } from "@/lib/ingest"
 import { listDirectory, readFile } from "@/commands/fs"
 import { deleteChatConversation } from "@/lib/persist"
@@ -396,6 +398,7 @@ export function ChatPanel() {
   const streamingContent = useChatStore((s) => s.streamingContent)
   const mode = useChatStore((s) => s.mode)
   const addMessage = useChatStore((s) => s.addMessage)
+  const addAssistantTurn = useChatStore((s) => s.addAssistantTurn)
   const setStreaming = useChatStore((s) => s.setStreaming)
   const appendStreamToken = useChatStore((s) => s.appendStreamToken)
   const finalizeStream = useChatStore((s) => s.finalizeStream)
@@ -647,6 +650,64 @@ export function ChatPanel() {
       }
 
       addMessage("user", text)
+
+      // Chat-agent path (Phase G2.2). Gated on the Labs flag + a
+      // usable LLM + an open project (the agent uses wiki tools which
+      // need a project root). Skips the rest of handleSend — the
+      // agent loop builds its own context via tools rather than the
+      // retrieval-graph + system-prompt assembly below.
+      //
+      // Falls through to classic streaming when:
+      //   - flag is off (default)
+      //   - no usable LLM (offline / unconfigured)
+      //   - no project open
+      //   - agent loop throws — caller sees the error in the chat
+      const chatAgentEnabled = useWikiStore.getState().experimentalChatAgent
+      if (chatAgentEnabled && hasUsableLlm(llmConfig) && project) {
+        // Lock the input + wire abort. Agent mode doesn't stream
+        // tokens, but `isStreaming` is also what disables the send
+        // button + drives the Stop control — without setting it the
+        // user can rapid-fire follow-up sends and spin up parallel
+        // agent loops. The AbortController is the same shape classic
+        // streaming uses (abortRef.current), so handleStop reuses
+        // unchanged.
+        const controller = new AbortController()
+        abortRef.current = controller
+        setStreaming(true)
+        try {
+          const searchApiConfig = useWikiStore.getState().searchApiConfig
+          const outputLanguage = useWikiStore.getState().outputLanguage
+          const allMessages = useChatStore.getState().messages
+          const history = allMessages.filter((m) => m.conversationId === convId)
+          const result = await runChatAgent({
+            userMessage: text,
+            history: history.slice(0, -1),  // exclude the user message we just added
+            project,
+            llmConfig,
+            searchApiConfig,
+            outputLanguage,
+            signal: controller.signal,
+          })
+          addAssistantTurn(result.text || `_(${result.reason})_`, {
+            toolCalls: result.toolCalls,
+          })
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err)
+          // AbortError from a user Stop click shouldn't read as a
+          // crash — the agent intentionally stopped. Anything else
+          // is a real failure worth surfacing.
+          if (controller.signal.aborted) {
+            addMessage("assistant", `_(stopped)_`)
+          } else {
+            addMessage("assistant", `Chat-agent failed: ${detail}`)
+          }
+        } finally {
+          setStreaming(false)
+          if (abortRef.current === controller) abortRef.current = null
+        }
+        return
+      }
+
       setStreaming(true)
 
       // Build system prompt with wiki context using graph-enhanced retrieval
