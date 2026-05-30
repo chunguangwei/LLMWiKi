@@ -20,10 +20,22 @@ export interface BuildChatAgentSystemPromptOpts {
   /** Output language ("zh" / "en" / "auto"). When "zh" or "en" the prompt
    *  pins the answer language; "auto" leaves it to the LLM. */
   outputLanguage?: "zh" | "en" | "auto" | string
+  /**
+   * Today's date as `YYYY-MM-DD`. Required for caller; tests pass a
+   * fixed string so prompt snapshots stay deterministic, the runtime
+   * entry point computes it from `new Date()`. The LLM uses this for
+   * time-sensitive web searches — without it the model defaults to
+   * the year in its training data (real-world example: a query for
+   * "today's news" turned into "2025 news" while running on 2026-05-30
+   * because the model had no clock).
+   */
+  today: string
 }
 
 export function buildChatAgentSystemPrompt(opts: BuildChatAgentSystemPromptOpts): string {
   const sections: string[] = [BASE_PROMPT]
+
+  sections.push(`\n## Today\n\nToday is ${opts.today}. Use this when crafting time-sensitive web_search queries.`)
 
   if (opts.projectPurpose.trim().length > 0) {
     sections.push(`\n## Project purpose\n\n${opts.projectPurpose.trim()}`)
@@ -40,6 +52,11 @@ export function buildChatAgentSystemPrompt(opts: BuildChatAgentSystemPromptOpts)
   sections.push(STOPPING_RULES)
 
   return sections.join("\n")
+}
+
+/** YYYY-MM-DD for "today" in the user's local timezone. */
+export function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 export function buildChatAgentUserPrompt(

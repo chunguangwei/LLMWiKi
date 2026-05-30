@@ -375,6 +375,31 @@ describe("runChatAgent — system prompt rails", () => {
     if (typeof sys.content !== "string") throw new Error("expected string system")
     expect(sys.content).toContain("以中文回答")
   })
+
+  it("injects today's date so time-sensitive web searches use the current year", async () => {
+    // Real-world prompt-tuning fix: without this, MiniMax-M2.7 generated
+    // `query="OpenAI 2025"` while running on 2026-05-30 because the
+    // model has no clock and falls back to the year in its training
+    // data. The runtime entry point uses todayIsoDate() which calls
+    // new Date() — this test only checks the section header + an
+    // ISO-ish date appears, so the assertion stays stable across runs.
+    setupEmptyProject()
+    const llm = new ScriptedLlm([textTurn("OK.")])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    await runChatAgent({
+      userMessage: "hi",
+      history: emptyHistory(),
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+    })
+
+    const sys = llm.calls[0].messages.find((m) => m.role === "system")!
+    if (typeof sys.content !== "string") throw new Error("expected string system")
+    expect(sys.content).toMatch(/## Today/)
+    expect(sys.content).toMatch(/Today is \d{4}-\d{2}-\d{2}\./)
+    expect(sys.content).toMatch(/time-sensitive web_search queries/)
+  })
 })
 
 describe("runChatAgent — chat tool catalogue", () => {
