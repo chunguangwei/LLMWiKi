@@ -47,6 +47,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import yaml from "js-yaml"
 import {
+  deleteFile,
   fileExists,
   listDirectory,
   readFile,
@@ -310,6 +311,49 @@ export class FileSystemWikiAccess implements WikiAccess {
     fm.updated = todayIso()
     await writeFileAtomic(absPath, composeMarkdown(fm, body))
     return { was_new: true }
+  }
+
+  /* ── deletePage ────────────────────────────────────── */
+
+  async deletePage(opts: {
+    slug: string
+    reason: string
+  }): Promise<
+    | { kind: "deleted"; path: string }
+    | { kind: "slug_not_found" }
+    | { kind: "validation_failed"; detail: string }
+  > {
+    // Structural-page guard. The agent's slug here has been validated
+    // by the tool layer (no traversal / no illegal chars), but
+    // STRUCTURAL_PAGES — index / log / overview — still need an
+    // explicit reject because they're load-bearing for the wiki UI.
+    // Deleting them via the agent would surface as a broken nav,
+    // not a clean "page gone".
+    const path = this.slugToAbsPath(opts.slug)
+    const base = pathBasename(path).toLowerCase()
+    if (STRUCTURAL_PAGES.has(base)) {
+      return {
+        kind: "validation_failed",
+        detail:
+          `"${opts.slug}" resolves to a structural page (${base}). ` +
+          "Structural pages cannot be deleted by the agent — they're the " +
+          "wiki's TOC / log / overview and must be edited directly.",
+      }
+    }
+    if (!(await fileExists(path))) {
+      return { kind: "slug_not_found" }
+    }
+    try {
+      await deleteFile(path)
+    } catch (err) {
+      return {
+        kind: "validation_failed",
+        detail: `failed to delete page: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      }
+    }
+    return { kind: "deleted", path }
   }
 
   /* ── path / slug plumbing ──────────────────────────── */

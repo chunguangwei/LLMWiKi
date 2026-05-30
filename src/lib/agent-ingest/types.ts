@@ -213,6 +213,44 @@ export interface WikiAccess {
     | { kind: "slug_not_found"; missing: "from" | "to" }
     | { kind: "validation_failed"; detail: string }
   >
+
+  /**
+   * Delete a wiki page.
+   *
+   * Used by agent-lint-fix when a broken-link target is genuinely
+   * stale (the page it references was meant to be removed) or when
+   * an orphan is decided to be obsolete. NOT used by agent-ingest —
+   * extraction never deletes; only the lint-fix path does.
+   *
+   * Semantics:
+   *
+   *   - Removes the `.md` file at `slug` atomically (single fs unlink).
+   *   - The agent's `reason` is recorded to the tracker for the
+   *     activity-panel log; not persisted to git history (the commit
+   *     message handles that).
+   *   - Structural pages (index.md / log.md / overview.md) are
+   *     REJECTED with validation_failed even if the agent's slug
+   *     resolves to one — they're load-bearing for the wiki and
+   *     never the right thing to delete.
+   *
+   * Result discriminator:
+   *
+   *   - `{ kind: "deleted", path }`            — success.
+   *   - `{ kind: "slug_not_found" }`            — no page at slug.
+   *   - `{ kind: "validation_failed", detail }` — structural-page
+   *                                              reject, fs error,
+   *                                              etc.
+   *
+   * Never throws.
+   */
+  deletePage(opts: {
+    slug: string
+    reason: string
+  }): Promise<
+    | { kind: "deleted"; path: string }
+    | { kind: "slug_not_found" }
+    | { kind: "validation_failed"; detail: string }
+  >
 }
 
 /** Runtime context threaded into every tool call. */

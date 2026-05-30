@@ -43,6 +43,9 @@ function mockCtx(opts: {
     async linkPages() {
       return { kind: "validation_failed", detail: "mock" }
     },
+    async deletePage() {
+      return { kind: "validation_failed", detail: "mock" }
+    },
   }
   const ctx: AgentContext = {
     chunks: new Map(),

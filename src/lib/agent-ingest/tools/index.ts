@@ -38,11 +38,13 @@ import { readChunkTool } from "./read-chunk"
 import { searchSourceTool } from "./search-source"
 import { listWikiPagesTool } from "./list-wiki-pages"
 import { readWikiPageTool } from "./read-wiki-page"
+import { searchWikiByTitleTool } from "./search-wiki-by-title"
 import { markSectionCoveredTool } from "./mark-section-covered"
 import { surfaceGapTool } from "./surface-gap"
 import { writeWikiPageTool } from "./write-wiki-page"
 import { updateWikiPageTool } from "./update-wiki-page"
 import { linkPagesTool } from "./link-pages"
+import { deleteWikiPageTool } from "./delete-wiki-page"
 import { doneTool } from "./done"
 
 // The runner iterates this array to build the tool catalogue passed
@@ -54,11 +56,13 @@ export const TOOLS: Array<ToolDefinition<unknown, unknown>> = [
   searchSourceTool as ToolDefinition<unknown, unknown>,
   listWikiPagesTool as ToolDefinition<unknown, unknown>,
   readWikiPageTool as ToolDefinition<unknown, unknown>,
+  searchWikiByTitleTool as ToolDefinition<unknown, unknown>,
   markSectionCoveredTool as ToolDefinition<unknown, unknown>,
   surfaceGapTool as ToolDefinition<unknown, unknown>,
   writeWikiPageTool as ToolDefinition<unknown, unknown>,
   updateWikiPageTool as ToolDefinition<unknown, unknown>,
   linkPagesTool as ToolDefinition<unknown, unknown>,
+  deleteWikiPageTool as ToolDefinition<unknown, unknown>,
   doneTool as ToolDefinition<unknown, unknown>,
 ]
 
