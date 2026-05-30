@@ -44,7 +44,7 @@ import {
   isAzureOpenAiEndpoint,
   isAzureOpenAiV1Endpoint,
 } from "@/lib/azure-openai"
-import { buildAnthropicUrl } from "@/lib/llm-providers"
+import { buildAnthropicUrl, requiresBearerAuth } from "@/lib/llm-providers"
 import type { LlmConfig } from "@/stores/wiki-store"
 import type {
   AgentLlm,
@@ -252,19 +252,13 @@ function buildAnthropicAgentHeaders(
   apiKey: string,
   url: string,
 ): Record<string, string> {
-  // Match the existing chat path's auth choice — MiniMax / Bailian /
-  // Xiaomi MiMo gateways take Bearer; vanilla Anthropic takes
-  // x-api-key + anthropic-version. We inline the logic from
-  // llm-providers.ts's requiresBearerAuth() so this module stays
-  // self-contained and doesn't reach into a private function.
-  const normalized = url.toLowerCase().replace(/\/+$/, "")
-  const wantsBearer =
-    normalized.startsWith("https://api.minimax.io/anthropic") ||
-    normalized.startsWith("https://api.minimaxi.com/anthropic") ||
-    normalized.startsWith("https://coding.dashscope.aliyuncs.com/apps/anthropic") ||
-    /(^https:\/\/|^)token-plan-cn\.xiaomimimo\.com\/anthropic(?:\/|$)/i.test(normalized)
+  // MiniMax / Bailian / Xiaomi MiMo gateways take Bearer; vanilla
+  // Anthropic takes x-api-key + anthropic-version. Share the gateway
+  // detection with the chat path (`requiresBearerAuth` in
+  // llm-providers) so adding a new Anthropic-shaped proxy only takes
+  // one edit instead of two.
   const base: Record<string, string> = { "Content-Type": JSON_CONTENT_TYPE }
-  if (wantsBearer) {
+  if (requiresBearerAuth(url)) {
     base.Authorization = `Bearer ${apiKey}`
   } else {
     base["x-api-key"] = apiKey

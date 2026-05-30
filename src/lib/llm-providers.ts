@@ -491,7 +491,7 @@ function buildAnthropicBodyWithReasoning(
  * Anthropic-native header gets blocked by the browser before the request
  * even leaves.
  */
-function requiresBearerAuth(url: string): boolean {
+export function requiresBearerAuth(url: string): boolean {
   const normalized = url.toLowerCase().replace(/\/+$/, "")
   return (
     // MiniMax — CORS allow-headers doesn't include x-api-key

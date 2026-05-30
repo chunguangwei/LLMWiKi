@@ -12,14 +12,17 @@
  * boundary** — schema-validated input, structured output, no
  * exceptions surface to the LLM.
  *
- * Phase A implements these one at a time, in this order:
- *   1. read_outline   — pure read, simplest possible test bed
- *   2. read_chunk     — pure read, no LLM in the loop yet
- *   3. search_source  — wires in vector index, still no mutation
- *   4. list_wiki_pages, read_wiki_page — wiki inspection (no writes)
- *   5. mark_section_covered, surface_gap — tracker mutation only
- *   6. write_wiki_page, update_wiki_page, link_pages — wiki mutation
- *   7. done — loop control
+ * Tools split into four layers (no enforced runtime category — just
+ * a mental model when reading the code):
+ *
+ *   - Source inspection: read_outline, read_chunk, search_source
+ *   - Wiki inspection:   list_wiki_pages, read_wiki_page
+ *   - Tracker mutation:  mark_section_covered, surface_gap
+ *   - Wiki mutation:     write_wiki_page, update_wiki_page, link_pages
+ *   - Loop control:      done
+ *
+ * Order in the TOOLS array below matches the LLM-facing catalogue
+ * order; it's stable so prompt-cache hashes don't churn.
  */
 import type { AgentContext } from "../types"
 
@@ -42,8 +45,6 @@ import { updateWikiPageTool } from "./update-wiki-page"
 import { linkPagesTool } from "./link-pages"
 import { doneTool } from "./done"
 
-// Phase A — tools register here as they land. Order matches the
-// implementation order in docs/agent-ingest-design.md §9 Phase A.
 // The runner iterates this array to build the tool catalogue passed
 // to the LLM API; getTool() (below) is the dispatch on the LLM's
 // chosen tool_use name.

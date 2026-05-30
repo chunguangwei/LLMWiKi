@@ -12,24 +12,27 @@
  * `./tools/...` outside the folder; the surface here is narrow on
  * purpose so the pipeline can be swapped without breaking callers.
  *
- * What `runAgentIngest` does (Phase C):
+ * What `runAgentIngest` does:
  *
  *   1. Read the source file from disk (via existing fs commands).
  *   2. preprocessSource() → chunks + outline + sourceHash.
  *   3. Build a KeywordVectorIndex over the chunks (BM25 over text;
- *      Phase F swaps in LanceDB-backed semantic search).
+ *      a semantic-vector backend is a future swap-in — the
+ *      VectorIndex interface is the seam).
  *   4. Construct FileSystemWikiAccess for the project's wiki/.
  *   5. Collect existing pages once for the initial user prompt.
  *   6. Build system + initial user messages via `./prompts`.
- *   7. Create the LLM adapter via createAgentLlm() and run the loop.
- *   8. Map runner result + tracker snapshot → AgentIngestResult.
- *
- * What it does NOT do yet:
- *
- *   - Checkpoint persistence (Phase E — saves tracker snapshot
- *     between turns so a crash resumes from the last good state).
- *   - Verify pass (Phase E — one final LLM call comparing source
- *     outline to wiki pages written, surfacing gaps as review items).
+ *   7. loadCheckpoint() — resume tracker + message history from the
+ *      most recent partial run for this sourceHash, if any.
+ *   8. Create the LLM adapter via createAgentLlm() and run the loop;
+ *      onCheckpoint hook fires after every turn (fire-and-forget).
+ *   9. runVerifyPass() — independent second-opinion LLM call that
+ *      walks the source outline against the wiki pages produced and
+ *      adds any uncovered headings as gaps in the tracker.
+ *  10. Cleanup: delete checkpoint on done; save final checkpoint
+ *      (AWAITED, errors surface in result.finalCheckpointError) on
+ *      partial run so the user can resume.
+ *  11. Map runner result + tracker snapshot → AgentIngestResult.
  */
 import { readFile } from "@/commands/fs"
 import type { WikiProject } from "@/types/wiki"
