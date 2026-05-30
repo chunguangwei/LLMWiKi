@@ -65,7 +65,10 @@ export function toolSchemasForLlm(filter?: readonly string[]): ToolSchema[] {
  *
  * Excludes: surface_gap (chat doesn't surface lint items).
  */
-export function getChatAgentToolNames(): readonly string[] {
+export function getChatAgentToolNames(opts?: {
+  canWrite?: boolean
+}): readonly string[] {
+  if (opts?.canWrite) return CHAT_AGENT_TOOL_NAMES_WITH_WRITE
   return CHAT_AGENT_TOOL_NAMES
 }
 
@@ -76,6 +79,29 @@ const CHAT_AGENT_TOOL_NAMES = [
   "web_fetch",
   "web_search",
   "search_local_files",
+  "done",
+] as const
+
+/**
+ * Extended catalogue when the user explicitly opts into the chat-agent
+ * write Labs sub-flag. Adds write_wiki_page + update_wiki_page so the
+ * user can ask "create a page about X" or "update concepts/foo to
+ * mention Y" in chat. DELIBERATELY EXCLUDES delete_wiki_page and
+ * link_pages — those are higher-blast-radius and stay in the
+ * agent-ingest / agent-lint-fix catalogues for now. The system prompt
+ * teaches the agent to use these tools ONLY when the user explicitly
+ * asks for a wiki mutation; pure-answer questions still get plain
+ * text replies.
+ */
+const CHAT_AGENT_TOOL_NAMES_WITH_WRITE = [
+  "list_wiki_pages",
+  "read_wiki_page",
+  "search_wiki_by_title",
+  "web_fetch",
+  "web_search",
+  "search_local_files",
+  "write_wiki_page",
+  "update_wiki_page",
   "done",
 ] as const
 

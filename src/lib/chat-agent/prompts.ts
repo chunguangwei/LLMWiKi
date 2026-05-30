@@ -23,17 +23,23 @@ export interface BuildChatAgentSystemPromptOpts {
   /**
    * Today's date as `YYYY-MM-DD`. Required for caller; tests pass a
    * fixed string so prompt snapshots stay deterministic, the runtime
-   * entry point computes it from `new Date()`. The LLM uses this for
-   * time-sensitive web searches — without it the model defaults to
-   * the year in its training data (real-world example: a query for
-   * "today's news" turned into "2025 news" while running on 2026-05-30
-   * because the model had no clock).
+   * entry point computes it from `new Date()`.
    */
   today: string
+  /**
+   * When true, the agent's tool catalogue includes write_wiki_page +
+   * update_wiki_page (Labs sub-flag opt-in). The prompt swaps the
+   * "you can't mutate" rule for guidance on WHEN to write — only
+   * when the user explicitly asks for it, never as an implicit side
+   * effect of answering a question.
+   */
+  canWrite?: boolean
 }
 
 export function buildChatAgentSystemPrompt(opts: BuildChatAgentSystemPromptOpts): string {
-  const sections: string[] = [BASE_PROMPT]
+  const mutationNote = opts.canWrite ? MUTATION_NOTE_CAN_WRITE : MUTATION_NOTE_READ_ONLY
+  const baseWithMutationNote = BASE_PROMPT.replace("{MUTATION_NOTE}", mutationNote)
+  const sections: string[] = [baseWithMutationNote]
 
   sections.push(`\n## Today\n\nToday is ${opts.today}. Use this when crafting time-sensitive web_search queries.`)
 
@@ -96,9 +102,32 @@ If the wiki doesn't cover the question:
   - web_search for general information (returns ranked title / url / snippet results)
   - web_fetch to read a SPECIFIC URL fully (article body, blog post, docs page) — use this after web_search picks the right hit, or when the user gave you a URL
 
-You CANNOT mutate the wiki in this mode — no write / update / delete / link tools. When the user asks you to write / create / save a wiki page, you MUST still answer the SUBSTANTIVE question (give the full summary / content they asked about) in your reply text, THEN add a short note like "I can't save this directly — hover this message and click 'Save to Wiki' to commit it as a page, or paste it into a new file in raw/sources/ to run through ingest." Do NOT call \`done\` with empty text just because you can't write — the user's question still deserves an answer.
+{MUTATION_NOTE}`
+
+const MUTATION_NOTE_READ_ONLY = `You CANNOT mutate the wiki in this mode — no write / update / delete / link tools. When the user asks you to write / create / save a wiki page, you MUST still answer the SUBSTANTIVE question (give the full summary / content they asked about) in your reply text, THEN add a short note like "I can't save this directly — hover this message and click 'Save to Wiki' to commit it as a page, or paste it into a new file in raw/sources/ to run through ingest." Do NOT call \`done\` with empty text just because you can't write — the user's question still deserves an answer.
 
 DO NOT emit \`---REVIEW: ...\` or \`---FILE: ...\` / \`---END REVIEW---\` / \`---END FILE---\` blocks. Those structured blocks exist for the ingest path; in chat mode they get rendered as separate cards and route the user's content into the Review queue, which is NOT what the user wants when they ask for an answer. Write your reply as plain markdown — headings, lists, paragraphs. The user's "Save to Wiki" button (visible on hover over your reply) handles the wiki-creation path.`
+
+const MUTATION_NOTE_CAN_WRITE = `You CAN mutate the wiki — \`write_wiki_page\` (create new) and \`update_wiki_page\` (modify existing body / related / tags) are in your toolset. Use them ONLY when the user EXPLICITLY asks for a wiki mutation. Trigger phrases include:
+
+  - "save this to the wiki", "add a page about X", "create a wiki page for X"
+  - "update concepts/foo to mention Y", "extend the X page with Z"
+  - "建一个 X 的 wiki 页面" / "把这个加到 wiki" / "更新 concepts/X"
+
+When NOT to write:
+  - Pure-answer questions ("what is X", "how does Y work"). Reply in text, don't write.
+  - When the user asks to "summarise X" — give the summary in text; don't auto-save it. They'll tell you if they want it saved.
+  - When you're uncertain about the right slug, type, or whether the page should exist at all — write the answer in text and ask.
+
+When you DO write:
+  1. Check first: search_wiki_by_title for similar existing slugs; read_wiki_page on the best match. If a page already exists on the topic, prefer update_wiki_page over creating a duplicate.
+  2. Use the project's 34-type taxonomy for the \`type\` field. Common: concept / entity / report / note / query / article. See purpose.md or schema.md for project-specific types.
+  3. ALSO emit substantive answer text BEFORE / ALONGSIDE the write — the user should see what they got, not just "I wrote concepts/foo".
+  4. Cite the new slug in your reply text using \`[[concepts/foo]]\` syntax so the link is clickable.
+
+Tools you DON'T have (by design, even in this mode): \`delete_wiki_page\`, \`link_pages\`. If the user asks to delete or to add a wikilink between two specific pages, explain that those actions live in the ingest / lint-fix flows for safety.
+
+DO NOT emit \`---REVIEW: ...\` or \`---FILE: ...\` / \`---END REVIEW---\` / \`---END FILE---\` blocks. Use the write_wiki_page / update_wiki_page tools instead — they produce real files atomically; the REVIEW / FILE blocks were a legacy ingest-path pattern that routes content into the Review queue.`
 
 const NO_SEARCH_PROVIDER_NOTE = `
 

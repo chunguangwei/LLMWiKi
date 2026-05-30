@@ -198,6 +198,18 @@ export async function loadExperimentalChatAgent(): Promise<boolean> {
   return (await store.get<boolean>(CHAT_AGENT_FLAG_KEY)) ?? false
 }
 
+const CHAT_AGENT_CAN_WRITE_FLAG_KEY = "experimentalChatAgentCanWrite"
+
+export async function saveExperimentalChatAgentCanWrite(enabled: boolean): Promise<void> {
+  const store = await getStore()
+  await store.set(CHAT_AGENT_CAN_WRITE_FLAG_KEY, enabled)
+}
+
+export async function loadExperimentalChatAgentCanWrite(): Promise<boolean> {
+  const store = await getStore()
+  return (await store.get<boolean>(CHAT_AGENT_CAN_WRITE_FLAG_KEY)) ?? false
+}
+
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"
 
 function scheduledImportKey(projectPath: string): string {

@@ -463,6 +463,72 @@ describe("runChatAgent — chat tool catalogue", () => {
     expect(toolNames).not.toContain("read_outline")
     expect(toolNames).not.toContain("search_source")
   })
+
+  it("adds write_wiki_page + update_wiki_page when canWrite is true", async () => {
+    setupEmptyProject()
+    const llm = new ScriptedLlm([textTurn("OK.")])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    await runChatAgent({
+      userMessage: "create a wiki page about X",
+      history: emptyHistory(),
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+      canWrite: true,
+    })
+
+    const toolNames = llm.calls[0].tools.map((t) => t.name).sort()
+    // write + update are now in the catalogue…
+    expect(toolNames).toContain("write_wiki_page")
+    expect(toolNames).toContain("update_wiki_page")
+    // …but delete + link still aren't (deliberate blast-radius limit).
+    expect(toolNames).not.toContain("delete_wiki_page")
+    expect(toolNames).not.toContain("link_pages")
+  })
+
+  it("teaches the agent when (and when NOT) to call write tools", async () => {
+    setupEmptyProject()
+    const llm = new ScriptedLlm([textTurn("OK.")])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    await runChatAgent({
+      userMessage: "hi",
+      history: emptyHistory(),
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+      canWrite: true,
+    })
+
+    const sys = llm.calls[0].messages.find((m) => m.role === "system")!
+    if (typeof sys.content !== "string") throw new Error("expected string system")
+    expect(sys.content).toMatch(/You CAN mutate the wiki/)
+    expect(sys.content).toMatch(/ONLY when the user EXPLICITLY asks/)
+    expect(sys.content).toMatch(/Pure-answer questions/)
+    expect(sys.content).toMatch(/write_wiki_page/)
+    expect(sys.content).toMatch(/update_wiki_page/)
+    // delete + link still explicitly NOT available even in this mode.
+    expect(sys.content).toMatch(/Tools you DON'T have/)
+    expect(sys.content).toMatch(/delete_wiki_page/)
+    expect(sys.content).toMatch(/link_pages/)
+  })
+
+  it("falls back to read-only catalogue when canWrite is not set", async () => {
+    setupEmptyProject()
+    const llm = new ScriptedLlm([textTurn("OK.")])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    await runChatAgent({
+      userMessage: "hi",
+      history: emptyHistory(),
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+      // canWrite omitted → default read-only
+    })
+
+    const toolNames = llm.calls[0].tools.map((t) => t.name)
+    expect(toolNames).not.toContain("write_wiki_page")
+    expect(toolNames).not.toContain("update_wiki_page")
+  })
 })
 
 describe("runChatAgent — abort propagation", () => {
