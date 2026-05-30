@@ -138,16 +138,13 @@ export async function runAgentLoop(opts: RunAgentLoopOpts): Promise<RunAgentLoop
     const turnTokens = turn.usage.input_tokens + turn.usage.output_tokens
     turnsUsed += 1
     tokensSpent += turnTokens
-    // Push usage into the tracker too so checkpoint snapshots
-    // carry per-run accounting (turnsUsed, tokensSpent). Without
-    // this the snapshot reports 0/0 on resume — purely cosmetic
-    // for the activity panel but confusing in the saved JSON.
-    const recordTurnFn = (opts.ctx.tracker as unknown as {
-      recordTurn?: (n: number) => void
-    }).recordTurn
-    if (typeof recordTurnFn === "function") {
-      recordTurnFn.call(opts.ctx.tracker, turnTokens)
-    }
+    // Push usage into the tracker too so checkpoint snapshots carry
+    // per-run accounting (turnsUsed, tokensSpent). recordTurn is an
+    // optional interface method — test mocks generally don't implement
+    // it. Without this call the snapshot reports 0/0 on resume —
+    // purely cosmetic for the activity panel but confusing in the
+    // saved JSON.
+    opts.ctx.tracker.recordTurn?.(turnTokens)
     opts.onTurn?.(turn, turnsUsed - 1)
 
     // Append assistant content. Even pure-text replies get appended

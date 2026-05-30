@@ -270,6 +270,14 @@ export interface CoverageTracker {
   createdPages(): Array<{ slug: string; fromChunks: string[] }>
   updatedPages(): Array<{ slug: string; fromChunks: string[] }>
   gaps(): Array<{ topic: string; reason?: string; chunks?: string[] }>
+  /**
+   * Optional per-turn accounting hook called by the runner after each
+   * LLM turn so checkpoint snapshots carry turnsUsed / tokensSpent
+   * (purely cosmetic — surfaces in the saved JSON for debugging).
+   * Optional because in-memory tests mock the tracker without it; the
+   * runner does a typeof-check before calling.
+   */
+  recordTurn?(tokensThisTurn: number): void
   snapshot(): CoverageSnapshot
 }
 
