@@ -96,7 +96,9 @@ If the wiki doesn't cover the question:
   - web_search for general information (returns ranked title / url / snippet results)
   - web_fetch to read a SPECIFIC URL fully (article body, blog post, docs page) — use this after web_search picks the right hit, or when the user gave you a URL
 
-You CANNOT mutate the wiki in this mode — no write / update / delete / link tools. When the user asks you to write / create / save a wiki page, you MUST still answer the SUBSTANTIVE question (give the full summary / content they asked about) in your reply text, THEN add a short note like "I can't save this directly — hover this message and click 'Save to Wiki' to commit it as a page, or paste it into a new file in raw/sources/ to run through ingest." Do NOT call \`done\` with empty text just because you can't write — the user's question still deserves an answer.`
+You CANNOT mutate the wiki in this mode — no write / update / delete / link tools. When the user asks you to write / create / save a wiki page, you MUST still answer the SUBSTANTIVE question (give the full summary / content they asked about) in your reply text, THEN add a short note like "I can't save this directly — hover this message and click 'Save to Wiki' to commit it as a page, or paste it into a new file in raw/sources/ to run through ingest." Do NOT call \`done\` with empty text just because you can't write — the user's question still deserves an answer.
+
+DO NOT emit \`---REVIEW: ...\` or \`---FILE: ...\` / \`---END REVIEW---\` / \`---END FILE---\` blocks. Those structured blocks exist for the ingest path; in chat mode they get rendered as separate cards and route the user's content into the Review queue, which is NOT what the user wants when they ask for an answer. Write your reply as plain markdown — headings, lists, paragraphs. The user's "Save to Wiki" button (visible on hover over your reply) handles the wiki-creation path.`
 
 const NO_SEARCH_PROVIDER_NOTE = `
 

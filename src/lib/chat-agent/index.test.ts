@@ -401,6 +401,11 @@ describe("runChatAgent — system prompt rails", () => {
     expect(sys.content).toMatch(/answer the SUBSTANTIVE question/i)
     expect(sys.content).toMatch(/FAILURE mode/i)
     expect(sys.content).toMatch(/Save to Wiki/)
+    // Specifically forbid the structured-block emission that routed
+    // a real-LLM OpenClaw summary into the Review queue instead of
+    // letting Save to Wiki own the path.
+    expect(sys.content).toMatch(/DO NOT emit/i)
+    expect(sys.content).toMatch(/---REVIEW/)
   })
 
   it("injects today's date so time-sensitive web searches use the current year", async () => {
