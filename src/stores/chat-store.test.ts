@@ -78,3 +78,54 @@ describe("chat-store renameConversation", () => {
     expect(after.title).toBe("")
   })
 })
+
+describe("chat-store markMessageSavedToWiki", () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it("sets savedToWiki on the matching message", async () => {
+    const id = useChatStore.getState().createConversation()
+    useChatStore.getState().addMessage("user", "hi")
+    useChatStore.getState().addAssistantTurn("answer")
+    const before = useChatStore
+      .getState()
+      .messages.filter((m) => m.conversationId === id)
+    const assistant = before.find((m) => m.role === "assistant")!
+    expect(assistant.savedToWiki).toBeUndefined()
+
+    useChatStore.getState().markMessageSavedToWiki(
+      assistant.id,
+      "/p/wiki/queries/foo.md",
+    )
+
+    const after = useChatStore.getState().messages.find((m) => m.id === assistant.id)!
+    expect(after.savedToWiki?.path).toBe("/p/wiki/queries/foo.md")
+    expect(after.savedToWiki?.savedAt).toBeGreaterThan(0)
+  })
+
+  it("survives a setMessages round-trip (persistence boundary)", () => {
+    // Simulates the auto-save → reload loop: messages are written to
+    // disk and then re-hydrated. The savedToWiki field must round-trip.
+    useChatStore.getState().createConversation()
+    useChatStore.getState().addMessage("user", "hi")
+    useChatStore.getState().addAssistantTurn("answer")
+    const assistant = useChatStore
+      .getState()
+      .messages.find((m) => m.role === "assistant")!
+    useChatStore.getState().markMessageSavedToWiki(assistant.id, "/p/wiki/queries/x.md")
+
+    const dump = useChatStore.getState().messages.slice()
+    // Clone+restore — what persist would do.
+    useChatStore.getState().setMessages(JSON.parse(JSON.stringify(dump)))
+
+    const after = useChatStore.getState().messages.find((m) => m.id === assistant.id)!
+    expect(after.savedToWiki?.path).toBe("/p/wiki/queries/x.md")
+  })
+
+  it("ignores an unknown message id (no throw, no insert)", () => {
+    const before = useChatStore.getState().messages.length
+    useChatStore.getState().markMessageSavedToWiki("ghost-id", "/x")
+    expect(useChatStore.getState().messages.length).toBe(before)
+  })
+})

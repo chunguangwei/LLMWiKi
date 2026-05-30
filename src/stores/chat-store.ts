@@ -34,6 +34,20 @@ export interface DisplayMessage {
     /** Short one-line description of the result: "ok", "skipped", "error: X", etc. */
     resultSummary: string
   }>
+  /**
+   * Set when the user already saved this assistant reply to the wiki
+   * via SaveToWikiButton. Stored on the message itself (not in local
+   * React state) so the "saved" indicator survives re-renders,
+   * conversation switches, tab toggles, and app restarts (auto-save
+   * persists messages to disk). Without this, the Save button comes
+   * back enabled and the user can create duplicate query pages.
+   */
+  savedToWiki?: {
+    /** Absolute path of the file that was created. */
+    path: string
+    /** ms epoch when the save happened — for "Saved 3m ago" tooltips. */
+    savedAt: number
+  }
 }
 
 interface ChatState {
@@ -67,6 +81,12 @@ interface ChatState {
       toolCalls?: DisplayMessage["toolCalls"]
     },
   ) => void
+  /**
+   * Record that a given assistant message was saved to the wiki at
+   * `path`. Idempotent — re-marking already-saved messages just
+   * refreshes the timestamp. No-op for unknown ids.
+   */
+  markMessageSavedToWiki: (messageId: string, path: string) => void
   setMessages: (messages: DisplayMessage[]) => void
   setConversations: (conversations: Conversation[]) => void
   setStreaming: (streaming: boolean) => void
@@ -223,6 +243,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversations: updatedConversations,
       }
     }),
+
+  markMessageSavedToWiki: (messageId, path) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId
+          ? { ...m, savedToWiki: { path, savedAt: Date.now() } }
+          : m,
+      ),
+    })),
 
   setMessages: (messages) => set({ messages }),
 

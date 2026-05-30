@@ -12,7 +12,7 @@ import {
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { lastQueryPages } from "@/components/chat/chat-panel"
-import type { DisplayMessage } from "@/stores/chat-store"
+import { useChatStore, type DisplayMessage } from "@/stores/chat-store"
 import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
@@ -114,7 +114,12 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
         {isAssistant && hovered && (
           <div className="flex items-center gap-1">
             <CopyButton content={message.content} />
-            <SaveToWikiButton content={message.content} visible={true} />
+            <SaveToWikiButton
+              messageId={message.id}
+              content={message.content}
+              savedToWiki={message.savedToWiki}
+              visible={true}
+            />
             {isLastAssistant && onRegenerate && (
               <button
                 type="button"
@@ -239,14 +244,32 @@ function CopyButton({ content }: { content: string }) {
   )
 }
 
-function SaveToWikiButton({ content, visible }: { content: string; visible: boolean }) {
+function SaveToWikiButton({
+  messageId,
+  content,
+  savedToWiki,
+  visible,
+}: {
+  messageId: string
+  content: string
+  savedToWiki?: DisplayMessage["savedToWiki"]
+  visible: boolean
+}) {
   const project = useWikiStore((s) => s.project)
   const setFileTree = useWikiStore((s) => s.setFileTree)
-  const [saved, setSaved] = useState(false)
+  const markMessageSavedToWiki = useChatStore((s) => s.markMessageSavedToWiki)
+  // Derived from the message itself, not local state: a previous
+  // local-state implementation flashed "Saved!" for 2 seconds then
+  // reset, which meant remounts / scroll virtualisation let the user
+  // click Save again on already-saved content and create dupes. We
+  // persist the saved flag on the message so it survives re-renders,
+  // conversation switches, and app restarts (chat auto-save writes
+  // messages including savedToWiki to disk).
+  const isSaved = Boolean(savedToWiki?.path)
   const [saving, setSaving] = useState(false)
 
   const handleSave = useCallback(async () => {
-    if (!project || saving) return
+    if (!project || saving || isSaved) return
     const pp = normalizePath(project.path)
     setSaving(true)
     try {
@@ -317,8 +340,11 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       setFileTree(tree)
       useWikiStore.getState().bumpDataVersion()
 
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
+      // Commit the saved-to-wiki marker on the message itself. This
+      // is what protects against duplicate clicks: the next render
+      // sees savedToWiki populated and the button reads "Saved" +
+      // disables.
+      markMessageSavedToWiki(messageId, filePath)
 
       // Full auto-ingest: extract entities, concepts, cross-references from saved content
       const llmConfig = useWikiStore.getState().llmConfig
@@ -333,20 +359,24 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
     } finally {
       setSaving(false)
     }
-  }, [project, content, saving, setFileTree])
+  }, [project, content, saving, isSaved, messageId, markMessageSavedToWiki, setFileTree])
 
-  if (!visible && !saved) return null
+  if (!visible && !isSaved) return null
 
   return (
     <button
       type="button"
       onClick={handleSave}
-      disabled={saving}
-      className="self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-      title="Save to wiki"
+      disabled={saving || isSaved}
+      className="self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+      title={
+        isSaved && savedToWiki
+          ? `Already saved to ${savedToWiki.path}`
+          : "Save to wiki"
+      }
     >
       <BookmarkPlus className="h-3 w-3" />
-      {saved ? "Saved!" : saving ? "Saving..." : "Save to Wiki"}
+      {isSaved ? "Saved" : saving ? "Saving..." : "Save to Wiki"}
     </button>
   )
 }
