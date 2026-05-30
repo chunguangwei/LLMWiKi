@@ -128,6 +128,51 @@ export interface WikiAccess {
     | { kind: "slug_taken" }
     | { kind: "validation_failed"; detail: string }
   >
+
+  /**
+   * Update an existing page with new body / related / tags.
+   *
+   * Semantics:
+   *
+   *   - `body` is the COMPLETE new body (after the closing `---`).
+   *     The runner replaces the previous body atomically and records
+   *     `added_chars` = max(0, newBody.length - oldBody.length) for
+   *     the activity log. Frontmatter `type:` and `title:` are
+   *     preserved — the agent can't change them via this tool
+   *     (use write_wiki_page + delete-and-recreate for that).
+   *   - `related` (if provided): UNION-merged with the existing
+   *     frontmatter `related:`. The runner deduplicates. Empty array
+   *     is a no-op — to clear relations, the agent must specifically
+   *     edit the .md outside this tool.
+   *   - `tags` (if provided): same union-merge semantics.
+   *   - `updated:` date is bumped server-side. `created:` is
+   *     preserved.
+   *
+   * Result discriminator:
+   *
+   *   - `{ kind: "updated", path, added_chars }` — success.
+   *   - `{ kind: "slug_not_found" }`             — no page at slug.
+   *                                                 The agent should
+   *                                                 call write_wiki_page
+   *                                                 instead (the tool
+   *                                                 layer surfaces that hint).
+   *   - `{ kind: "validation_failed", detail }`  — schema-level
+   *                                                 reject (invalid
+   *                                                 related slug,
+   *                                                 etc).
+   *
+   * Never throws.
+   */
+  updatePage(opts: {
+    slug: string
+    body: string
+    related?: string[]
+    tags?: string[]
+  }): Promise<
+    | { kind: "updated"; path: string; added_chars: number }
+    | { kind: "slug_not_found" }
+    | { kind: "validation_failed"; detail: string }
+  >
 }
 
 /** Runtime context threaded into every tool call. */

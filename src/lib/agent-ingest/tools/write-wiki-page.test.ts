@@ -37,6 +37,9 @@ function mockCtx(opts: {
       }
       return { kind: "created", path: `wiki/${args.slug}.md` }
     },
+    async updatePage() {
+      return { kind: "validation_failed", detail: "mock" }
+    },
   }
   const ctx: AgentContext = {
     chunks: new Map(),

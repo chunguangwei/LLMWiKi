@@ -38,6 +38,7 @@ import { readWikiPageTool } from "./read-wiki-page"
 import { markSectionCoveredTool } from "./mark-section-covered"
 import { surfaceGapTool } from "./surface-gap"
 import { writeWikiPageTool } from "./write-wiki-page"
+import { updateWikiPageTool } from "./update-wiki-page"
 
 // Phase A — tools register here as they land. Order matches the
 // implementation order in docs/agent-ingest-design.md §9 Phase A.
@@ -53,6 +54,7 @@ export const TOOLS: Array<ToolDefinition<unknown, unknown>> = [
   markSectionCoveredTool as ToolDefinition<unknown, unknown>,
   surfaceGapTool as ToolDefinition<unknown, unknown>,
   writeWikiPageTool as ToolDefinition<unknown, unknown>,
+  updateWikiPageTool as ToolDefinition<unknown, unknown>,
 ]
 
 /**
