@@ -135,8 +135,11 @@ export async function runAgentLoop(opts: RunAgentLoopOpts): Promise<RunAgentLoop
     // carry per-run accounting (turnsUsed, tokensSpent). Without
     // this the snapshot reports 0/0 on resume — purely cosmetic
     // for the activity panel but confusing in the saved JSON.
-    if (typeof (opts.ctx.tracker as { recordTurn?: (n: number) => void }).recordTurn === "function") {
-      ;(opts.ctx.tracker as { recordTurn: (n: number) => void }).recordTurn(turnTokens)
+    const recordTurnFn = (opts.ctx.tracker as unknown as {
+      recordTurn?: (n: number) => void
+    }).recordTurn
+    if (typeof recordTurnFn === "function") {
+      recordTurnFn.call(opts.ctx.tracker, turnTokens)
     }
     opts.onTurn?.(turn, turnsUsed - 1)
 

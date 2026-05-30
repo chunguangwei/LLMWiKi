@@ -48,6 +48,7 @@ import { runAgentLoop } from "./runner"
 import { toolSchemasForLlm, assertSchemasUnique } from "./tool-schemas"
 import { InMemoryCoverageTracker } from "./tracker"
 import type { AgentContext, AgentIngestResult } from "./types"
+import { runVerifyPass } from "./verify"
 import { KeywordVectorIndex } from "./vector-index"
 import { FileSystemWikiAccess } from "./wiki-access"
 
@@ -171,12 +172,39 @@ export async function runAgentIngest(
     },
   })
 
+  // Verify pass — independent second opinion that the wiki pages
+  // actually cover the source's outline. Adds gaps to the tracker
+  // for any heading the verifier flags. Skipped on abort / budget /
+  // empty outline; see verify.ts skip rules.
+  const verifyResult = await runVerifyPass({
+    llm,
+    ctx,
+    sourcePath: opts.sourcePath,
+    outline: preprocessed.outline,
+    pagesCreated: tracker.createdPages(),
+    pagesUpdated: tracker.updatedPages(),
+    stopReason: runResult.stopReason,
+    signal,
+  })
+
   // Cleanup: a successful done means the run completed; the
   // checkpoint becomes garbage. Anything else (max_tokens,
   // max_turns, aborted, error) leaves the file in place so the
-  // next call resumes.
+  // next call resumes. NOTE: cleanup runs AFTER verify so the
+  // verifier's gaps land in the snapshot one last time (in case
+  // the user inspects the file).
   if (runResult.stopReason === "done_called") {
     await deleteCheckpoint(projectPath, preprocessed.sourceHash).catch(() => {})
+  } else if (verifyResult.ran) {
+    // Run was partial AND verify added gaps; persist the latest
+    // tracker state so the next resume starts from the same gap
+    // list. Fire-and-forget — checkpoint failure here is non-fatal.
+    saveCheckpoint(projectPath, {
+      sourcePath: opts.sourcePath,
+      sourceHash: preprocessed.sourceHash,
+      tracker: tracker.snapshot(),
+      messages: runResult.finalMessages,
+    }).catch(() => {})
   }
 
   // 10. Aggregate result.
