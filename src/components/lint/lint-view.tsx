@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore, type LintItem } from "@/stores/lint-store"
-import { runStructuralLint, runSemanticLint } from "@/lib/lint"
+import { runStructuralLintWithStats, runSemanticLint, type LintStats } from "@/lib/lint"
 import { runLintFix } from "@/lib/agent-lint-fix"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { useActivityStore } from "@/stores/activity-store"
@@ -71,6 +71,11 @@ export function LintView() {
   const [hasRun, setHasRun] = useState(false)
   const [runSemantic, setRunSemantic] = useState(false)
   const [fixingId, setFixingId] = useState<string | null>(null)
+  // Lint-pass stats — populated by the most recent Run check; used
+  // by the header to surface "skipped N raw-source items" so the
+  // user sees the dedup-vs-filter signal explicitly. Null when no
+  // pass has run yet OR when the previous pass errored.
+  const [lintStats, setLintStats] = useState<LintStats | null>(null)
   // Bulk fix mode — when set, runs runLintFix in sequence over every
   // matching lint item. Holds the item id currently being processed
   // so the row can show the same spinner the per-row Fix uses. Null
@@ -84,7 +89,8 @@ export function LintView() {
     setRunning(true)
     clearLintItems()
     try {
-      const structural = await runStructuralLint(pp)
+      const { findings: structural, stats } = await runStructuralLintWithStats(pp)
+      setLintStats(stats)
       let all = structural
 
       if (runSemantic && hasUsableLlm(llmConfig)) {
@@ -436,6 +442,23 @@ export function LintView() {
           {showResults && items.length > 0 && (
             <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
               {items.length === 1 ? t("lint.issues", { count: items.length }) : t("lint.issues_plural", { count: items.length })}
+            </span>
+          )}
+          {/* Skipped-pages hint. Surfaces "skipped N items in sources/"
+              so the user can see that lint filtered noise rather than
+              missed pages — and so the dropped count after enabling
+              the dedup PR is auditable, not magical. */}
+          {showResults && lintStats && lintStats.skipped > 0 && (
+            <span
+              className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
+              title={Array.from(lintStats.skippedByPathPrefix.entries())
+                .map(([prefix, n]) => `${prefix} ${n}`)
+                .join("  ·  ")}
+            >
+              {t("lint.skipped", {
+                defaultValue: `skipped ${lintStats.skipped}`,
+                count: lintStats.skipped,
+              })}
             </span>
           )}
         </div>

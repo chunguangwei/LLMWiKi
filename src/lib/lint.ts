@@ -6,6 +6,103 @@ import { useActivityStore } from "@/stores/activity-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
 
+/**
+ * Wiki sub-folders whose contents are RAW imports, not knowledge
+ * pages. Real-world testing on a ~250-page wiki showed 70% of all
+ * structural lint findings (94 broken-link + 15 orphan + 2 no-outlinks
+ * out of 142 total) came from these folders — and almost none of
+ * those findings were actionable:
+ *
+ *   - `sources/` holds source documents the user ingested. They're
+ *     allowed to reference external concepts that don't have wiki
+ *     pages yet (broken-link), they're naturally unlinked from other
+ *     wiki pages (orphan), and their bodies are raw imports without
+ *     wikilink curation (no-outlinks). Treating them as knowledge
+ *     pages floods the Lint view with noise.
+ *
+ *   - `raw/` is the same idea under an older project layout.
+ *
+ *   - `queries/` is where chat-saved replies land (Save to Wiki).
+ *     Each one is a one-shot answer card; no expectation that they
+ *     should link / be linked-to like curated wiki pages.
+ *
+ *   - `.llm-wiki/` / `.llm-wiki-local/` are app-internal scratch
+ *     directories (checkpoints, lint output itself, etc.) that the
+ *     listDirectory walker can pick up if they accidentally have
+ *     .md files. Hard-skip.
+ *
+ * Trailing slash convention — match is `startsWith(prefix)` against
+ * the slug (NOT absolute path).
+ */
+const DEFAULT_IGNORE_PATH_PREFIXES: ReadonlyArray<string> = [
+  "sources/",
+  "raw/",
+  "queries/",
+  ".llm-wiki/",
+  ".llm-wiki-local/",
+]
+
+export interface LintConfig {
+  /** Path prefixes (wiki-relative, no leading slash, trailing slash
+   *  required). Defaults skip raw / queries / app-internal trees. */
+  ignorePathPrefixes: string[]
+}
+
+/**
+ * Load the project's lint config from `.llm-wiki/lint-config.json`.
+ * Returns the defaults when missing — most projects use them as-is
+ * and don't need a config file. The file shape is:
+ *
+ *   {
+ *     "ignorePathPrefixes": ["sources/", "raw/", "queries/"],
+ *     "extraIgnorePathPrefixes": ["legacy-imports/"]
+ *   }
+ *
+ *   - `ignorePathPrefixes` REPLACES the default list (advanced users
+ *     who want to lint queries/ etc. set this to []).
+ *   - `extraIgnorePathPrefixes` is added on top of the defaults
+ *     (common case: keep defaults, add one more folder).
+ */
+export async function loadLintConfig(projectPath: string): Promise<LintConfig> {
+  const pp = normalizePath(projectPath)
+  let parsed: unknown
+  try {
+    const text = await readFile(`${pp}/.llm-wiki/lint-config.json`)
+    parsed = JSON.parse(text)
+  } catch {
+    return { ignorePathPrefixes: DEFAULT_IGNORE_PATH_PREFIXES.slice() }
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return { ignorePathPrefixes: DEFAULT_IGNORE_PATH_PREFIXES.slice() }
+  }
+  const obj = parsed as Record<string, unknown>
+  const replace = Array.isArray(obj.ignorePathPrefixes)
+    ? (obj.ignorePathPrefixes as unknown[]).filter(
+        (s): s is string => typeof s === "string" && s.length > 0,
+      )
+    : null
+  const extra = Array.isArray(obj.extraIgnorePathPrefixes)
+    ? (obj.extraIgnorePathPrefixes as unknown[]).filter(
+        (s): s is string => typeof s === "string" && s.length > 0,
+      )
+    : []
+  const base = replace ?? DEFAULT_IGNORE_PATH_PREFIXES.slice()
+  // Dedup + normalise trailing slash so config writers can leave it off.
+  const normalised = Array.from(
+    new Set([...base, ...extra].map((p) => (p.endsWith("/") ? p : p + "/"))),
+  )
+  return { ignorePathPrefixes: normalised }
+}
+
+/** Lint-time stats for the Lint view header. Returned alongside the
+ *  findings so the UI can display "skipped N raw-source items" — a
+ *  honest signal that lint is filtering noise rather than missing it. */
+export interface LintStats {
+  scanned: number
+  skipped: number
+  skippedByPathPrefix: Map<string, number>
+}
+
 export interface LintResult {
   type: "orphan" | "broken-link" | "no-outlinks" | "semantic"
   severity: "warning" | "info"
@@ -67,19 +164,52 @@ function buildSlugMap(
 // ── Structural lint ───────────────────────────────────────────────────────────
 
 export async function runStructuralLint(projectPath: string): Promise<LintResult[]> {
+  const { findings } = await runStructuralLintWithStats(projectPath)
+  return findings
+}
+
+/**
+ * Same as runStructuralLint, but also returns counter stats for the
+ * UI ("skipped N items"). Useful for surfacing why the lint count
+ * dropped after a config tweak.
+ */
+export async function runStructuralLintWithStats(
+  projectPath: string,
+): Promise<{ findings: LintResult[]; stats: LintStats }> {
   const wikiRoot = `${normalizePath(projectPath)}/wiki`
   let tree: FileNode[]
   try {
     tree = await listDirectory(wikiRoot)
   } catch {
-    return []
+    return {
+      findings: [],
+      stats: { scanned: 0, skipped: 0, skippedByPathPrefix: new Map() },
+    }
   }
 
+  const config = await loadLintConfig(projectPath)
   const wikiFiles = flattenMdFiles(tree)
-  // Exclude index.md and log.md from orphan checks
-  const contentFiles = wikiFiles.filter(
-    (f) => f.name !== "index.md" && f.name !== "log.md"
-  )
+  // Exclude index.md and log.md from orphan checks plus all files
+  // under config-ignored path prefixes (default raw / queries / etc).
+  // The skip pass also records WHY each file was dropped so the UI
+  // can show "skipped N items in sources/" instead of a silent dip.
+  const skippedByPathPrefix = new Map<string, number>()
+  const contentFiles = wikiFiles.filter((f) => {
+    if (f.name === "index.md" || f.name === "log.md") return false
+    const slug = relativeToSlug(getRelativePath(f.path, wikiRoot))
+    for (const prefix of config.ignorePathPrefixes) {
+      if (slug.startsWith(prefix)) {
+        skippedByPathPrefix.set(prefix, (skippedByPathPrefix.get(prefix) ?? 0) + 1)
+        return false
+      }
+    }
+    return true
+  })
+  const stats: LintStats = {
+    scanned: contentFiles.length,
+    skipped: wikiFiles.length - contentFiles.length,
+    skippedByPathPrefix,
+  }
 
   const slugMap = buildSlugMap(contentFiles, wikiRoot)
 
@@ -187,7 +317,7 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
     })
   }
 
-  return results
+  return { findings: results, stats }
 }
 
 // ── Semantic lint ─────────────────────────────────────────────────────────────

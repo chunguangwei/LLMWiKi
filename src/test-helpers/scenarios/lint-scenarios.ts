@@ -125,6 +125,28 @@ export const lintScenarios: LintScenario[] = [
     },
   },
 
+  // 3c. lint exclusion: raw-source paths (sources/, queries/) are
+  //     skipped by default. A page directly under wiki/sources/ has
+  //     a broken link AND no inbound link — without the exclusion it
+  //     would produce orphan + no-outlinks + broken-link. With the
+  //     default LintConfig it produces NONE.
+  {
+    name: "structural/ignore-raw-sources",
+    description:
+      "sources/raw-import.md has [[non-existent]] and no other linking page. " +
+      "Default lint config skips sources/ so the page produces zero findings.",
+    initialWiki: {
+      "wiki/index.md": "# Index\n\n",
+      "wiki/sources/raw-import.md": page(
+        "Raw import",
+        "Some imported content referencing [[non-existent]] and nothing else.",
+      ),
+    },
+    expected: {
+      structural: [],
+    },
+  },
+
   // 4. no-outlinks — a page has zero [[wikilinks]]
   {
     name: "structural/no-outlinks",
