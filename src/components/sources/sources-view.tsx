@@ -22,6 +22,7 @@ import {
 import { addImagesToRawWithContext } from "@/lib/raw-from-chat"
 import { runAgentIngest } from "@/lib/agent-ingest"
 import { useActivityStore } from "@/stores/activity-store"
+import { useReviewStore } from "@/stores/review-store"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
@@ -375,6 +376,31 @@ export function SourcesView() {
         ...result.pagesCreated.map((p) => p.slug),
         ...result.pagesUpdated.map((p) => p.slug),
       ]
+      // Surface each gap from the tracker (which includes the
+      // verify pass's findings) as a Review item so the user can
+      // act on it — "Create page" (next agent run will pick this
+      // up via the Review queue) or "Skip" (dismiss). The Review
+      // tab is where uncovered topics live until the user decides.
+      if (result.reviewItemsCreated.length > 0) {
+        const review = useReviewStore.getState()
+        for (const gap of result.reviewItemsCreated) {
+          review.addItem({
+            type: "missing-page",
+            title: gap.topic,
+            description:
+              (gap.reason ?? "Agent flagged this topic as uncovered.") +
+              `\n\nFrom source: \`${node.path.split("/").pop()}\``,
+            sourcePath: node.path,
+            ...(gap.chunks && gap.chunks.length > 0
+              ? { affectedPages: gap.chunks }  // chunk ids — informational, not actual page paths
+              : {}),
+            options: [
+              { label: t("review.createPage", { defaultValue: "Create Page" }), action: "Create Page" },
+              { label: t("review.skip", { defaultValue: "Skip" }), action: "Skip" },
+            ],
+          })
+        }
+      }
       const lines = [
         result.reason,
         `Turns: ${result.turnsUsed} · tokens: ${Math.round(result.tokensSpent / 1000)}k`,

@@ -292,7 +292,7 @@ export interface CoverageSnapshot {
 export interface AgentIngestResult {
   pagesCreated: Array<{ slug: string; fromChunks: string[] }>
   pagesUpdated: Array<{ slug: string; fromChunks: string[] }>
-  reviewItemsCreated: Array<{ topic: string; chunks?: string[] }>
+  reviewItemsCreated: Array<{ topic: string; reason?: string; chunks?: string[] }>
   coverage: number
   turnsUsed: number
   tokensSpent: number
