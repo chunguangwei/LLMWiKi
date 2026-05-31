@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest"
-import { groupLintResultsForDisplay, shouldShowLintResults } from "./lint-view"
+import { groupByType, groupLintResultsForDisplay, shouldShowLintResults } from "./lint-view"
 import type { LintItem } from "@/stores/lint-store"
 
 function makeLintItem(
   page: string,
   severity: "warning" | "info",
   index: number,
+  type?: LintItem["type"],
 ): LintItem {
   return {
     id: `lint-${index}`,
-    type: severity === "warning" ? "broken-link" : "orphan",
+    type: type ?? (severity === "warning" ? "broken-link" : "orphan"),
     severity,
     page,
     detail: `${page} detail`,
@@ -36,6 +37,41 @@ describe("groupLintResultsForDisplay", () => {
       "info-a.md",
       "info-c.md",
     ])
+  })
+})
+
+describe("groupByType", () => {
+  it("buckets items by their type, preserving order within a bucket", () => {
+    const items: LintItem[] = [
+      makeLintItem("a.md", "warning", 0, "broken-link"),
+      makeLintItem("b.md", "warning", 1, "broken-link"),
+      makeLintItem("c.md", "info", 2, "orphan"),
+    ]
+    const groups = groupByType(items)
+    expect(groups).toHaveLength(2)
+    expect(groups[0].type).toBe("broken-link")
+    expect(groups[0].items.map((i) => i.page)).toEqual(["a.md", "b.md"])
+    expect(groups[1].type).toBe("orphan")
+    expect(groups[1].items.map((i) => i.page)).toEqual(["c.md"])
+  })
+
+  it("sorts groups by descending count, then by canonical type order", () => {
+    const items: LintItem[] = [
+      makeLintItem("o1.md", "info", 0, "orphan"),
+      makeLintItem("o2.md", "info", 1, "orphan"),
+      makeLintItem("o3.md", "info", 2, "orphan"),
+      makeLintItem("nl1.md", "info", 3, "no-outlinks"),
+      makeLintItem("b1.md", "warning", 4, "broken-link"),
+      makeLintItem("b2.md", "warning", 5, "broken-link"),
+      makeLintItem("b3.md", "warning", 6, "broken-link"),
+    ]
+    const groups = groupByType(items)
+    expect(groups.map((g) => g.type)).toEqual(["broken-link", "orphan", "no-outlinks"])
+    // ties (broken-link 3 vs orphan 3) → canonical order picks broken-link first.
+  })
+
+  it("returns empty array when the input is empty", () => {
+    expect(groupByType([])).toEqual([])
   })
 })
 
