@@ -55,6 +55,7 @@ import {
 } from "@/commands/fs"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { normalizePath } from "@/lib/path-utils"
+import { WIKI_TYPE_OPTIONS } from "@/lib/wiki-type-options"
 import type { FileNode } from "@/types/wiki"
 import type {
   WikiAccess,
@@ -70,6 +71,86 @@ const STRUCTURAL_PAGES: ReadonlySet<string> = new Set([
 ])
 
 const PREVIEW_CHARS = 200
+
+/**
+ * Canonical set of frontmatter `type:` values the agent is allowed to
+ * write. Sourced from WIKI_TYPE_OPTIONS (the type selector's source of
+ * truth) plus `overview` (auto-managed but a legitimate value when an
+ * overview-shaped page legitimately exists) and `other` (escape hatch
+ * for pages whose nature genuinely doesn't fit any taxonomy slot).
+ *
+ * Anything outside this set goes through `normaliseWriteType` —
+ * which first tries to infer a canonical type from the slug's first
+ * path segment (`concepts/foo` → `concept`), and only rejects when
+ * neither lookup matches. This stops the "type: 其他" / random-slug
+ * pollution that surfaced as a catch-all bucket in the knowledge tree
+ * UI, while still letting the agent be sloppy with synonyms when the
+ * slug itself disambiguates intent.
+ */
+const CANONICAL_WIKI_TYPES: ReadonlySet<string> = new Set([
+  ...WIKI_TYPE_OPTIONS.map((o) => o.value),
+  "overview",
+  "other",
+])
+
+/**
+ * Map of slug-prefix → canonical type. Mirrors agent-ingest's
+ * convention (concepts/, entities/, …) plus a few extras for the
+ * single-page family (notes/, reports/, queries/, sources/).
+ *
+ * Used by `normaliseWriteType` ONLY when the agent's supplied `type:`
+ * isn't in CANONICAL_WIKI_TYPES — never overrides a valid type, even
+ * if it disagrees with the slug. (e.g. `slug=concepts/foo` +
+ * `type=note` is preserved as `note`; the agent knows best.)
+ */
+const SLUG_PREFIX_TO_TYPE: ReadonlyMap<string, string> = new Map([
+  ["concepts", "concept"],
+  ["entities", "entity"],
+  ["sources", "source"],
+  ["queries", "query"],
+  ["comparisons", "comparison"],
+  ["synthesis", "synthesis"],
+  ["findings", "finding"],
+  ["thesis", "thesis"],
+  ["methodology", "methodology"],
+  ["notes", "note"],
+  ["reports", "report"],
+  ["articles", "article"],
+  ["papers", "paper"],
+  ["tools", "tool"],
+  ["datasets", "dataset"],
+  ["people", "person"],
+  ["companies", "company"],
+  ["regulations", "regulation"],
+])
+
+/**
+ * Resolve the frontmatter `type:` to write for a new page.
+ *
+ *   1. Agent's value is canonical → accept verbatim.
+ *   2. Agent's value is unknown, slug's first segment maps to a
+ *      canonical type → use the slug-inferred type, log a warn so
+ *      the human can see the agent drifted.
+ *   3. Otherwise → return `null`, caller emits validation_failed
+ *      with a hint listing the known categories.
+ */
+export function normaliseWriteType(
+  rawType: string,
+  slug: string,
+): string | null {
+  const trimmed = rawType.trim()
+  if (CANONICAL_WIKI_TYPES.has(trimmed)) return trimmed
+  const firstSegment = slug.split("/")[0]?.toLowerCase() ?? ""
+  const inferred = SLUG_PREFIX_TO_TYPE.get(firstSegment)
+  if (inferred) {
+    console.warn(
+      `[wiki-access] writePage: unknown type "${trimmed}" for slug "${slug}", ` +
+      `inferred "${inferred}" from path prefix.`,
+    )
+    return inferred
+  }
+  return null
+}
 
 export class FileSystemWikiAccess implements WikiAccess {
   private readonly wikiRoot: string
@@ -162,13 +243,25 @@ export class FileSystemWikiAccess implements WikiAccess {
     if (opts.title.trim().length === 0) {
       return { kind: "validation_failed", detail: "title must be non-empty" }
     }
+    const normalisedType = normaliseWriteType(opts.type, opts.slug)
+    if (normalisedType === null) {
+      return {
+        kind: "validation_failed",
+        detail:
+          `type "${opts.type.trim()}" is not in the project taxonomy and the slug ` +
+          `"${opts.slug}" doesn't infer a known type. ` +
+          `Use one of the canonical types (concept, entity, source, query, note, ` +
+          `report, article, ...) or place the slug under a recognised folder ` +
+          `(concepts/, entities/, sources/, queries/, ...).`,
+      }
+    }
     const path = this.slugToAbsPath(opts.slug)
     if (await fileExists(path)) {
       return { kind: "slug_taken" }
     }
     const today = todayIso()
     const fm: Record<string, unknown> = {
-      type: opts.type.trim(),
+      type: normalisedType,
       title: opts.title.trim(),
       created: today,
       updated: today,

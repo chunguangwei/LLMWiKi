@@ -291,6 +291,70 @@ describe("FileSystemWikiAccess — writePage", () => {
     expect(written).toMatch(/related:.*\bc\b/)
     expect((written.match(/\bb\b/g) ?? []).length).toBe(1)  // not duplicated
   })
+
+  it("normalises unknown type via slug prefix when possible", async () => {
+    // Agent emits a synonym ("idea") but slug clearly lives under
+    // concepts/ — normalize to "concept", don't reject.
+    const wa = new FileSystemWikiAccess(PROJECT)
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const result = await wa.writePage({
+        slug: "concepts/transformer",
+        type: "idea",
+        title: "Transformer",
+        body: "x",
+      })
+      expect(result).toMatchObject({ kind: "created" })
+      const written = fs.files.get(`${WIKI}/concepts/transformer.md`)!
+      expect(written).toContain("type: concept")  // not "idea"
+      expect(warnSpy).toHaveBeenCalled()
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it("preserves a canonical type even when slug prefix would disagree", async () => {
+    // The agent knows best — if it says "note" and the slug is
+    // under entities/ (unusual but valid), respect the type.
+    const wa = new FileSystemWikiAccess(PROJECT)
+    const result = await wa.writePage({
+      slug: "entities/foo",
+      type: "note",
+      title: "Foo",
+      body: "x",
+    })
+    expect(result).toMatchObject({ kind: "created" })
+    const written = fs.files.get(`${WIKI}/entities/foo.md`)!
+    expect(written).toContain("type: note")  // not "entity"
+  })
+
+  it("rejects an unknown type when the slug doesn't infer anything", async () => {
+    // Both the type and the slug are off-taxonomy — surface the
+    // problem instead of writing "type: 其他" to disk.
+    const wa = new FileSystemWikiAccess(PROJECT)
+    const result = await wa.writePage({
+      slug: "random/page",
+      type: "其他",
+      title: "X",
+      body: "x",
+    })
+    expect(result).toMatchObject({
+      kind: "validation_failed",
+      detail: expect.stringMatching(/taxonomy|canonical|categor/i),
+    })
+    expect(fs.files.has(`${WIKI}/random/page.md`)).toBe(false)
+  })
+
+  it("accepts 'other' as the explicit escape-hatch type", async () => {
+    const wa = new FileSystemWikiAccess(PROJECT)
+    const result = await wa.writePage({
+      slug: "misc/foo",
+      type: "other",
+      title: "F",
+      body: "x",
+    })
+    expect(result).toMatchObject({ kind: "created" })
+  })
 })
 
 /* ────────────────────────────────────────────────
