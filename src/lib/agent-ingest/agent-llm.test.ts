@@ -593,7 +593,7 @@ describe("postJson — rate-limit retry", () => {
       { role: "user", content: "x" },
     ]
     const opts = { maxTokens: 256, temperature: 0 }
-    const promise = llm.chat(messages, TOOLS, opts, new AbortController().signal)
+    const promise = llm.chat(messages, TOOLS, new AbortController().signal, opts)
     // First call returns 429 synchronously — sleepRespectingAbort
     // starts polling 200ms tick. Advance past 5s backoff cap so the
     // retry HTTP call fires + resolves.
@@ -613,7 +613,7 @@ describe("postJson — rate-limit retry", () => {
       { role: "user", content: "x" },
     ]
     const opts = { maxTokens: 256, temperature: 0 }
-    const promise = llm.chat(messages, TOOLS, opts, new AbortController().signal)
+    const promise = llm.chat(messages, TOOLS, new AbortController().signal, opts)
     // Attach the expectation BEFORE advancing timers so the rejection
     // doesn't bubble up as an unhandled rejection during the await.
     const assertion = expect(promise).rejects.toThrow(/HTTP 429/)
@@ -633,7 +633,7 @@ describe("postJson — rate-limit retry", () => {
     ]
     const opts = { maxTokens: 256, temperature: 0 }
     await expect(
-      llm.chat(messages, TOOLS, opts, new AbortController().signal),
+      llm.chat(messages, TOOLS, new AbortController().signal, opts),
     ).rejects.toThrow(/HTTP 500/)
     expect(calls).toHaveLength(1)  // bailed on the first non-429
   })
