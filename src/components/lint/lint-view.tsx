@@ -87,6 +87,89 @@ export function shouldShowLintResults(hasRun: boolean, itemCount: number): boole
   return hasRun || itemCount > 0
 }
 
+/**
+ * Match an error against the "we got rate-limited" signal. Providers
+ * differ: Anthropic surfaces `HTTP 429`, OpenAI sometimes wraps as
+ * `rate_limit_exceeded`, Chinese resellers (Token Plan / SiliconFlow)
+ * lean on bilingual Chinese-English text. We over-match deliberately
+ * — false positives waste a couple of seconds; false negatives strand
+ * the user mid-batch with a fatal error.
+ */
+export function isRateLimitError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return (
+    /\b429\b/.test(msg) ||
+    /rate[\s_-]?limit/i.test(msg) ||
+    /too many requests/i.test(msg) ||
+    /请求量较高|请稍后重试|超过.*?限制|超.*?额度/.test(msg)
+  )
+}
+
+/**
+ * Compute the backoff delay for the Nth retry (1-indexed). Geometric:
+ * 5s, 15s, 30s — total 50s worst case before giving up at attempt 3.
+ * The cap is conservative: most providers reset the bucket on a
+ * 5-second cadence, so 30s is "definitely past it without burning
+ * the user's evening".
+ */
+export function rateLimitBackoffMs(attempt: number): number {
+  switch (attempt) {
+    case 1:
+      return 5_000
+    case 2:
+      return 15_000
+    default:
+      return 30_000
+  }
+}
+
+/** After ANY 429 in a bulk run, pace each subsequent item by this
+ *  much so we don't keep tripping the same per-account ceiling. */
+const THROTTLE_AFTER_429_MS = 2_000
+
+/** Max retry attempts before giving up on an item and moving on. */
+const MAX_BULK_RETRY_ATTEMPTS = 3
+
+async function sleepRespectingAbort(
+  ms: number,
+  abortRef: { aborted: boolean } | null,
+): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < ms) {
+    if (abortRef?.aborted) return
+    await new Promise((r) => setTimeout(r, Math.min(200, ms - (Date.now() - start))))
+  }
+}
+
+/**
+ * Wrap runLintFix with rate-limit aware retries. On 429-shaped errors
+ * we wait per `rateLimitBackoffMs` and try again up to N times. On
+ * any other error we surface immediately — non-rate-limit failures
+ * are usually deterministic (wrong slug, schema mismatch) and retry
+ * just wastes tokens. `onBackoff` lets the caller surface progress.
+ */
+async function runLintFixWithBackoff(
+  opts: Parameters<typeof runLintFix>[0],
+  abortRef: { aborted: boolean } | null,
+  onBackoff: (waitMs: number, attempt: number) => void,
+): Promise<Awaited<ReturnType<typeof runLintFix>>> {
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= MAX_BULK_RETRY_ATTEMPTS; attempt += 1) {
+    if (abortRef?.aborted) throw new Error("aborted")
+    try {
+      return await runLintFix(opts)
+    } catch (err) {
+      lastErr = err
+      if (!isRateLimitError(err)) throw err
+      if (attempt >= MAX_BULK_RETRY_ATTEMPTS) break
+      const waitMs = rateLimitBackoffMs(attempt)
+      onBackoff(waitMs, attempt)
+      await sleepRespectingAbort(waitMs, abortRef)
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+}
+
 export function LintView() {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
@@ -404,16 +487,33 @@ export function LintView() {
     let done = 0
     let succeeded = 0
     let failed = 0
+    let rateLimitHits = 0
+    // After the first 429 in this run, throttle each subsequent item
+    // by THROTTLE_AFTER_429_MS so we don't immediately re-trip the
+    // provider's per-account rate limit. The first hit is usually
+    // surprising; sustained polite pacing prevents a second wall.
+    let throttled = false
     try {
       for (const item of broken) {
         if (bulkAbortRef.current?.aborted) break
+        if (throttled) await sleepRespectingAbort(THROTTLE_AFTER_429_MS, bulkAbortRef.current)
+        if (bulkAbortRef.current?.aborted) break
         setFixingId(item.id)
         try {
-          const result = await runLintFix({
-            item,
-            project,
-            llmConfig,
-          })
+          const result = await runLintFixWithBackoff(
+            { item, project, llmConfig },
+            bulkAbortRef.current,
+            (waitMs, attempt) => {
+              throttled = true
+              rateLimitHits += 1
+              activity.updateItem(activityId, {
+                detail:
+                  `${done} / ${broken.length} (${succeeded} ok · ${failed} failed) · ` +
+                  `⏳ rate-limited, retrying in ${Math.round(waitMs / 1000)}s ` +
+                  `(attempt ${attempt})`,
+              })
+            },
+          )
           for (const p of result.pagesUpdated) writtenAll.push(p.slug)
           for (const p of result.pagesCreated) writtenAll.push(p.slug)
           for (const g of result.gapsSurfaced) {
@@ -436,7 +536,9 @@ export function LintView() {
         }
         done += 1
         activity.updateItem(activityId, {
-          detail: `${done} / ${broken.length} (${succeeded} ok · ${failed} failed)`,
+          detail:
+            `${done} / ${broken.length} (${succeeded} ok · ${failed} failed)` +
+            (rateLimitHits > 0 ? ` · ${rateLimitHits} retries after rate-limit` : ""),
         })
       }
       activity.updateItem(activityId, {
