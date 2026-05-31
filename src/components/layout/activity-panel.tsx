@@ -67,6 +67,19 @@ function getFileTypeInfo(path: string): { icon: typeof FileText; type: string } 
   return { icon: FileText, type: "File" }
 }
 
+/**
+ * Activity-type filter chip values. "all" is the default (show
+ * everything); other values match `ActivityItem.type` 1:1.
+ */
+type ActivityTypeFilter = "all" | "ingest" | "lint" | "query"
+
+const ACTIVITY_FILTER_VALUES: ReadonlyArray<{ value: ActivityTypeFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "ingest", label: "Ingest" },
+  { value: "lint", label: "Lint" },
+  { value: "query", label: "Query" },
+]
+
 export function ActivityPanel() {
   const items = useActivityStore((s) => s.items)
   const clearDone = useActivityStore((s) => s.clearDone)
@@ -76,7 +89,17 @@ export function ActivityPanel() {
   const fileSyncError = useFileSyncStore((s) => s.lastError)
   const [expanded, setExpanded] = useState(false)
   const [queueTasks, setQueueTasks] = useState<IngestTask[]>([])
+  // Type-filter chip state. "all" by default; other values match
+  // `ActivityItem.type` 1:1. Lives in local React state because
+  // it's a transient view preference — re-opening the panel should
+  // default back to "all" so the user doesn't lose new items behind
+  // a forgotten filter.
+  const [typeFilter, setTypeFilter] = useState<ActivityTypeFilter>("all")
   const prevRunningRef = useRef(0)
+
+  const filteredItems = typeFilter === "all"
+    ? items
+    : items.filter((i) => i.type === typeFilter)
 
   const runningCount = items.filter((i) => i.status === "running").length
   const hasItems = items.length > 0
@@ -314,8 +337,39 @@ export function ActivityPanel() {
             <QueueRow key={task.id} task={task} onRetry={handleIngestRetry} onCancel={handleIngestCancel} />
           ))}
 
-          {/* Activity items */}
-          {items.map((item) => {
+          {/* Activity-type filter chips. Only render when there are
+              activity items AND more than one type is represented —
+              a one-type panel doesn't benefit from a filter row. */}
+          {items.length > 0 && new Set(items.map((i) => i.type)).size > 1 && (
+            <div className="flex items-center gap-1 px-3 py-1 border-b border-border/50">
+              {ACTIVITY_FILTER_VALUES.map((opt) => {
+                const count = opt.value === "all"
+                  ? items.length
+                  : items.filter((i) => i.type === opt.value).length
+                const disabled = opt.value !== "all" && count === 0
+                const active = typeFilter === opt.value
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setTypeFilter(opt.value)}
+                    disabled={disabled}
+                    className={`rounded px-1.5 py-0.5 text-[10px] transition-colors disabled:opacity-40 disabled:cursor-default ${
+                      active
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                    }`}
+                    title={`Show ${opt.label.toLowerCase()} activity (${count})`}
+                  >
+                    {opt.label} <span className="opacity-70 tabular-nums">{count}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Activity items (post-filter) */}
+          {filteredItems.map((item) => {
             // Find matching queue task for cancel button
             const matchingTask = item.status === "running"
               ? queueTasks.find((t) => t.status === "processing" && getFileName(t.sourcePath) === item.title)
@@ -328,6 +382,12 @@ export function ActivityPanel() {
               />
             )
           })}
+          {/* Empty-state when the filter excludes everything */}
+          {typeFilter !== "all" && filteredItems.length === 0 && (
+            <div className="px-3 py-3 text-center text-[10px] text-muted-foreground/70">
+              No {typeFilter} activity. Click All to see everything.
+            </div>
+          )}
           {items.some((i) => i.status !== "running") && (
             <button
               onClick={clearDone}
