@@ -890,6 +890,36 @@ async function autoIngestImpl(
     ? `${writtenPaths.length} files written${reviewItems.length > 0 ? `, ${reviewItems.length} review item(s)` : ""}`
     : "No files generated"
 
+  // Mechanical index.md backfill — defense-in-depth against the LLM
+  // index-update stage missing pages, or failing entirely and leaving
+  // freshly-written knowledge pages orphaned in the index. PR #13's
+  // reconcileWiki auto-adds missing concept / entity / source /
+  // synthesis / finding / comparison entries; we run it silently
+  // after every autoIngest so the user never has to remember to
+  // click "Cleanup refs" manually.
+  //
+  // Best-effort: failure here is logged but never bubbles. The
+  // page WAS written; the index is just stale, which is a much
+  // softer failure than losing data. Skipped when zero knowledge
+  // pages were written — pure-source-summary runs don't need it.
+  if (writtenPaths.some(isKnowledgePagePath)) {
+    try {
+      const { reconcileWiki } = await import("./wiki-reconcile")
+      const result = await reconcileWiki(pp)
+      if (result.totalIndexRowsAdded > 0) {
+        console.log(
+          `[ingest] reconcile backfilled ${result.totalIndexRowsAdded} index entries ` +
+            `after autoIngest of "${fileName}".`,
+        )
+      }
+    } catch (err) {
+      console.warn(
+        `[ingest] reconcile backfill failed after autoIngest of "${fileName}":`,
+        err,
+      )
+    }
+  }
+
   activity.updateItem(activityId, {
     status: writtenPaths.length > 0 ? "done" : "error",
     detail,
@@ -897,6 +927,34 @@ async function autoIngestImpl(
   })
 
   return writtenPaths
+}
+
+/**
+ * Heuristic for "this is a knowledge-layer page the index should
+ * list". Matches the AUTO_INDEX_TYPES set inside wiki-reconcile.ts —
+ * keep in sync if that list changes.
+ *
+ * We work off path prefixes rather than re-reading frontmatter
+ * because the paths in writtenPaths are project-relative and
+ * already encode the type (concepts/foo.md → concept). Saves a
+ * fresh disk read per file.
+ */
+function isKnowledgePagePath(p: string): boolean {
+  const norm = p.replace(/\\/g, "/").toLowerCase()
+  return (
+    norm.includes("wiki/concepts/") ||
+    norm.includes("wiki/entities/") ||
+    norm.includes("wiki/sources/") ||
+    norm.includes("wiki/synthesis/") ||
+    norm.includes("wiki/findings/") ||
+    norm.includes("wiki/comparisons/") ||
+    norm.startsWith("concepts/") ||
+    norm.startsWith("entities/") ||
+    norm.startsWith("sources/") ||
+    norm.startsWith("synthesis/") ||
+    norm.startsWith("findings/") ||
+    norm.startsWith("comparisons/")
+  )
 }
 
 /**
