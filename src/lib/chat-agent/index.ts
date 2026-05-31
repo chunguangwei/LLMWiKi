@@ -97,6 +97,25 @@ export interface ChatAgentResult {
     inputSummary: string
     resultSummary: string
   }>
+  /**
+   * Raw payloads of every successful `web_fetch` the agent made
+   * during this run. Captured here so SaveToWiki can preserve the
+   * primary sources alongside the assistant reply (the user
+   * complaint was "也没有 raw 的原始内容" — the chat-only summary
+   * loses the original article body). One entry per fetch; same URL
+   * fetched multiple times produces multiple entries (intentional
+   * — different fetches can return slightly different content).
+   */
+  fetchedSources: Array<{
+    /** Final URL the fetcher reached (after redirects). */
+    url: string
+    /** Article title extracted by Readability — may be empty. */
+    title: string
+    /** Markdown body (already truncated by web_fetch's own cap). */
+    markdown: string
+    /** ISO timestamp recorded by fetchAndExtract. */
+    fetchedAt: string
+  }>
   turnsUsed: number
   tokensSpent: number
   budgetExhausted: boolean
@@ -189,15 +208,81 @@ export async function runChatAgent(opts: RunChatAgentOpts): Promise<ChatAgentRes
   // user sees the agent's full reasoning + tool usage, not just the
   // last reply.
   const { text, toolCalls } = extractTextAndToolCalls(runResult.finalMessages)
+  const fetchedSources = extractFetchedSources(runResult.finalMessages)
 
   return {
     text,
     toolCalls,
+    fetchedSources,
     turnsUsed: runResult.turnsUsed,
     tokensSpent: runResult.tokensSpent,
     budgetExhausted: runResult.stopReason === "max_tokens",
     reason: humaniseStopReason(runResult.stopReason),
   }
+}
+
+/**
+ * Pull the raw markdown of every successful web_fetch tool call out
+ * of the run's message history. Used by SaveToWiki to preserve the
+ * primary sources alongside the assistant reply, so the user can
+ * always re-trace where a claim came from.
+ *
+ * Walk in two passes:
+ *   1. Assistant turns → build {tool_use_id → tool name} map.
+ *   2. User turns → tool_result blocks. For each result whose tool
+ *      was web_fetch AND whose JSON envelope has `ok: true`, capture
+ *      url + title + markdown + fetchedAt.
+ *
+ * Malformed JSON in a tool_result is silently dropped — the runner
+ * already JSON-stringifies tool output, so a parse failure here is
+ * a sign of someone monkey-patching the runner, not a real failure
+ * mode the user will hit. Same for missing fields: the entry just
+ * doesn't show up.
+ */
+function extractFetchedSources(messages: AgentMessage[]): ChatAgentResult["fetchedSources"] {
+  const out: ChatAgentResult["fetchedSources"] = []
+  const toolNameById = new Map<string, string>()
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue
+    for (const block of msg.content) {
+      if (block.type === "tool_use") {
+        toolNameById.set(block.id, block.name)
+      }
+    }
+  }
+  for (const msg of messages) {
+    if (msg.role !== "user") continue
+    if (typeof msg.content === "string") continue
+    for (const block of msg.content) {
+      if (block.type !== "tool_result") continue
+      const tb = block as ToolResultBlock
+      if (toolNameById.get(tb.tool_use_id) !== "web_fetch") continue
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(tb.content)
+      } catch {
+        continue
+      }
+      if (!parsed || typeof parsed !== "object") continue
+      const obj = parsed as Record<string, unknown>
+      if (obj.ok !== true) continue
+      const url =
+        typeof obj.finalUrl === "string" && obj.finalUrl.length > 0
+          ? obj.finalUrl
+          : typeof obj.url === "string"
+            ? obj.url
+            : ""
+      const markdown = typeof obj.markdown === "string" ? obj.markdown : ""
+      if (url.length === 0 || markdown.length === 0) continue
+      out.push({
+        url,
+        title: typeof obj.title === "string" ? obj.title : "",
+        markdown,
+        fetchedAt: typeof obj.fetched_at === "string" ? obj.fetched_at : "",
+      })
+    }
+  }
+  return out
 }
 
 /* ────────────────────────────────────────────────

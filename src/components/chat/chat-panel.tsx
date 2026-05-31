@@ -696,6 +696,7 @@ export function ChatPanel() {
           })
           addAssistantTurn(result.text || `_(${result.reason})_`, {
             toolCalls: result.toolCalls,
+            fetchedSources: result.fetchedSources,
           })
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err)
