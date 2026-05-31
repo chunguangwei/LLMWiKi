@@ -15,7 +15,7 @@ import { normalizePath } from "@/lib/path-utils"
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 
-interface WikiPageInfo {
+export interface WikiPageInfo {
   path: string
   title: string
   type: string
@@ -384,7 +384,7 @@ function RawSourcesSection() {
   )
 }
 
-function parsePageInfo(path: string, fileName: string, content: string): WikiPageInfo {
+export function parsePageInfo(path: string, fileName: string, content: string): WikiPageInfo {
   let type = "other"
   let title = fileName.replace(".md", "").replace(/-/g, " ")
   const tags: string[] = []
@@ -453,9 +453,25 @@ function parsePageInfo(path: string, fileName: string, content: string): WikiPag
     if (headingMatch) title = headingMatch[1].trim()
   }
 
-  // Fallback: infer type from path
-  if (type === "other") {
-    type = inferWikiTypeFromPath(path, fileName) ?? "other"
+  // Fallback: infer type from path.
+  //
+  // Two cases trigger this:
+  //   1. Frontmatter type was missing → parsed as "other".
+  //   2. Frontmatter type was set to a value NOT in TYPE_CONFIG —
+  //      typical when an LLM (chat-agent canWrite, autoIngest) picked
+  //      a free-form slug like "openclaw" or "ai-platform" as the
+  //      type. Without this fallback, every such page silently lands
+  //      in the catch-all "Other" group regardless of which folder
+  //      (concepts/, entities/, etc.) it actually lives in.
+  //
+  // Keep the original `type` ONLY when path inference can't help —
+  // even if it falls to DEFAULT_CONFIG, the frontmatter remains
+  // accurate for downstream tools that read it directly.
+  if (!(type in TYPE_CONFIG)) {
+    const inferred = inferWikiTypeFromPath(path, fileName)
+    if (inferred && inferred in TYPE_CONFIG) {
+      type = inferred
+    }
   }
 
   return { path, title, type, tags, origin }

@@ -2,6 +2,7 @@ import { writeFile, readFile, createDirectory, deleteFile, fileExists } from "@/
 import type { ReviewItem } from "@/stores/review-store"
 import type { LintItem } from "@/stores/lint-store"
 import type { DisplayMessage, Conversation } from "@/stores/chat-store"
+import type { ActivityItem } from "@/stores/activity-store"
 import { normalizePath } from "@/lib/path-utils"
 
 /**
@@ -82,6 +83,77 @@ export async function loadLintItems(projectPath: string): Promise<LintItem[]> {
 interface PersistedChatData {
   conversations: Conversation[]
   messages: DisplayMessage[]
+}
+
+/**
+ * Activity items persist to .llm-wiki-local/ — per-user, not shared.
+ * The reasoning: an activity log is "what I just did", not project
+ * history; teammates don't need to see each other's ingest spinners.
+ *
+ * Items keep their original status, BUT see hydrateActivityItems below
+ * for the "stale running → error" pass that runs at App startup.
+ */
+function activityFile(pp: string): string {
+  return `${localDir(pp)}/activity.json`
+}
+
+const MAX_ACTIVITY_PERSIST = 200
+
+export async function saveActivityItems(
+  projectPath: string,
+  items: ActivityItem[],
+): Promise<void> {
+  const pp = normalizePath(projectPath)
+  await ensureLocalDir(pp)
+  // Cap the persisted history — activity items can pile up after
+  // a long session of ingest runs and there's no value in keeping
+  // every single one across reloads.
+  const trimmed = items.slice(0, MAX_ACTIVITY_PERSIST)
+  await writeFile(activityFile(pp), JSON.stringify(trimmed, null, 2))
+}
+
+export async function loadActivityItems(projectPath: string): Promise<ActivityItem[]> {
+  const pp = normalizePath(projectPath)
+  try {
+    const content = await readFile(activityFile(pp))
+    const parsed = JSON.parse(content)
+    if (!Array.isArray(parsed)) return []
+    // Drop shape-invalid entries quietly — old persisted files might
+    // not match the current type after schema changes.
+    return parsed.filter(
+      (x): x is ActivityItem =>
+        x &&
+        typeof x === "object" &&
+        typeof x.id === "string" &&
+        typeof x.title === "string" &&
+        typeof x.status === "string" &&
+        typeof x.detail === "string" &&
+        Array.isArray(x.filesWritten) &&
+        typeof x.createdAt === "number",
+    )
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Hydrate-time normalisation: stale `running` entries get flipped to
+ * `error` because the actual task process died with the previous
+ * webview. Without this the user sees ghost spinners that never finish.
+ */
+export function hydrateActivityItems(items: ActivityItem[]): ActivityItem[] {
+  return items.map((it) =>
+    it.status === "running"
+      ? {
+          ...it,
+          status: "error" as const,
+          detail:
+            it.detail +
+            (it.detail.endsWith("\n") ? "" : "\n") +
+            "⚠️ Interrupted by app reload — original task did not complete.",
+        }
+      : it,
+  )
 }
 
 /**
