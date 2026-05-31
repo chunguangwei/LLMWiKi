@@ -10,6 +10,8 @@ import {
   BrainCircuit,
   Wrench,
   Trash2,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -40,6 +42,46 @@ export function groupLintResultsForDisplay(results: readonly LintItem[]): {
 
   return { warnings, infos }
 }
+
+/**
+ * Group items by their type so the lint view can render one fold per
+ * type ("Broken links · 12", "Orphans · 3", …). Within each fold the
+ * existing per-item cards keep their full detail.
+ *
+ * Sorted by descending count then by canonical type order so the
+ * largest pile floats to the top. Display order matches the toolbar:
+ * broken-link → orphan → no-outlinks → semantic.
+ */
+const LINT_TYPE_ORDER: Record<LintItem["type"], number> = {
+  "broken-link": 0,
+  orphan: 1,
+  "no-outlinks": 2,
+  semantic: 3,
+}
+
+export function groupByType(items: readonly LintItem[]): Array<{
+  type: LintItem["type"]
+  items: LintItem[]
+}> {
+  const byType = new Map<LintItem["type"], LintItem[]>()
+  for (const item of items) {
+    const arr = byType.get(item.type) ?? []
+    arr.push(item)
+    byType.set(item.type, arr)
+  }
+  return Array.from(byType.entries())
+    .map(([type, items]) => ({ type, items }))
+    .sort((a, b) => {
+      // Largest pile first.
+      if (a.items.length !== b.items.length) return b.items.length - a.items.length
+      return LINT_TYPE_ORDER[a.type] - LINT_TYPE_ORDER[b.type]
+    })
+}
+
+/** Auto-fold threshold — keep groups with ≤ this many rows expanded
+ *  by default. Larger piles start collapsed so the page isn't a wall
+ *  of identical-looking cards. */
+const AUTO_FOLD_THRESHOLD = 3
 
 export function shouldShowLintResults(hasRun: boolean, itemCount: number): boolean {
   return hasRun || itemCount > 0
@@ -85,6 +127,21 @@ export function LintView() {
   // Reconcile (mechanical cleanup) state. Runs a dry-run first to
   // collect counts, asks the user to confirm, then applies.
   const [reconciling, setReconciling] = useState(false)
+  // Per-type fold state. Maps "warning:broken-link" / "info:orphan"
+  // to "expanded?". A missing key falls back to the auto-fold rule
+  // (expanded when count ≤ AUTO_FOLD_THRESHOLD). User clicks the
+  // type header chevron to toggle and override the auto rule.
+  const [foldOverrides, setFoldOverrides] = useState<Record<string, boolean>>({})
+
+  function toggleFold(key: string, currentlyOpen: boolean) {
+    setFoldOverrides((prev) => ({ ...prev, [key]: !currentlyOpen }))
+  }
+
+  function isFoldOpen(key: string, count: number): boolean {
+    const override = foldOverrides[key]
+    if (override !== undefined) return override
+    return count <= AUTO_FOLD_THRESHOLD
+  }
 
   const handleRunLint = useCallback(async () => {
     if (!project || running) return
@@ -627,33 +684,45 @@ export function LintView() {
             {warnings.length > 0 && (
               <SectionHeader icon={AlertTriangle} label={t("lint.warnings")} count={warnings.length} color="text-amber-500" t={t} />
             )}
-            {warnings.map((item) => (
-              <LintCard
-                key={item.id}
-                item={item}
-                fixing={fixingId === item.id}
-                onOpenPage={handleOpenPage}
-                onFix={handleFix}
-                onDelete={item.type === "orphan" ? handleDeleteOrphan : undefined}
-                typeConfig={typeConfig}
-                t={t}
-              />
-            ))}
+            {groupByType(warnings).map((group) => {
+              const key = `warning:${group.type}`
+              const open = isFoldOpen(key, group.items.length)
+              return (
+                <TypeFoldGroup
+                  key={key}
+                  group={group}
+                  open={open}
+                  onToggle={() => toggleFold(key, open)}
+                  typeConfig={typeConfig}
+                  fixingId={fixingId}
+                  onOpenPage={handleOpenPage}
+                  onFix={handleFix}
+                  onDelete={handleDeleteOrphan}
+                  t={t}
+                />
+              )
+            })}
             {infos.length > 0 && (
               <SectionHeader icon={Info} label={t("lint.info")} count={infos.length} color="text-blue-500" t={t} />
             )}
-            {infos.map((item) => (
-              <LintCard
-                key={item.id}
-                item={item}
-                fixing={fixingId === item.id}
-                onOpenPage={handleOpenPage}
-                onFix={handleFix}
-                onDelete={item.type === "orphan" ? handleDeleteOrphan : undefined}
-                typeConfig={typeConfig}
-                t={t}
-              />
-            ))}
+            {groupByType(infos).map((group) => {
+              const key = `info:${group.type}`
+              const open = isFoldOpen(key, group.items.length)
+              return (
+                <TypeFoldGroup
+                  key={key}
+                  group={group}
+                  open={open}
+                  onToggle={() => toggleFold(key, open)}
+                  typeConfig={typeConfig}
+                  fixingId={fixingId}
+                  onOpenPage={handleOpenPage}
+                  onFix={handleFix}
+                  onDelete={handleDeleteOrphan}
+                  t={t}
+                />
+              )
+            })}
           </div>
         )}
       </div>
@@ -678,6 +747,71 @@ function SectionHeader({
     <div className={`flex items-center gap-1.5 px-1 py-1 text-xs font-semibold ${color}`}>
       <Icon className="h-3.5 w-3.5" />
       {t("lint.sectionCount", { label, count })}
+    </div>
+  )
+}
+
+/**
+ * Foldable group of lint items that share a type. Header shows the
+ * type icon, localised label, and count; clicking toggles expansion.
+ * Default expansion follows the AUTO_FOLD_THRESHOLD rule (small piles
+ * stay open), but users can click to override either direction.
+ */
+function TypeFoldGroup({
+  group,
+  open,
+  onToggle,
+  typeConfig,
+  fixingId,
+  onOpenPage,
+  onFix,
+  onDelete,
+  t,
+}: {
+  group: { type: LintItem["type"]; items: LintItem[] }
+  open: boolean
+  onToggle: () => void
+  typeConfig: Record<string, { icon: typeof AlertTriangle; label: string }>
+  fixingId: string | null
+  onOpenPage: (page: string) => void
+  onFix: (item: LintItem) => void
+  onDelete: (item: LintItem) => void
+  t: (key: string, opts?: Record<string, unknown>) => string
+}) {
+  const cfg = typeConfig[group.type] ?? typeConfig.semantic
+  const TypeIcon = cfg.icon
+  const Chevron = open ? ChevronDown : ChevronRight
+  return (
+    <div className="rounded-lg border bg-muted/20">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium hover:bg-muted/40 rounded-lg"
+        aria-expanded={open}
+      >
+        <Chevron className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <TypeIcon className="h-3.5 w-3.5 shrink-0" />
+        <span className="flex-1">{cfg.label}</span>
+        <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground tabular-nums">
+          {group.items.length}
+        </span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-2 border-t p-2">
+          {group.items.map((item) => (
+            <LintCard
+              key={item.id}
+              item={item}
+              fixing={fixingId === item.id}
+              onOpenPage={onOpenPage}
+              onFix={onFix}
+              onDelete={item.type === "orphan" ? onDelete : undefined}
+              typeConfig={typeConfig}
+              t={t}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
