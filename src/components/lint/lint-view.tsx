@@ -419,7 +419,8 @@ export function LintView() {
       if (
         dry.totalBrokenWikilinksReplaced === 0 &&
         dry.totalRelatedEntriesRemoved === 0 &&
-        dry.totalIndexRowsDropped === 0
+        dry.totalIndexRowsDropped === 0 &&
+        dry.totalIndexRowsAdded === 0
       ) {
         window.alert(
           t("lint.reconcileNoOp", {
@@ -433,12 +434,14 @@ export function LintView() {
           `Cleanup will rewrite ${dry.changes.length} file(s):\n` +
           `  · ${dry.totalBrokenWikilinksReplaced} broken [[X]] → plain text\n` +
           `  · ${dry.totalRelatedEntriesRemoved} dangling related: entries removed\n` +
-          `  · ${dry.totalIndexRowsDropped} index.md row(s) dropped\n\n` +
+          `  · ${dry.totalIndexRowsDropped} index.md row(s) dropped\n` +
+          `  · ${dry.totalIndexRowsAdded} missing knowledge page(s) added to index.md\n\n` +
           "queries/ and sources/ files are preserved as raw. Proceed?",
         files: dry.changes.length,
         links: dry.totalBrokenWikilinksReplaced,
         related: dry.totalRelatedEntriesRemoved,
         index: dry.totalIndexRowsDropped,
+        added: dry.totalIndexRowsAdded,
       })
       if (!window.confirm(msg)) return
       const real = await reconcileWiki(pp)
@@ -451,7 +454,8 @@ export function LintView() {
           `Rewrote ${real.changes.length} files · ` +
           `${real.totalBrokenWikilinksReplaced} broken wikilinks · ` +
           `${real.totalRelatedEntriesRemoved} dangling related: · ` +
-          `${real.totalIndexRowsDropped} index rows`,
+          `${real.totalIndexRowsDropped} index rows dropped · ` +
+          `${real.totalIndexRowsAdded} missing index entries added`,
         filesWritten: real.changes.map((c) => c.slug),
       })
       const tree = await listDirectory(pp)
