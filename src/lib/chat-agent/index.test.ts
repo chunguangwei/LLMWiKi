@@ -551,3 +551,100 @@ describe("runChatAgent — abort propagation", () => {
     expect(llm.calls).toHaveLength(0)
   })
 })
+
+describe("runChatAgent — fetchedSources extraction", () => {
+  it("captures the markdown of successful web_fetch calls into result.fetchedSources", async () => {
+    setupEmptyProject()
+    vi.mocked(fetchAndExtract).mockResolvedValueOnce({
+      url: "https://example.com/a",
+      finalUrl: "https://example.com/a",
+      title: "Article A",
+      markdown: "# A\n\nFull text of article A.",
+      contentType: "text/html",
+      fetchedAt: "2026-05-31T10:00:00.000Z",
+    })
+    vi.mocked(fetchAndExtract).mockResolvedValueOnce({
+      url: "https://example.com/b",
+      finalUrl: "https://example.com/b",
+      title: "Article B",
+      markdown: "# B\n\nFull text of article B.",
+      contentType: "text/html",
+      fetchedAt: "2026-05-31T10:00:05.000Z",
+    })
+
+    const llm = new ScriptedLlm([
+      toolUseTurn({ name: "web_fetch", input: { url: "https://example.com/a" } }),
+      toolUseTurn({ name: "web_fetch", input: { url: "https://example.com/b" } }),
+      toolUseTurn({ name: "done", text: "Summary based on both.", input: { reason: "ok" } }),
+    ])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    const result = await runChatAgent({
+      userMessage: "compare A and B",
+      history: emptyHistory(),
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+    })
+
+    expect(result.fetchedSources).toHaveLength(2)
+    expect(result.fetchedSources[0]).toMatchObject({
+      url: "https://example.com/a",
+      title: "Article A",
+      markdown: expect.stringMatching(/Full text of article A/),
+    })
+    expect(result.fetchedSources[1].url).toBe("https://example.com/b")
+  })
+
+  it("excludes failed fetches and search/wiki calls", async () => {
+    setupEmptyProject()
+    vi.mocked(fetchAndExtract).mockResolvedValueOnce({
+      url: "https://ok.example",
+      finalUrl: "https://ok.example",
+      title: "Ok",
+      markdown: "ok body",
+      contentType: "text/html",
+      fetchedAt: "2026-05-31T10:00:00.000Z",
+    })
+    vi.mocked(fetchAndExtract).mockRejectedValueOnce(new Error("HTTP 503"))
+    vi.mocked(hasConfiguredSearchProvider).mockReturnValue(true)
+    vi.mocked(webSearch).mockResolvedValueOnce([
+      { title: "r", url: "https://r.example", snippet: "s", source: "tavily" },
+    ])
+
+    const llm = new ScriptedLlm([
+      toolUseTurn({ name: "web_search", input: { query: "x" } }),
+      toolUseTurn({ name: "web_fetch", input: { url: "https://ok.example" } }),
+      toolUseTurn({ name: "web_fetch", input: { url: "https://broken.example" } }),
+      toolUseTurn({ name: "done", text: "answered", input: { reason: "ok" } }),
+    ])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    const result = await runChatAgent({
+      userMessage: "look it up",
+      history: emptyHistory(),
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+      searchApiConfig: SEARCH_API_TAVILY,
+    })
+
+    // Only the OK fetch is preserved — web_search results don't
+    // count (no markdown body to spill), and the 503 fetch failed.
+    expect(result.fetchedSources).toHaveLength(1)
+    expect(result.fetchedSources[0].url).toBe("https://ok.example")
+  })
+
+  it("returns empty array when the agent made no web_fetch calls", async () => {
+    setupEmptyProject()
+    const llm = new ScriptedLlm([textTurn("Wiki had what I needed.")])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    const result = await runChatAgent({
+      userMessage: "hi",
+      history: emptyHistory(),
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+    })
+
+    expect(result.fetchedSources).toEqual([])
+  })
+})

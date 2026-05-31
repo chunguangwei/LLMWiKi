@@ -118,6 +118,7 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
               messageId={message.id}
               content={message.content}
               savedToWiki={message.savedToWiki}
+              fetchedSources={message.fetchedSources}
               visible={true}
             />
             {isLastAssistant && onRegenerate && (
@@ -248,11 +249,13 @@ function SaveToWikiButton({
   messageId,
   content,
   savedToWiki,
+  fetchedSources,
   visible,
 }: {
   messageId: string
   content: string
   savedToWiki?: DisplayMessage["savedToWiki"]
+  fetchedSources?: DisplayMessage["fetchedSources"]
   visible: boolean
 }) {
   const project = useWikiStore((s) => s.project)
@@ -311,12 +314,72 @@ function SaveToWikiButton({
         }
       }
 
+      // Raw-source preservation — spill every web_fetch primary
+      // source the chat-agent pulled into raw/sources/web/. The
+      // resulting filenames go into the query frontmatter's
+      // `sources:` array so the wiki page has a paper-trail back
+      // to the original article without the user having to dig
+      // through the activity log.
+      //
+      // Failure is per-source and best-effort — if one source fails
+      // to write, the others still go through and the user gets the
+      // wiki page either way. Whatever DID write goes into the
+      // frontmatter; the rest is logged via console.warn.
+      const writtenSourcePaths: string[] = []
+      if (fetchedSources && fetchedSources.length > 0) {
+        const rawWebDir = `${pp}/raw/sources/web`
+        try {
+          // createDirectory is idempotent — re-creating is cheap and
+          // avoids a "first save fails because directory missing" foot-gun.
+          const { createDirectory } = await import("@/commands/fs")
+          await createDirectory(rawWebDir).catch(() => {})
+        } catch {
+          /* fall through — writeFile below will surface a clear error */
+        }
+        for (let i = 0; i < fetchedSources.length; i++) {
+          const src = fetchedSources[i]
+          const { makeQuerySlug } = await import("@/lib/wiki-filename")
+          const srcSlug = makeQuerySlug(src.title || `source-${i + 1}`)
+          const srcFileName = `${srcSlug || `source-${i + 1}`}-${date}-${
+            // Add a 1-based suffix so multiple sources from the same
+            // save can't collide if they happen to slugify to the
+            // same name (rare but possible — e.g. two CNBC articles
+            // with the same H1).
+            String(i + 1).padStart(2, "0")
+          }.md`
+          const srcPath = `${rawWebDir}/${srcFileName}`
+          const srcFm = [
+            "---",
+            "type: source",
+            `title: ${JSON.stringify(src.title || srcFileName.replace(/\.md$/, ""))}`,
+            `url: ${JSON.stringify(src.url)}`,
+            `created: ${date}`,
+            src.fetchedAt ? `fetched_at: ${JSON.stringify(src.fetchedAt)}` : "",
+            "origin: chat-save-raw",
+            "---",
+            "",
+          ].filter(Boolean).join("\n")
+          try {
+            await writeFile(srcPath, srcFm + src.markdown)
+            writtenSourcePaths.push(`raw/sources/web/${srcFileName}`)
+          } catch (err) {
+            console.warn(`[SaveToWiki] failed to write raw source ${srcPath}:`, err)
+          }
+        }
+      }
+
       const frontmatter = [
         "---",
         `type: query`,
         `title: "${title.replace(/"/g, '\\"')}"`,
         `created: ${date}`,
         `tags: []`,
+        // sources: array of project-relative paths to the raw web
+        // fetches that informed this reply. Empty array (or absent)
+        // means the agent answered without external sources.
+        writtenSourcePaths.length > 0
+          ? `sources: ${JSON.stringify(writtenSourcePaths)}`
+          : "",
         // origin marker — autoIngest reads this to decide whether
         // to run its review-suggestion stage. Chat replies are
         // already user-vetted answers; they don't need the LLM to
@@ -324,7 +387,7 @@ function SaveToWikiButton({
         `origin: chat-save`,
         "---",
         "",
-      ].join("\n")
+      ].filter(Boolean).join("\n")
 
       await writeFile(filePath, frontmatter + cleanContent)
 

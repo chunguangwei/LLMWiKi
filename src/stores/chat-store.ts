@@ -35,6 +35,23 @@ export interface DisplayMessage {
     resultSummary: string
   }>
   /**
+   * Raw markdown of every successful web_fetch the chat-agent ran
+   * during this turn. SaveToWiki uses these to spill primary sources
+   * into raw/sources/web/ so the wiki page has a paper-trail back to
+   * the original article — without this the user only has the LLM's
+   * summary and can't audit / re-ingest from source.
+   *
+   * Stored on the message so it auto-saves with chat history. Size
+   * is already bounded by web_fetch's per-call cap (20K default,
+   * 80K with full:true).
+   */
+  fetchedSources?: Array<{
+    url: string
+    title: string
+    markdown: string
+    fetchedAt: string
+  }>
+  /**
    * Set when the user already saved this assistant reply to the wiki
    * via SaveToWikiButton. Stored on the message itself (not in local
    * React state) so the "saved" indicator survives re-renders,
@@ -99,6 +116,7 @@ interface ChatState {
     opts?: {
       references?: MessageReference[]
       toolCalls?: DisplayMessage["toolCalls"]
+      fetchedSources?: DisplayMessage["fetchedSources"]
     },
   ) => void
   /**
@@ -264,6 +282,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...(opts?.references ? { references: opts.references } : {}),
         ...(opts?.toolCalls && opts.toolCalls.length > 0
           ? { toolCalls: opts.toolCalls }
+          : {}),
+        ...(opts?.fetchedSources && opts.fetchedSources.length > 0
+          ? { fetchedSources: opts.fetchedSources }
           : {}),
       }
       const updatedConversations = conversations.map((c) =>
