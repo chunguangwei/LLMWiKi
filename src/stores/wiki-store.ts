@@ -335,6 +335,20 @@ interface WikiState {
    * mode for now. Off by default.
    */
   experimentalChatAgentCanWrite: boolean
+  /**
+   * **Labs / experimental** — when ON, SaveToWiki SKIPS the wikify LLM
+   * rewrite pass and persists the chat content verbatim. Default OFF
+   * (wikify runs, stripping chat tone). Useful when you want the
+   * agent's exact reply preserved — e.g. for record-keeping, when the
+   * reply is already encyclopedic, or when wikify keeps over-editing
+   * specific kinds of content (poetry, code-heavy answers, …).
+   *
+   * Independent of `hasUsableLlm` — the toggle only matters when an
+   * LLM IS configured. With no LLM, wikify is skipped regardless.
+   *
+   * Persisted via `saveExperimentalRawSaveToWiki` (project-store.ts).
+   */
+  experimentalRawSaveToWiki: boolean
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -359,6 +373,7 @@ interface WikiState {
   setExperimentalAiLintFix: (enabled: boolean) => void
   setExperimentalChatAgent: (enabled: boolean) => void
   setExperimentalChatAgentCanWrite: (enabled: boolean) => void
+  setExperimentalRawSaveToWiki: (enabled: boolean) => void
   bumpDataVersion: () => void
 }
 
@@ -458,6 +473,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   experimentalAiLintFix: false,
   experimentalChatAgent: false,
   experimentalChatAgentCanWrite: false,
+  experimentalRawSaveToWiki: false,
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
@@ -478,6 +494,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     set({ experimentalChatAgent }),
   setExperimentalChatAgentCanWrite: (experimentalChatAgentCanWrite) =>
     set({ experimentalChatAgentCanWrite }),
+  setExperimentalRawSaveToWiki: (experimentalRawSaveToWiki) =>
+    set({ experimentalRawSaveToWiki }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
