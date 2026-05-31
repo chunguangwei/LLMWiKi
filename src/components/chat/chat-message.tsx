@@ -284,11 +284,32 @@ function SaveToWikiButton({
       const filePath = `${pp}/wiki/queries/${fileName}`
 
       // Strip hidden sources comment and thinking blocks from content
-      const cleanContent = content
+      const stripped = content
         .replace(/<!--\s*sources:.*?-->/g, "")
         .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
         .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "")
         .trimEnd()
+
+      // Wikify pass — a small LLM call that rewrites conversational
+      // chat tone ("Based on the article...", "Here's a summary...",
+      // "I fetched...") into clean knowledge-style markdown. Same
+      // facts, no chat scaffolding. Falls back to `stripped` when
+      // the LLM call fails / there's no usable LLM / content is too
+      // short to bother. Lazy-imported so test code that mocks the
+      // module doesn't have to mock streamChat.
+      // NOTE: llmConfig is captured ONCE here and reused for the
+      // autoIngest call below — defining a second `const llmConfig`
+      // in the same scope would shadow + tsc-fail.
+      const llmConfig = useWikiStore.getState().llmConfig
+      let cleanContent = stripped
+      if (hasUsableLlm(llmConfig)) {
+        try {
+          const { wikifyForSave } = await import("@/lib/wikify")
+          cleanContent = await wikifyForSave(stripped, llmConfig)
+        } catch (err) {
+          console.warn("[SaveToWiki] wikify failed, using raw content:", err)
+        }
+      }
 
       const frontmatter = [
         "---",
@@ -355,8 +376,9 @@ function SaveToWikiButton({
       // Full auto-ingest. We DON'T await — autoIngest is heavy and
       // we want the user back to chatting immediately. State updates
       // ride through chat-store, so the button + summary card update
-      // in place as ingest progresses / finishes.
-      const llmConfig = useWikiStore.getState().llmConfig
+      // in place as ingest progresses / finishes. Reuses the
+      // `llmConfig` captured at the start of this try block (above
+      // wikify pass) — re-fetching the store here would double up.
       if (hasUsableLlm(llmConfig)) {
         setMessageIngestState(messageId, { state: "running" })
         const { autoIngest } = await import("@/lib/ingest")
