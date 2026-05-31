@@ -5,9 +5,10 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
+import { useActivityStore } from "@/stores/activity-store"
 import { listDirectory, openProject } from "@/commands/fs"
 import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite } from "@/lib/project-store"
-import { loadReviewItems, loadLintItems, loadChatHistory } from "@/lib/persist"
+import { loadReviewItems, loadLintItems, loadChatHistory, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
 import { AppLayout } from "@/components/layout/app-layout"
@@ -440,6 +441,16 @@ function App() {
           useChatStore.getState().setActiveConversation(sorted[0].id)
         }
       }
+    } catch {
+      // ignore, start fresh
+    }
+    // Load persisted activity items + flip any stale "running" status
+    // to error (the previous webview died with those tasks still
+    // in-flight, so the user shouldn't see a ghost spinner).
+    try {
+      const savedActivity = await loadActivityItems(proj.path)
+      const hydrated = hydrateActivityItems(savedActivity)
+      useActivityStore.getState().setItems(hydrated)
     } catch {
       // ignore, start fresh
     }

@@ -1,12 +1,19 @@
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
+import { useActivityStore } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import { saveReviewItems, saveLintItems, saveChatHistory } from "./persist"
+import {
+  saveReviewItems,
+  saveLintItems,
+  saveChatHistory,
+  saveActivityItems,
+} from "./persist"
 
 let reviewTimer: ReturnType<typeof setTimeout> | null = null
 let lintTimer: ReturnType<typeof setTimeout> | null = null
 let chatTimer: ReturnType<typeof setTimeout> | null = null
+let activityTimer: ReturnType<typeof setTimeout> | null = null
 
 export function setupAutoSave(): void {
   // Auto-save review items (debounced 1s)
@@ -41,5 +48,19 @@ export function setupAutoSave(): void {
         saveChatHistory(project.path, state.conversations, state.messages).catch(() => {})
       }
     }, 2000)
+  })
+
+  // Auto-save activity items (debounced 3s). Running tasks emit updates
+  // every few seconds; debouncing avoids hammering disk during a tight
+  // ingest progress loop while still capturing terminal state for the
+  // reload-survives path.
+  useActivityStore.subscribe((state) => {
+    if (activityTimer) clearTimeout(activityTimer)
+    activityTimer = setTimeout(() => {
+      const project = useWikiStore.getState().project
+      if (project) {
+        saveActivityItems(project.path, state.items).catch(() => {})
+      }
+    }, 3000)
   })
 }

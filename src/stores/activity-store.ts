@@ -16,6 +16,13 @@ interface ActivityState {
   updateItem: (id: string, updates: Partial<Pick<ActivityItem, "status" | "detail" | "filesWritten">>) => void
   appendDetail: (id: string, text: string) => void
   clearDone: () => void
+  /**
+   * Replace the entire item list — used by the App startup hydration
+   * path. Caller is responsible for normalising the input (e.g. flipping
+   * stale "running" entries to "error", since the actual task process
+   * died with the previous webview).
+   */
+  setItems: (items: ActivityItem[]) => void
 }
 
 let counter = 0
@@ -52,4 +59,14 @@ export const useActivityStore = create<ActivityState>((set) => ({
     set((state) => ({
       items: state.items.filter((i) => i.status === "running"),
     })),
+
+  setItems: (items) => {
+    // Bump the counter past anything we just loaded so freshly-added
+    // ids don't collide with hydrated ones.
+    for (const it of items) {
+      const m = /^activity-(\d+)$/.exec(it.id)
+      if (m) counter = Math.max(counter, Number(m[1]))
+    }
+    set({ items })
+  },
 }))
