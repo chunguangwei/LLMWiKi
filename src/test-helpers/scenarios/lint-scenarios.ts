@@ -147,6 +147,44 @@ export const lintScenarios: LintScenario[] = [
     },
   },
 
+  // 3d. structural pages (overview / purpose / schema) are filtered
+  //     from orphan + no-outlinks + broken-link checks — they're
+  //     entry points / framing docs, not knowledge nodes. BUT they
+  //     remain valid wikilink targets, so a knowledge page that
+  //     references [[overview]] doesn't get a broken-link warning.
+  //
+  //     A real user lost their overview.md page when bulk-delete
+  //     acted on a stale "orphan: overview.md" lint warning. This
+  //     scenario pins the fix.
+  {
+    name: "structural/skip-overview-as-orphan",
+    description:
+      "overview.md exists at wiki root with no inbound links. Lint must " +
+      "NOT flag it as orphan / no-outlinks. A knowledge page also " +
+      "wikilinks to [[overview]] — that resolves cleanly, no broken-link.",
+    initialWiki: {
+      "wiki/index.md": "# Index\n\n- [[note]]\n- [[concept]]\n",
+      "wiki/overview.md": "---\ntype: overview\ntitle: Project Overview\n---\n\nNo other page links here, but that's intentional.\n",
+      // note + concept cross-link each other so neither is orphan;
+      // both reference [[overview]] to test the resolution path.
+      "wiki/note.md": page(
+        "A note",
+        "See the [[overview]] for framing context. Related: [[concept]].",
+      ),
+      "wiki/concept.md": page(
+        "A concept",
+        "Background in the [[overview]]; cross-ref [[note]].",
+      ),
+    },
+    expected: {
+      // Without the structural skip: overview.md gets orphan +
+      // no-outlinks. With the fix: zero findings — overview is a
+      // recognised entry point and its lack of inbound/outbound
+      // links is by design.
+      structural: [],
+    },
+  },
+
   // 4. no-outlinks — a page has zero [[wikilinks]]
   {
     name: "structural/no-outlinks",

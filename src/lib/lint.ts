@@ -189,13 +189,28 @@ export async function runStructuralLintWithStats(
 
   const config = await loadLintConfig(projectPath)
   const wikiFiles = flattenMdFiles(tree)
-  // Exclude index.md and log.md from orphan checks plus all files
-  // under config-ignored path prefixes (default raw / queries / etc).
-  // The skip pass also records WHY each file was dropped so the UI
-  // can show "skipped N items in sources/" instead of a silent dip.
+  // Exclude structural pages from orphan / no-outlinks / broken-link
+  // checks, plus all files under config-ignored path prefixes
+  // (default raw / queries / etc). Structural pages = the wiki's
+  // entry / TOC / change-log / overview / project framing —
+  // they're MEANT to be entry points, not knowledge nodes in the
+  // graph, so flagging them as orphan is a false positive that
+  // bulk-fix will gladly act on (it has happened: a user saw
+  // overview.md flagged as orphan and the cleanup deleted it).
+  // Keep this list aligned with
+  // agent-ingest/wiki-access.ts STRUCTURAL_PAGES and
+  // project-file-sync.ts. Match is on basename only — a per-folder
+  // `concepts/index.md` is still a real page.
+  const STRUCTURAL_BASENAMES: ReadonlySet<string> = new Set([
+    "index.md",
+    "log.md",
+    "overview.md",
+    "purpose.md",
+    "schema.md",
+  ])
   const skippedByPathPrefix = new Map<string, number>()
   const contentFiles = wikiFiles.filter((f) => {
-    if (f.name === "index.md" || f.name === "log.md") return false
+    if (STRUCTURAL_BASENAMES.has(f.name.toLowerCase())) return false
     const slug = relativeToSlug(getRelativePath(f.path, wikiRoot))
     for (const prefix of config.ignorePathPrefixes) {
       if (slug.startsWith(prefix)) {
@@ -211,7 +226,12 @@ export async function runStructuralLintWithStats(
     skippedByPathPrefix,
   }
 
-  const slugMap = buildSlugMap(contentFiles, wikiRoot)
+  // slugMap MUST include structural pages too — a wikilink from a
+  // knowledge page to `[[overview]]` or `[[index]]` is valid (the
+  // file exists), just not subject to orphan / no-outlinks checks.
+  // Without including them here, every such link would be flagged
+  // as broken.
+  const slugMap = buildSlugMap(wikiFiles, wikiRoot)
 
   // Read all content files
   type PageData = { path: string; slug: string; content: string; outlinks: string[] }
