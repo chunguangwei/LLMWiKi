@@ -300,12 +300,18 @@ function SaveToWikiButton({
       // the LLM call fails / there's no usable LLM / content is too
       // short to bother. Lazy-imported so test code that mocks the
       // module doesn't have to mock streamChat.
+      //
+      // Bypassed when the Labs `experimentalRawSaveToWiki` flag is
+      // ON — some users want the agent's reply verbatim (record-
+      // keeping, code-heavy answers, prose where wikify over-edits).
+      //
       // NOTE: llmConfig is captured ONCE here and reused for the
       // autoIngest call below — defining a second `const llmConfig`
       // in the same scope would shadow + tsc-fail.
       const llmConfig = useWikiStore.getState().llmConfig
+      const rawSaveOptIn = useWikiStore.getState().experimentalRawSaveToWiki
       let cleanContent = stripped
-      if (hasUsableLlm(llmConfig)) {
+      if (!rawSaveOptIn && hasUsableLlm(llmConfig)) {
         try {
           const { wikifyForSave } = await import("@/lib/wikify")
           cleanContent = await wikifyForSave(stripped, llmConfig)

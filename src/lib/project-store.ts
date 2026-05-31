@@ -210,6 +210,18 @@ export async function loadExperimentalChatAgentCanWrite(): Promise<boolean> {
   return (await store.get<boolean>(CHAT_AGENT_CAN_WRITE_FLAG_KEY)) ?? false
 }
 
+const RAW_SAVE_TO_WIKI_FLAG_KEY = "experimentalRawSaveToWiki"
+
+export async function saveExperimentalRawSaveToWiki(enabled: boolean): Promise<void> {
+  const store = await getStore()
+  await store.set(RAW_SAVE_TO_WIKI_FLAG_KEY, enabled)
+}
+
+export async function loadExperimentalRawSaveToWiki(): Promise<boolean> {
+  const store = await getStore()
+  return (await store.get<boolean>(RAW_SAVE_TO_WIKI_FLAG_KEY)) ?? false
+}
+
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"
 
 function scheduledImportKey(projectPath: string): string {

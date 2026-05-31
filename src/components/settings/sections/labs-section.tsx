@@ -5,6 +5,7 @@ import {
   saveExperimentalAiLintFix,
   saveExperimentalChatAgent,
   saveExperimentalChatAgentCanWrite,
+  saveExperimentalRawSaveToWiki,
 } from "@/lib/project-store"
 
 /**
@@ -31,6 +32,8 @@ export function LabsSection() {
   const chatAgentCanWrite = useWikiStore((s) => s.experimentalChatAgentCanWrite)
   const setChatAgentCanWrite = useWikiStore((s) => s.setExperimentalChatAgentCanWrite)
   const setChatAgent = useWikiStore((s) => s.setExperimentalChatAgent)
+  const rawSaveToWiki = useWikiStore((s) => s.experimentalRawSaveToWiki)
+  const setRawSaveToWiki = useWikiStore((s) => s.setExperimentalRawSaveToWiki)
 
   function toggleAgentIngest() {
     const next = !agentIngest
@@ -76,6 +79,14 @@ export function LabsSection() {
     const next = !chatAgentCanWrite
     setChatAgentCanWrite(next)
     saveExperimentalChatAgentCanWrite(next).catch((err) =>
+      console.warn("[labs] save failed:", err),
+    )
+  }
+
+  function toggleRawSaveToWiki() {
+    const next = !rawSaveToWiki
+    setRawSaveToWiki(next)
+    saveExperimentalRawSaveToWiki(next).catch((err) =>
       console.warn("[labs] save failed:", err),
     )
   }
@@ -326,6 +337,63 @@ export function LabsSection() {
             <span
               className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
                 chatAgentCanWrite ? "translate-x-4.5" : "translate-x-0.5"
+              }`}
+            />
+          </span>
+        </button>
+      </div>
+
+      {/* Raw Save-to-Wiki toggle. Skips the wikify LLM rewrite pass
+          when ON; persists the agent's reply verbatim. */}
+      <div
+        className={`flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
+          rawSaveToWiki
+            ? "border-emerald-500/60 bg-emerald-500/10 dark:border-emerald-400/50 dark:bg-emerald-400/10"
+            : "border-border bg-background"
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">
+            {t("settings.sections.labs.rawSaveToWikiLabel", {
+              defaultValue: "Raw Save to Wiki — skip wikify rewrite",
+            })}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {t("settings.sections.labs.rawSaveToWikiHint", {
+              defaultValue:
+                "By default, Save to Wiki sends the chat reply through a short LLM rewrite that strips conversational tone (\"Based on...\", \"Here's a summary...\") before writing the page. Turn this on to skip that pass and persist the reply verbatim — useful for record-keeping, code-heavy answers, or content where the rewrite over-edits. autoIngest and raw source preservation continue to run either way.",
+            })}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={toggleRawSaveToWiki}
+          role="switch"
+          aria-checked={rawSaveToWiki}
+          aria-label={t("settings.sections.labs.rawSaveToWikiLabel", {
+            defaultValue: "Raw Save to Wiki — skip wikify rewrite",
+          })}
+          className="ml-3 flex shrink-0 items-center gap-2"
+        >
+          <span
+            className={`text-xs font-semibold ${
+              rawSaveToWiki
+                ? "text-emerald-700 dark:text-emerald-300"
+                : "text-muted-foreground"
+            }`}
+          >
+            {rawSaveToWiki
+              ? t("settings.sections.labs.stateOn", { defaultValue: "ON" })
+              : t("settings.sections.labs.stateOff", { defaultValue: "OFF" })}
+          </span>
+          <span
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+              rawSaveToWiki ? "bg-emerald-500 dark:bg-emerald-400" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                rawSaveToWiki ? "translate-x-4.5" : "translate-x-0.5"
               }`}
             />
           </span>
