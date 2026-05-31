@@ -45,6 +45,12 @@ import {
   isAzureOpenAiV1Endpoint,
 } from "@/lib/azure-openai"
 import { buildAnthropicUrl, requiresBearerAuth } from "@/lib/llm-providers"
+import {
+  isRateLimitError,
+  MAX_RATE_LIMIT_RETRIES,
+  rateLimitBackoffMs,
+  sleepRespectingAbort,
+} from "@/lib/rate-limit"
 import type { LlmConfig } from "@/stores/wiki-store"
 import type {
   AgentLlm,
@@ -83,36 +89,77 @@ async function postJson(
   body: Record<string, unknown>,
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const httpFetch = await getHttpFetch()
-  const response = await httpFetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  })
-  if (!response.ok) {
+  // Rate-limit-aware retry loop. The agent runner sits above us, so a
+  // 429 surfaced here aborts the whole agent run — which on bulk-fix
+  // means N items in a row failing within a few seconds. Catching at
+  // this seam means chat-agent, autoIngest, agent-lint-fix all become
+  // 429-resilient for free, and the agent's accumulated state +
+  // tokens-already-billed survive across the wait.
+  //
+  // Geometric backoff (5s / 15s / 30s) keeps the worst case to ~50s,
+  // which is well past any provider's bucket reset cadence we've
+  // seen. After the retry budget is exhausted we throw the original
+  // shape ("agent LLM call failed: HTTP 429 ...") so the outer bulk
+  // layer's classifier still recognises it.
+  let lastBodyText = ""
+  let lastStatus = 0
+  let lastStatusText = ""
+  for (let attempt = 1; attempt <= MAX_RATE_LIMIT_RETRIES; attempt += 1) {
+    if (signal.aborted) {
+      throw new Error("agent LLM call aborted")
+    }
+    const httpFetch = await getHttpFetch()
+    const response = await httpFetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    })
+    if (response.ok) {
+      let parsed: unknown
+      try {
+        parsed = await response.json()
+      } catch (err) {
+        throw new Error(
+          `agent LLM call returned non-JSON response: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+      }
+      return parsed as Record<string, unknown>
+    }
     let bodyText = ""
     try {
       bodyText = await response.text()
     } catch {
       // ignore — message below is still useful
     }
-    throw new Error(
+    lastBodyText = bodyText
+    lastStatus = response.status
+    lastStatusText = response.statusText
+    // Build the error message in the same shape `isRateLimitError`
+    // already recognises (lint-view's bulk-fix wrapper relies on it
+    // staying the same too).
+    const errorMessage =
       `agent LLM call failed: HTTP ${response.status} ${response.statusText}` +
-        (bodyText ? ` — ${bodyText.slice(0, 800)}` : ""),
+      (bodyText ? ` — ${bodyText.slice(0, 800)}` : "")
+    if (!isRateLimitError(errorMessage) || attempt >= MAX_RATE_LIMIT_RETRIES) {
+      throw new Error(errorMessage)
+    }
+    const waitMs = rateLimitBackoffMs(attempt)
+    console.warn(
+      `[agent-llm] rate-limited (HTTP ${response.status}); ` +
+        `backing off ${waitMs}ms before retry ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES}.`,
     )
+    await sleepRespectingAbort(waitMs, signal)
   }
-  let parsed: unknown
-  try {
-    parsed = await response.json()
-  } catch (err) {
-    throw new Error(
-      `agent LLM call returned non-JSON response: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    )
-  }
-  return parsed as Record<string, unknown>
+  // Defensive: the loop above always either returns or throws inside
+  // an iteration. Reaching here would mean MAX_RATE_LIMIT_RETRIES is
+  // zero (it isn't) — surface the last error rather than vanish.
+  throw new Error(
+    `agent LLM call failed after ${MAX_RATE_LIMIT_RETRIES} attempts: HTTP ${lastStatus} ${lastStatusText}` +
+      (lastBodyText ? ` — ${lastBodyText.slice(0, 800)}` : ""),
+  )
 }
 
 /* ────────────────────────────────────────────────────────────────

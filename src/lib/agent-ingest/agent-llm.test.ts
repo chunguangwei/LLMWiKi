@@ -23,9 +23,17 @@ type FetchCall = {
 
 let calls: FetchCall[] = []
 let nextResponse: { status: number; body: unknown } = { status: 200, body: {} }
+// Queued responses — consumed in order before falling back to
+// `nextResponse`. Lets a single test simulate "429 then 200" without
+// each test having to swap fetches on its own.
+let responseQueue: Array<{ status: number; body: unknown }> = []
 
 function queueResponse(body: unknown, status = 200) {
   nextResponse = { status, body }
+}
+
+function pushQueuedResponse(body: unknown, status = 200) {
+  responseQueue.push({ status, body })
 }
 
 vi.mock("@/lib/tauri-fetch", () => ({
@@ -33,10 +41,10 @@ vi.mock("@/lib/tauri-fetch", () => ({
   getHttpFetch: async () =>
     async (url: string, init: RequestInit): Promise<Response> => {
       calls.push({ url, init })
-      const r = nextResponse
+      const r = responseQueue.length > 0 ? responseQueue.shift()! : nextResponse
       return new Response(JSON.stringify(r.body), {
         status: r.status,
-        statusText: r.status === 200 ? "OK" : "Error",
+        statusText: r.status === 200 ? "OK" : `HTTP ${r.status}`,
         headers: { "Content-Type": "application/json" },
       })
     },
@@ -45,6 +53,7 @@ vi.mock("@/lib/tauri-fetch", () => ({
 beforeEach(() => {
   calls = []
   nextResponse = { status: 200, body: {} }
+  responseQueue = []
 })
 
 afterEach(() => {
@@ -548,5 +557,84 @@ describe("createAgentLlm — provider dispatch", () => {
     expect(() =>
       createAgentLlm({ ...baseOpenAiConfig(), provider: "claude-code" } as LlmConfig),
     ).toThrow(/claude-code/)
+  })
+})
+
+/* ─────────────────────────────────────────────────────────────────
+ * postJson — 429 retry/backoff (exercised through AnthropicAgentLlm)
+ * ─────────────────────────────────────────────────────────────────*/
+
+describe("postJson — rate-limit retry", () => {
+  // Fake timers let us assert backoff without sitting through real
+  // 5-second sleeps. Each test that uses them also restores them at
+  // the end so beforeEach in the parent file doesn't double up.
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function okAnthropicBody() {
+    return {
+      content: [
+        { type: "tool_use", id: "use_done", name: "done", input: { reason: "ok" } },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }
+  }
+
+  it("retries on HTTP 429 and succeeds once the provider unblocks", async () => {
+    // Queue: 429 → 200 (success body)
+    pushQueuedResponse({ error: "rate_limit_error" }, 429)
+    pushQueuedResponse(okAnthropicBody(), 200)
+    const llm = new AnthropicAgentLlm(baseAnthropicConfig())
+    const messages: AgentMessage[] = [
+      { role: "user", content: "x" },
+    ]
+    const opts = { maxTokens: 256, temperature: 0 }
+    const promise = llm.chat(messages, TOOLS, opts, new AbortController().signal)
+    // First call returns 429 synchronously — sleepRespectingAbort
+    // starts polling 200ms tick. Advance past 5s backoff cap so the
+    // retry HTTP call fires + resolves.
+    await vi.advanceTimersByTimeAsync(6_000)
+    const result = await promise
+    expect(calls).toHaveLength(2)
+    expect((result as AssistantTurn).content[0]).toMatchObject({ type: "tool_use", name: "done" })
+  })
+
+  it("gives up after 3 attempts and propagates the original error shape", async () => {
+    // All three responses are 429.
+    pushQueuedResponse({ error: "rate_limit_error" }, 429)
+    pushQueuedResponse({ error: "rate_limit_error" }, 429)
+    pushQueuedResponse({ error: "rate_limit_error" }, 429)
+    const llm = new AnthropicAgentLlm(baseAnthropicConfig())
+    const messages: AgentMessage[] = [
+      { role: "user", content: "x" },
+    ]
+    const opts = { maxTokens: 256, temperature: 0 }
+    const promise = llm.chat(messages, TOOLS, opts, new AbortController().signal)
+    // Attach the expectation BEFORE advancing timers so the rejection
+    // doesn't bubble up as an unhandled rejection during the await.
+    const assertion = expect(promise).rejects.toThrow(/HTTP 429/)
+    // Total worst case = 5s + 15s = 20s of backoff before the 3rd
+    // try fires + throws.
+    await vi.advanceTimersByTimeAsync(25_000)
+    await assertion
+    expect(calls).toHaveLength(3)
+  })
+
+  it("does NOT retry on non-rate-limit errors (e.g. 500)", async () => {
+    pushQueuedResponse({ error: "internal" }, 500)
+    pushQueuedResponse(okAnthropicBody(), 200)
+    const llm = new AnthropicAgentLlm(baseAnthropicConfig())
+    const messages: AgentMessage[] = [
+      { role: "user", content: "x" },
+    ]
+    const opts = { maxTokens: 256, temperature: 0 }
+    await expect(
+      llm.chat(messages, TOOLS, opts, new AbortController().signal),
+    ).rejects.toThrow(/HTTP 500/)
+    expect(calls).toHaveLength(1)  // bailed on the first non-429
   })
 })

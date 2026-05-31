@@ -87,41 +87,16 @@ export function shouldShowLintResults(hasRun: boolean, itemCount: number): boole
   return hasRun || itemCount > 0
 }
 
-/**
- * Match an error against the "we got rate-limited" signal. Providers
- * differ: Anthropic surfaces `HTTP 429`, OpenAI sometimes wraps as
- * `rate_limit_exceeded`, Chinese resellers (Token Plan / SiliconFlow)
- * lean on bilingual Chinese-English text. We over-match deliberately
- * — false positives waste a couple of seconds; false negatives strand
- * the user mid-batch with a fatal error.
- */
-export function isRateLimitError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err)
-  return (
-    /\b429\b/.test(msg) ||
-    /rate[\s_-]?limit/i.test(msg) ||
-    /too many requests/i.test(msg) ||
-    /请求量较高|请稍后重试|超过.*?限制|超.*?额度/.test(msg)
-  )
-}
-
-/**
- * Compute the backoff delay for the Nth retry (1-indexed). Geometric:
- * 5s, 15s, 30s — total 50s worst case before giving up at attempt 3.
- * The cap is conservative: most providers reset the bucket on a
- * 5-second cadence, so 30s is "definitely past it without burning
- * the user's evening".
- */
-export function rateLimitBackoffMs(attempt: number): number {
-  switch (attempt) {
-    case 1:
-      return 5_000
-    case 2:
-      return 15_000
-    default:
-      return 30_000
-  }
-}
+// Rate-limit detection + backoff are shared with agent-llm's postJson
+// (which also retries 429s for free) — `@/lib/rate-limit` is the
+// single source. Re-exported here so the existing lint-view tests
+// keep working without import churn.
+import {
+  isRateLimitError as sharedIsRateLimitError,
+  rateLimitBackoffMs as sharedRateLimitBackoffMs,
+} from "@/lib/rate-limit"
+export const isRateLimitError = sharedIsRateLimitError
+export const rateLimitBackoffMs = sharedRateLimitBackoffMs
 
 /** After ANY 429 in a bulk run, pace each subsequent item by this
  *  much so we don't keep tripping the same per-account ceiling. */
@@ -130,7 +105,15 @@ const THROTTLE_AFTER_429_MS = 2_000
 /** Max retry attempts before giving up on an item and moving on. */
 const MAX_BULK_RETRY_ATTEMPTS = 3
 
-async function sleepRespectingAbort(
+/**
+ * Polls the bulk-run abort ref every 200ms while waiting `ms` total.
+ * The shared rate-limit module's variant takes an AbortSignal; bulk-fix
+ * uses a mutable ref instead so the Stop button can flip a flag without
+ * threading a controller through. We could refactor to a controller
+ * later, but keeping this local helper for now is the smallest diff
+ * that gives Stop responsiveness during 429 backoff.
+ */
+async function sleepRespectingAbortRef(
   ms: number,
   abortRef: { aborted: boolean } | null,
 ): Promise<void> {
@@ -147,6 +130,11 @@ async function sleepRespectingAbort(
  * any other error we surface immediately — non-rate-limit failures
  * are usually deterministic (wrong slug, schema mismatch) and retry
  * just wastes tokens. `onBackoff` lets the caller surface progress.
+ *
+ * As of the postJson backoff layer, single-call 429s are usually
+ * absorbed BELOW runLintFix — this wrapper is now a second line of
+ * defense catching multi-call cascades and non-postJson rate-limit
+ * shapes (tool-execution-side limits, classifier wrappers, etc).
  */
 async function runLintFixWithBackoff(
   opts: Parameters<typeof runLintFix>[0],
@@ -160,11 +148,11 @@ async function runLintFixWithBackoff(
       return await runLintFix(opts)
     } catch (err) {
       lastErr = err
-      if (!isRateLimitError(err)) throw err
+      if (!sharedIsRateLimitError(err)) throw err
       if (attempt >= MAX_BULK_RETRY_ATTEMPTS) break
-      const waitMs = rateLimitBackoffMs(attempt)
+      const waitMs = sharedRateLimitBackoffMs(attempt)
       onBackoff(waitMs, attempt)
-      await sleepRespectingAbort(waitMs, abortRef)
+      await sleepRespectingAbortRef(waitMs, abortRef)
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
@@ -496,7 +484,7 @@ export function LintView() {
     try {
       for (const item of broken) {
         if (bulkAbortRef.current?.aborted) break
-        if (throttled) await sleepRespectingAbort(THROTTLE_AFTER_429_MS, bulkAbortRef.current)
+        if (throttled) await sleepRespectingAbortRef(THROTTLE_AFTER_429_MS, bulkAbortRef.current)
         if (bulkAbortRef.current?.aborted) break
         setFixingId(item.id)
         try {
