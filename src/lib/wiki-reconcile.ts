@@ -80,6 +80,9 @@ export interface ReconcileFileChange {
   /** Whether this file ALSO had its index.md row scrubbed (only set
    *  when slug === "index"). */
   indexRowsDropped: number
+  /** Count of missing-from-index knowledge pages this run added back
+   *  to index.md. Only non-zero on the index.md row of the result. */
+  indexRowsAdded: number
   /** Old vs new content snapshot, present only on dry-run so the
    *  caller can preview. Empty in real-run to keep memory low. */
   diffPreview?: { before: string; after: string }
@@ -96,6 +99,8 @@ export interface ReconcileResult {
   totalRelatedEntriesRemoved: number
   /** Sum of changes[i].indexRowsDropped (typically just index.md). */
   totalIndexRowsDropped: number
+  /** Sum of changes[i].indexRowsAdded (typically just index.md). */
+  totalIndexRowsAdded: number
   /** True when no real writes happened. */
   dryRun: boolean
 }
@@ -132,6 +137,16 @@ export async function reconcileWiki(
   const allFiles = flattenMd(tree)
   const slugSet = buildResolutionSet(allFiles, wikiRoot)
 
+  // Pre-scan the knowledge layer to build the "should be in index.md"
+  // list. We only auto-add entries for the canonical knowledge types
+  // (concept, entity, source, synthesis, finding, comparison) — these
+  // are the LLM-generated taxonomy where drift is most painful (the
+  // agent creates pages without remembering to update index.md).
+  // Notes / reports / etc. live alongside but stay user-curated; an
+  // empty section is better than a wrong assumption about where the
+  // user wants them listed.
+  const indexCandidates = await collectIndexCandidates(allFiles, wikiRoot)
+
   const changes: ReconcileFileChange[] = []
   let scanned = 0
 
@@ -150,7 +165,7 @@ export async function reconcileWiki(
 
     const isIndex = file.name === "index.md" && !slug.includes("/")
     const fileChange = isIndex
-      ? rewriteIndexFile(content, slugSet)
+      ? rewriteIndexFile(content, slugSet, indexCandidates)
       : rewriteKnowledgeFile(content, slugSet)
 
     if (fileChange.unchanged) continue
@@ -168,19 +183,47 @@ export async function reconcileWiki(
       brokenWikilinksReplaced: fileChange.brokenWikilinksReplaced,
       relatedEntriesRemoved: fileChange.relatedEntriesRemoved,
       indexRowsDropped: fileChange.indexRowsDropped,
+      indexRowsAdded: fileChange.indexRowsAdded,
       ...(dryRun
         ? { diffPreview: { before: content, after: fileChange.next } }
         : {}),
     })
   }
 
+  // If index.md didn't exist on disk but there are candidates to add,
+  // synthesise an empty index pass so the auto-add still runs. This
+  // matters for fresh projects where the user has imported a few
+  // concept pages but hasn't initialised index.md yet — reconcile
+  // shouldn't silently skip just because there's nothing to scrub.
+  const sawIndex = allFiles.some(
+    (f) => f.name === "index.md" && !relativeToSlug(getRelativePath(f.path, wikiRoot)).includes("/"),
+  )
+  if (!sawIndex && indexCandidates.length > 0) {
+    const synthesised = rewriteIndexFile("", slugSet, indexCandidates)
+    if (!synthesised.unchanged) {
+      const indexPath = `${wikiRoot}/index.md`
+      if (!dryRun) {
+        await writeFileAtomic(indexPath, synthesised.next)
+      }
+      changes.push({
+        slug: "index",
+        brokenWikilinksReplaced: 0,
+        relatedEntriesRemoved: 0,
+        indexRowsDropped: 0,
+        indexRowsAdded: synthesised.indexRowsAdded,
+        ...(dryRun ? { diffPreview: { before: "", after: synthesised.next } } : {}),
+      })
+    }
+  }
+
   const totals = changes.reduce(
     (acc, c) => ({
       links: acc.links + c.brokenWikilinksReplaced,
       related: acc.related + c.relatedEntriesRemoved,
-      index: acc.index + c.indexRowsDropped,
+      indexDropped: acc.indexDropped + c.indexRowsDropped,
+      indexAdded: acc.indexAdded + c.indexRowsAdded,
     }),
-    { links: 0, related: 0, index: 0 },
+    { links: 0, related: 0, indexDropped: 0, indexAdded: 0 },
   )
 
   return {
@@ -188,7 +231,8 @@ export async function reconcileWiki(
     changes,
     totalBrokenWikilinksReplaced: totals.links,
     totalRelatedEntriesRemoved: totals.related,
-    totalIndexRowsDropped: totals.index,
+    totalIndexRowsDropped: totals.indexDropped,
+    totalIndexRowsAdded: totals.indexAdded,
     dryRun,
   }
 }
@@ -254,6 +298,7 @@ interface RewriteResult {
   brokenWikilinksReplaced: number
   relatedEntriesRemoved: number
   indexRowsDropped: number
+  indexRowsAdded: number
 }
 
 /** Wikilink regex matching `[[target]]` or `[[target|alias]]`. */
@@ -311,6 +356,7 @@ function rewriteKnowledgeFile(
       brokenWikilinksReplaced: 0,
       relatedEntriesRemoved: 0,
       indexRowsDropped: 0,
+      indexRowsAdded: 0,
     }
   }
 
@@ -321,6 +367,7 @@ function rewriteKnowledgeFile(
     brokenWikilinksReplaced: brokenLinks,
     relatedEntriesRemoved: relatedRemoved,
     indexRowsDropped: 0,
+    indexRowsAdded: 0,
   }
 }
 
@@ -333,14 +380,23 @@ function rewriteKnowledgeFile(
  *
  * Non-list lines (headings, prose) are preserved verbatim so any
  * user-authored introduction or section dividers survive.
+ *
+ * Auto-add pass: any knowledge-layer page (concept / entity / source
+ * / synthesis / finding / comparison) NOT already linked in the index
+ * is appended to its type's section. Section headings are created if
+ * absent. This closes the "missing-from-index" half of the drift
+ * problem — broken rows are dropped above, missing rows are added
+ * here, and the result is fully reconciled.
  */
 function rewriteIndexFile(
   content: string,
   slugSet: Set<string>,
+  indexCandidates: IndexCandidate[],
 ): RewriteResult {
   const lines = content.split("\n")
   const kept: string[] = []
   let rowsDropped = 0
+  const linkedSlugs = new Set<string>()
 
   for (const line of lines) {
     // A "TOC row" is a list item containing at least one wikilink.
@@ -354,25 +410,65 @@ function rewriteIndexFile(
     const target = tocMatch[1]
     if (hasSlug(slugSet, target)) {
       kept.push(line)
+      // Record what's already linked so auto-add doesn't duplicate.
+      // Resolve via the resolution set's basename alias rule so e.g.
+      // `[[transformer]]` recognises `concepts/transformer.md`.
+      linkedSlugs.add(target.trim().toLowerCase())
+      const basename = target.trim().toLowerCase().split("/").pop() ?? ""
+      if (basename) linkedSlugs.add(basename)
     } else {
       rowsDropped += 1
       // Line is dropped — DON'T push.
     }
   }
 
-  if (rowsDropped === 0) {
+  // Identify candidates not yet linked.
+  const missing = indexCandidates.filter((c) => {
+    const slug = c.slug.toLowerCase()
+    const basename = slug.split("/").pop() ?? slug
+    return !linkedSlugs.has(slug) && !linkedSlugs.has(basename)
+  })
+
+  if (rowsDropped === 0 && missing.length === 0) {
     return {
       next: content,
       unchanged: true,
       brokenWikilinksReplaced: 0,
       relatedEntriesRemoved: 0,
       indexRowsDropped: 0,
+      indexRowsAdded: 0,
+    }
+  }
+
+  // Phase 1: drop broken rows.
+  let body = kept.join("\n")
+
+  // Phase 2: append missing entries to their type's section, creating
+  // sections as needed at the end of the file.
+  let rowsAdded = 0
+  if (missing.length > 0) {
+    const byType = new Map<string, IndexCandidate[]>()
+    for (const m of missing) {
+      const arr = byType.get(m.type) ?? []
+      arr.push(m)
+      byType.set(m.type, arr)
+    }
+    for (const [type, entries] of byType) {
+      const headingText = INDEX_SECTION_HEADINGS[type] ?? toTitleCase(type)
+      const aliasesLower = [
+        headingText.toLowerCase(),
+        type.toLowerCase(),
+        ...(INDEX_SECTION_ALIASES[type]?.map((a) => a.toLowerCase()) ?? []),
+      ]
+      const bullets = entries.map((e) => formatIndexBullet(e))
+      body = insertOrCreateSection(body, headingText, aliasesLower, bullets)
+      rowsAdded += entries.length
     }
   }
 
   // Collapse any consecutive blank lines created by the drops to one
   // blank — keeps the index visually tidy after a heavy cleanup.
-  let next = kept.join("\n").replace(/\n{3,}/g, "\n\n")
+  let next = body.replace(/\n{3,}/g, "\n\n")
   if (!next.endsWith("\n")) next += "\n"
 
   return {
@@ -381,7 +477,202 @@ function rewriteIndexFile(
     brokenWikilinksReplaced: 0,
     relatedEntriesRemoved: 0,
     indexRowsDropped: rowsDropped,
+    indexRowsAdded: rowsAdded,
   }
+}
+
+/* ────────────────────────────────────────────────
+ * Index auto-add — section management
+ * ────────────────────────────────────────────────*/
+
+interface IndexCandidate {
+  /** Wiki-relative slug (e.g. "concepts/transformer"). */
+  slug: string
+  /** Frontmatter `type:` from the page (canonical taxonomy slug). */
+  type: string
+  /** Frontmatter title or filename-derived heading. */
+  title: string
+}
+
+/**
+ * Knowledge types the auto-add pass covers. Limited to the LLM-generated
+ * taxonomy where drift is most painful — the agent creates pages without
+ * remembering to update index.md, and these are the types with stable
+ * naming conventions (concepts/, entities/, …).
+ *
+ * Notes / reports / articles / etc. are USER-curated; their organisation
+ * inside index.md is a layout choice we shouldn't make for them. They're
+ * still tracked everywhere else (lint, search, knowledge tree), just not
+ * auto-listed here.
+ */
+const AUTO_INDEX_TYPES: ReadonlySet<string> = new Set([
+  "concept",
+  "entity",
+  "source",
+  "synthesis",
+  "finding",
+  "comparison",
+])
+
+/** Canonical heading text by type. Plural form, English — users can
+ *  rename in the file and the next pass will pick up the new name
+ *  via INDEX_SECTION_ALIASES. */
+const INDEX_SECTION_HEADINGS: Record<string, string> = {
+  concept: "Concepts",
+  entity: "Entities",
+  source: "Sources",
+  synthesis: "Synthesis",
+  finding: "Findings",
+  comparison: "Comparisons",
+}
+
+/** Localised / legacy heading aliases that ALSO count as the target
+ *  section. Keeps existing hand-authored indexes from getting a
+ *  duplicate section appended. */
+const INDEX_SECTION_ALIASES: Record<string, string[]> = {
+  concept: ["concepts", "概念", "concept"],
+  entity: ["entities", "实体", "entity"],
+  source: ["sources", "来源", "source"],
+  synthesis: ["synthesis", "综合", "syntheses"],
+  finding: ["findings", "结论", "finding"],
+  comparison: ["comparisons", "对比", "comparison"],
+}
+
+function toTitleCase(s: string): string {
+  if (s.length === 0) return s
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function formatIndexBullet(c: IndexCandidate): string {
+  // [[slug|title]] form — title may equal the slug's last segment, in
+  // which case we drop the alias for tidiness.
+  const lastSegment = c.slug.split("/").pop() ?? c.slug
+  if (c.title.trim() === lastSegment) return `- [[${c.slug}]]`
+  return `- [[${c.slug}|${c.title}]]`
+}
+
+/**
+ * Insert `bullets` into the section whose heading text matches one of
+ * `aliasesLower` (case-insensitive). If no such section exists, append
+ * one with `headingText` at the end of the document.
+ *
+ * Bullets are inserted at the end of the existing section's list — new
+ * pages naturally land below user-curated entries rather than reshuffling
+ * existing order.
+ */
+function insertOrCreateSection(
+  content: string,
+  headingText: string,
+  aliasesLower: string[],
+  bullets: string[],
+): string {
+  if (bullets.length === 0) return content
+  const lines = content.split("\n")
+
+  // Find the start line of a matching section (any heading level).
+  const headingRe = /^(#{1,6})\s+(.+?)\s*$/
+  let sectionStart = -1
+  let sectionLevel = 0
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(headingRe)
+    if (!m) continue
+    const text = m[2].trim().toLowerCase()
+    if (aliasesLower.includes(text)) {
+      sectionStart = i
+      sectionLevel = m[1].length
+      break
+    }
+  }
+
+  if (sectionStart === -1) {
+    // Append a new ## section at the end. Default to level 2 — every
+    // hand-written index I've seen uses ## for type groupings.
+    const tail = content.endsWith("\n") ? content : content + "\n"
+    return (
+      tail +
+      (content.length === 0 ? "" : "\n") +
+      `## ${headingText}\n\n` +
+      bullets.join("\n") +
+      "\n"
+    )
+  }
+
+  // Find the end of this section — the next heading at the SAME level
+  // or higher (smaller number = higher level). If none, end-of-file.
+  let sectionEnd = lines.length
+  for (let i = sectionStart + 1; i < lines.length; i++) {
+    const m = lines[i].match(headingRe)
+    if (!m) continue
+    if (m[1].length <= sectionLevel) {
+      sectionEnd = i
+      break
+    }
+  }
+
+  // Find the last non-blank line within the section to insert after.
+  // Otherwise insert right after the heading.
+  let insertAt = sectionStart + 1
+  for (let i = sectionEnd - 1; i > sectionStart; i--) {
+    if (lines[i].trim().length > 0) {
+      insertAt = i + 1
+      break
+    }
+  }
+
+  const before = lines.slice(0, insertAt)
+  const after = lines.slice(insertAt)
+  return [...before, ...bullets, ...after].join("\n")
+}
+
+/**
+ * Walk the wiki tree, read each .md, build the list of auto-index
+ * candidates. A candidate is a knowledge-layer page (AUTO_INDEX_TYPES)
+ * with a non-empty frontmatter `type:` field. Pages without parseable
+ * frontmatter / outside the taxonomy are skipped silently.
+ *
+ * I/O happens here (not the rewriter) so the rewriter stays pure +
+ * unit-testable.
+ */
+async function collectIndexCandidates(
+  files: FileNode[],
+  wikiRoot: string,
+): Promise<IndexCandidate[]> {
+  const candidates: IndexCandidate[] = []
+  for (const f of files) {
+    if (f.name === "index.md" || f.name === "log.md") continue
+    const slug = relativeToSlug(getRelativePath(f.path, wikiRoot))
+    if (slug.includes("/")) {
+      const top = slug.split("/")[0]
+      // Skip ignored folders unconditionally — the agent's autoIngest
+      // never auto-indexes raw imports, scratch, or chat-saved queries.
+      // queries/ pages have their own chat-save append flow.
+      if (
+        top === "raw" ||
+        top === ".llm-wiki" ||
+        top === ".llm-wiki-local" ||
+        top === "queries"
+      ) {
+        continue
+      }
+    }
+    let content: string
+    try {
+      content = await readFile(f.path)
+    } catch {
+      continue
+    }
+    const { frontmatter } = parseFrontmatter(content)
+    if (!frontmatter || typeof frontmatter !== "object") continue
+    const fm = frontmatter as Record<string, unknown>
+    const type = typeof fm.type === "string" ? fm.type.trim() : ""
+    if (!AUTO_INDEX_TYPES.has(type)) continue
+    const title =
+      typeof fm.title === "string" && fm.title.length > 0
+        ? fm.title
+        : (slug.split("/").pop() ?? slug)
+    candidates.push({ slug, type, title })
+  }
+  return candidates
 }
 
 /* ────────────────────────────────────────────────
@@ -458,6 +749,7 @@ function emptyResult(dryRun: boolean): ReconcileResult {
     totalBrokenWikilinksReplaced: 0,
     totalRelatedEntriesRemoved: 0,
     totalIndexRowsDropped: 0,
+    totalIndexRowsAdded: 0,
     dryRun,
   }
 }

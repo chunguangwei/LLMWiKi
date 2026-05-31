@@ -256,3 +256,195 @@ describe("reconcileWiki — no-op cases", () => {
     expect(fs.files.get(`${WIKI}/log.md`)).toBe(before)
   })
 })
+
+/* ────────────────────────────────────────────────
+ * Index auto-add (missing entries)
+ * ────────────────────────────────────────────────*/
+
+function typedPage(type: string, title: string, body = "x"): string {
+  return `---\ntype: ${type}\ntitle: ${title}\n---\n\n${body}\n`
+}
+
+describe("reconcileWiki — index.md auto-add (missing knowledge pages)", () => {
+  it("adds missing concept pages to the Concepts section", async () => {
+    setFile(`${WIKI}/index.md`, [
+      "# Wiki Index",
+      "",
+      "## Concepts",
+      "- [[concepts/foo|Foo]]",
+      "",
+    ].join("\n"))
+    setFile(`${WIKI}/concepts/foo.md`, typedPage("concept", "Foo"))
+    setFile(`${WIKI}/concepts/transformer.md`, typedPage("concept", "Transformer"))
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("concepts", `${WIKI}/concepts`, [
+        pageNode("foo.md", `${WIKI}/concepts/foo.md`),
+        pageNode("transformer.md", `${WIKI}/concepts/transformer.md`),
+      ]),
+    ])
+
+    const r = await reconcileWiki(PROJECT)
+    expect(r.totalIndexRowsAdded).toBe(1)
+    const idx = fs.files.get(`${WIKI}/index.md`)!
+    expect(idx).toMatch(/- \[\[concepts\/foo\|Foo\]\]/)  // existing entry preserved
+    expect(idx).toMatch(/- \[\[concepts\/transformer\|Transformer\]\]/)
+  })
+
+  it("creates the Entities section if it doesn't exist yet", async () => {
+    // The Notes section already lists a real page — it should stay
+    // verbatim while the new Entities section gets appended below.
+    setFile(`${WIKI}/index.md`, "# Wiki Index\n\n## Notes\n\n- [[notes/intro]]\n")
+    setFile(`${WIKI}/notes/intro.md`, typedPage("note", "Intro"))
+    setFile(`${WIKI}/entities/openai.md`, typedPage("entity", "OpenAI"))
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("notes", `${WIKI}/notes`, [
+        pageNode("intro.md", `${WIKI}/notes/intro.md`),
+      ]),
+      dirNode("entities", `${WIKI}/entities`, [
+        pageNode("openai.md", `${WIKI}/entities/openai.md`),
+      ]),
+    ])
+
+    const r = await reconcileWiki(PROJECT)
+    expect(r.totalIndexRowsAdded).toBe(1)
+    const idx = fs.files.get(`${WIKI}/index.md`)!
+    expect(idx).toMatch(/## Entities/)
+    expect(idx).toMatch(/- \[\[entities\/openai\|OpenAI\]\]/)
+    // Existing Notes section untouched.
+    expect(idx).toMatch(/## Notes\n\n- \[\[notes\/intro\]\]/)
+  })
+
+  it("is idempotent: re-running adds nothing the second time", async () => {
+    setFile(`${WIKI}/index.md`, "# Wiki Index\n")
+    setFile(`${WIKI}/concepts/foo.md`, typedPage("concept", "Foo"))
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("concepts", `${WIKI}/concepts`, [
+        pageNode("foo.md", `${WIKI}/concepts/foo.md`),
+      ]),
+    ])
+
+    const first = await reconcileWiki(PROJECT)
+    expect(first.totalIndexRowsAdded).toBe(1)
+    const afterFirst = fs.files.get(`${WIKI}/index.md`)!
+
+    const second = await reconcileWiki(PROJECT)
+    expect(second.totalIndexRowsAdded).toBe(0)
+    expect(fs.files.get(`${WIKI}/index.md`)).toBe(afterFirst)
+  })
+
+  it("recognises a localised section heading and adds under it", async () => {
+    setFile(`${WIKI}/index.md`, "# 知识索引\n\n## 概念\n\n- [[concepts/foo]]\n")
+    setFile(`${WIKI}/concepts/foo.md`, typedPage("concept", "Foo"))
+    setFile(`${WIKI}/concepts/bar.md`, typedPage("concept", "Bar"))
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("concepts", `${WIKI}/concepts`, [
+        pageNode("foo.md", `${WIKI}/concepts/foo.md`),
+        pageNode("bar.md", `${WIKI}/concepts/bar.md`),
+      ]),
+    ])
+
+    const r = await reconcileWiki(PROJECT)
+    expect(r.totalIndexRowsAdded).toBe(1)
+    const idx = fs.files.get(`${WIKI}/index.md`)!
+    // No duplicate Concepts section created — the 概念 heading stays.
+    expect(idx).toMatch(/## 概念/)
+    expect(idx).not.toMatch(/## Concepts/)
+    expect(idx).toMatch(/- \[\[concepts\/bar\|Bar\]\]/)
+  })
+
+  it("skips non-knowledge types (queries/, raw/, sources/, notes)", async () => {
+    setFile(`${WIKI}/index.md`, "# Wiki Index\n")
+    setFile(`${WIKI}/queries/q.md`, typedPage("query", "Q"))
+    setFile(`${WIKI}/raw/r.md`, typedPage("note", "R"))
+    setFile(`${WIKI}/notes/n.md`, typedPage("note", "N"))
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("queries", `${WIKI}/queries`, [
+        pageNode("q.md", `${WIKI}/queries/q.md`),
+      ]),
+      dirNode("raw", `${WIKI}/raw`, [
+        pageNode("r.md", `${WIKI}/raw/r.md`),
+      ]),
+      dirNode("notes", `${WIKI}/notes`, [
+        pageNode("n.md", `${WIKI}/notes/n.md`),
+      ]),
+    ])
+
+    const r = await reconcileWiki(PROJECT)
+    expect(r.totalIndexRowsAdded).toBe(0)
+  })
+
+  it("synthesises a new index.md when missing AND there are candidates", async () => {
+    setFile(`${WIKI}/concepts/foo.md`, typedPage("concept", "Foo"))
+    setTree(WIKI, [
+      dirNode("concepts", `${WIKI}/concepts`, [
+        pageNode("foo.md", `${WIKI}/concepts/foo.md`),
+      ]),
+    ])
+
+    const r = await reconcileWiki(PROJECT)
+    expect(r.totalIndexRowsAdded).toBe(1)
+    const idx = fs.files.get(`${WIKI}/index.md`)
+    expect(idx).toBeDefined()
+    expect(idx!).toMatch(/## Concepts/)
+    expect(idx!).toMatch(/- \[\[concepts\/foo\|Foo\]\]/)
+  })
+
+  it("does NOT synthesise an index.md when wiki has no candidates", async () => {
+    // No knowledge-type pages → no index drift to fix → no new file.
+    setFile(`${WIKI}/notes/n.md`, typedPage("note", "N"))
+    setTree(WIKI, [
+      dirNode("notes", `${WIKI}/notes`, [
+        pageNode("n.md", `${WIKI}/notes/n.md`),
+      ]),
+    ])
+
+    await reconcileWiki(PROJECT)
+    expect(fs.files.has(`${WIKI}/index.md`)).toBe(false)
+  })
+
+  it("drops broken rows AND adds missing rows in the same pass", async () => {
+    setFile(`${WIKI}/index.md`, [
+      "# Wiki Index",
+      "",
+      "## Concepts",
+      "- [[concepts/ghost]]",
+      "",
+    ].join("\n"))
+    setFile(`${WIKI}/concepts/real.md`, typedPage("concept", "Real"))
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("concepts", `${WIKI}/concepts`, [
+        pageNode("real.md", `${WIKI}/concepts/real.md`),
+      ]),
+    ])
+
+    const r = await reconcileWiki(PROJECT)
+    expect(r.totalIndexRowsDropped).toBe(1)
+    expect(r.totalIndexRowsAdded).toBe(1)
+    const idx = fs.files.get(`${WIKI}/index.md`)!
+    expect(idx).not.toMatch(/ghost/)
+    expect(idx).toMatch(/- \[\[concepts\/real\|Real\]\]/)
+  })
+
+  it("uses bare [[slug]] when title equals the last slug segment", async () => {
+    // Tidiness: if title === filename, don't bother with the `|alias`.
+    setFile(`${WIKI}/index.md`, "# Wiki Index\n")
+    setFile(`${WIKI}/concepts/foo.md`, typedPage("concept", "foo"))
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("concepts", `${WIKI}/concepts`, [
+        pageNode("foo.md", `${WIKI}/concepts/foo.md`),
+      ]),
+    ])
+
+    await reconcileWiki(PROJECT)
+    const idx = fs.files.get(`${WIKI}/index.md`)!
+    expect(idx).toMatch(/- \[\[concepts\/foo\]\]/)
+    expect(idx).not.toMatch(/\[\[concepts\/foo\|foo\]\]/)
+  })
+})
