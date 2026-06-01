@@ -206,6 +206,9 @@
   },
   "lint": {
     "title": "Wiki Lint",
+    "suppressedCount": "{{count}} already attempted",
+    "suppressedTooltip": "Findings already attempted in a previous fix. Click to clear and re-run lint so they show up again.",
+    "suppressedConfirm": "Clear {{count}} already-attempted suppressions and re-run lint? Previously hidden findings will appear in the list again.",
     "semantic": "Semantic (LLM)",
     "running": "Running...",
     "runLint": "Run Lint",
