@@ -17,7 +17,7 @@ import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
 import { normalizePath, getFileName } from "@/lib/path-utils"
-import { makeQueryFileName } from "@/lib/wiki-filename"
+import { makeQueryFileName, makeQuerySlug } from "@/lib/wiki-filename"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-resolver"
@@ -344,7 +344,6 @@ function SaveToWikiButton({
         }
         for (let i = 0; i < fetchedSources.length; i++) {
           const src = fetchedSources[i]
-          const { makeQuerySlug } = await import("@/lib/wiki-filename")
           const srcSlug = makeQuerySlug(src.title || `source-${i + 1}`)
           const srcFileName = `${srcSlug || `source-${i + 1}`}-${date}-${
             // Add a 1-based suffix so multiple sources from the same

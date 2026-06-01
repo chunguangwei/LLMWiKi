@@ -26,6 +26,32 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.24",
+    date: "2026-06-01",
+    highlights: {
+      en: [
+        "Save to Wiki is sharper. A short wikify pass rewrites the chat reply into encyclopedic-style markdown before it lands in wiki/queries/ — strips chat scaffolding (\"Based on the article...\", \"Here's a summary...\") while preserving every fact, citation, code block, table, wikilink, and the original language. Best-effort: a failed wikify call silently falls back to the raw reply, the save never gets blocked. Settings → Labs → \"Raw Save to Wiki — skip wikify rewrite\" turns it off if you want the agent's exact words.",
+        "Web sources are preserved on save. When the chat agent uses web_fetch tool calls, each fetched article's markdown spills into raw/sources/web/<slug>-<date>-<NN>.md with a `source` frontmatter pointing at the original URL. The query page's frontmatter gets a `sources: [...]` array referencing those files — your save now keeps the paper trail without you copying anything by hand.",
+        "Frontmatter `type:` is now canonicalised at write time. The agent emits one of the project's 34 taxonomy slugs (plus `overview` / `other`); off-taxonomy types are normalised from the slug's folder when possible (concepts/foo → `concept`), or rejected with a hint so the next attempt self-corrects. Stops random/'其他'-bucket pollution in the knowledge tree.",
+        "Index drift is closed both directions. The Cleanup refs pass now ALSO adds missing knowledge pages (concept / entity / source / synthesis / finding / comparison) to the appropriate `## <Type>` section of wiki/index.md — recognising existing localised headings (`## 概念`) instead of duplicating them. And every autoIngest now runs the same backfill at its tail, so newly-written pages land in index.md without you remembering to click Cleanup refs.",
+        "Rate-limit (HTTP 429) retries transparently across every LLM path. autoIngest, wikify, chat-agent tool runs, agent-lint-fix, and the bulk-fix loop all back off geometrically (5s → 15s → 30s, max 3 attempts) before surfacing an error. Bulk-fix layers an extra retry on top + paces remaining items by 2s after a hit. The activity log shows \"⏳ rate-limited, retrying in 15s (attempt 2)\" so the pause is visible. Detector matches Anthropic / OpenAI / Chinese reseller phrasings.",
+        "Lint findings fold by type. Each severity bucket now groups items into foldable rows (`🔗 Broken links · 12`, `⚠️ Orphans · 3`) — piles over three rows start collapsed. Click the chevron to expand, override, or compare. Old flat scroll-of-cards UI replaced by a one-glance punch list.",
+        "Activity panel filters by type. New chip bar (`All / Ingest / Lint / Query`) above the rows; counts shown inline, zero-count chips disabled, empty-state shown when a filter excludes everything. Helps when 200-item persisted history makes the panel long.",
+        "Lint correctness: overview.md / purpose.md / schema.md are treated as structural and excluded from orphan / no-outlinks checks (previously surfaced as orphans the bulk-fix would have deleted). Activity items persist across app restarts and stale `running` entries flip to `error` on reload so a crashed task doesn't masquerade as still active. Unknown-type pages fall back to their folder so the knowledge tree never shows a stale 'other' bucket.",
+      ],
+      zh: [
+        "Save to Wiki 更干净。保存前会做一次小型 wikify pass，把聊天语气（「基于这篇文章...」「这里是总结...」「我看了下...」）改写成知识页风格，事实、引用、代码块、表格、wikilink、原始语言全部保留。失败兜底：wikify 调用失败时静默回退用原文，保存动作绝不卡死。Settings → Labs → 「Raw Save to Wiki — skip wikify rewrite」可以关掉，原话保留。",
+        "Web 抓取的源会被持久化。chat agent 调用 web_fetch 时，每篇抓回的文章 markdown 自动落到 raw/sources/web/<slug>-<date>-<NN>.md，frontmatter 指向原 URL；query 页 frontmatter 加 `sources: [...]` 数组引用这些文件 —— 保存现在自带证据链，不用你手动复制。",
+        "frontmatter `type:` 写入时强制规范化。agent 必须用项目 34 类分类法之一（加 `overview` / `other`）；不在分类法里的类型，如果 slug 的目录能推出（concepts/foo → `concept`）就静默修正，否则拒绝带提示词，让下轮自我纠正。知识树再也不会被随机 / 「其他」桶污染。",
+        "index 漂移两个方向都堵住了。Cleanup refs 现在还会把 wiki 里有、index.md 漏列的知识页（concept / entity / source / synthesis / finding / comparison）追加到对应的 `## <类型>` 段；本地化标题（`## 概念`）会被识别为同段，不会重复加节。每次 autoIngest 跑完也会自动跑一次同样的兜底 —— 新页直接进 index.md，不用你记着点 Cleanup refs。",
+        "限速（HTTP 429）自动退避，所有 LLM 路径都覆盖。autoIngest、wikify、chat-agent 工具调用、agent-lint-fix、bulk-fix 全部按 5s → 15s → 30s 退避，最多 3 次。Bulk-fix 多一层重试 + 命中后剩余条目自动放慢 2s 节奏。活动日志会显示「⏳ rate-limited, retrying in 15s (attempt 2)」，停顿可见。识别器覆盖 Anthropic / OpenAI / 中文转售商措辞。",
+        "Lint 发现按类型折叠。每个 severity 段把发现按类型分组成可折叠行（`🔗 Broken links · 12`、`⚠️ Orphans · 3`），超过 3 条的桶默认收起；点 chevron 展开 / 切换。之前一长串卡片现在变成一眼能扫的清单。",
+        "活动面板按类型过滤。新增 chip 行（`All / Ingest / Lint / Query`），自带计数；零数量的 chip 禁用，过滤后无项展示空态。200 条历史持久化时面板很长，过滤有用。",
+        "Lint 正确性：overview.md / purpose.md / schema.md 视为结构页，孤立 / 无出链检查跳过（之前会被识别成孤立页，bulk-fix 会顺手删掉）。活动项跨重启持久化，重启后过期的 `running` 状态翻成 `error`，崩溃的任务不会假装还在跑。未知 type 的页面回退看路径分类，知识树不再出现陈旧的「其他」桶。",
+      ],
+    },
+  },
+  {
     version: "0.4.23",
     date: "2026-05-30",
     highlights: {
