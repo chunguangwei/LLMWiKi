@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.28",
+    date: "2026-06-01",
+    highlights: {
+      en: [
+        "autoIngest now has an optional preview-before-write gate. Turn it on in Settings → Labs → \"Preview autoIngest writes before applying\". Every autoIngest pauses after the LLM stage with a dialog showing each proposed file (path + content preview). Apply commits to disk; Cancel skips with no disk writes (LLM tokens already spent regardless — the gate prevents disk pollution from a misguided LLM split, not token waste).",
+      ],
+      zh: [
+        "autoIngest 加了可选的「写盘前预览」开关。Settings → Labs → 「autoIngest 写盘前预览」开启后，每次 autoIngest 在 LLM 阶段完成后暂停，弹出对话框展示每个即将写入的文件（路径 + 内容预览）。点 Apply 落盘，点 Cancel 跳过——LLM token 已花，开关防的是 LLM 错误拆分把 wiki 弄乱，不是省 token。",
+      ],
+    },
+  },
+  {
     version: "0.4.27",
     date: "2026-06-01",
     highlights: {
