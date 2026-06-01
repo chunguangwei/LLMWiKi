@@ -206,6 +206,9 @@
   },
   "lint": {
     "title": "Wiki 检查",
+    "suppressedCount": "已尝试 {{count}} 条",
+    "suppressedTooltip": "之前尝试过修复的发现项已隐藏。点击清空记录并重跑检查，它们会再出现。",
+    "suppressedConfirm": "清空 {{count}} 条「已尝试」记录并重跑检查？之前隐藏的发现项会再次列出。",
     "semantic": "语义检查 (LLM)",
     "running": "检查中...",
     "runLint": "开始检查",

@@ -198,6 +198,10 @@ export function LintView() {
   // Reconcile (mechanical cleanup) state. Runs a dry-run first to
   // collect counts, asks the user to confirm, then applies.
   const [reconciling, setReconciling] = useState(false)
+  // Count of findings the last lint run filtered out as "already
+  // attempted". Surfaced as a small pill in the toolbar so the user
+  // knows nothing got silently lost — click to show / clear.
+  const [suppressedCount, setSuppressedCount] = useState(0)
   // Per-type fold state. Maps "warning:broken-link" / "info:orphan"
   // to "expanded?". A missing key falls back to the auto-fold rule
   // (expanded when count ≤ AUTO_FOLD_THRESHOLD). User clicks the
@@ -229,7 +233,17 @@ export function LintView() {
         all = [...structural, ...semantic]
       }
 
-      addLintItems(all)
+      // Filter against already-attempted findings — items the user
+      // (or bulk-fix) tried before don't get re-surfaced unless they
+      // click "Show suppressed" or clear suppressions. See
+      // `lib/lint-suppressions.ts` for the rationale.
+      const { loadSuppressions, partitionBySuppression } = await import(
+        "@/lib/lint-suppressions"
+      )
+      const suppressions = await loadSuppressions(pp)
+      const { visible, hidden } = partitionBySuppression(all, suppressions)
+      addLintItems(visible)
+      setSuppressedCount(hidden.length)
       setHasRun(true)
     } catch (err) {
       console.error("Lint failed:", err)
@@ -237,6 +251,37 @@ export function LintView() {
       setRunning(false)
     }
   }, [project, llmConfig, running, runSemantic, addLintItems, clearLintItems])
+
+  /**
+   * Clear all suppressions for the project and re-run lint so the
+   * previously-hidden items reappear. Confirms first because this
+   * un-hides EVERY finding the user has dismissed across all past
+   * fix attempts — not a per-row action.
+   */
+  async function handleShowSuppressed() {
+    if (!project || running) return
+    const pp = normalizePath(project.path)
+    const confirmed = window.confirm(
+      t("lint.suppressedConfirm", {
+        defaultValue:
+          `Clear ${suppressedCount} already-attempted suppressions and re-run lint? ` +
+          `Previously hidden findings will appear in the list again.`,
+        count: suppressedCount,
+      }),
+    )
+    if (!confirmed) return
+    try {
+      const { clearSuppressions } = await import("@/lib/lint-suppressions")
+      await clearSuppressions(pp)
+      setSuppressedCount(0)
+      // Re-run lint so the unhidden items show up immediately. The
+      // store will be replaced by the fresh findings — no manual
+      // clear needed.
+      handleRunLint()
+    } catch (err) {
+      console.error("[lint] failed to clear suppressions:", err)
+    }
+  }
 
   async function handleOpenPage(page: string) {
     if (!project) return
@@ -339,6 +384,18 @@ export function LintView() {
         const tree = await listDirectory(pp)
         setFileTree(tree)
         bumpDataVersion()
+        // Record the fix attempt — even if the underlying problem
+        // wasn't actually resolved (the agent reported success but
+        // the broken-link target STILL doesn't exist), suppressing
+        // this finding from future lint runs is the right call. The
+        // user said "已修过的就别再来烦了"; the only way out is
+        // explicit "show suppressed" / "clear suppressions".
+        try {
+          const { recordAttempt } = await import("@/lib/lint-suppressions")
+          await recordAttempt(pp, item)
+        } catch (e) {
+          console.warn("[lint] failed to record fix attempt:", e)
+        }
         // Release the per-item "fixing" lock before the early return.
         // The outer `finally { setFixingId(null) }` below ONLY fires
         // when we fall through to the classic handler; bailing here
@@ -354,6 +411,17 @@ export function LintView() {
             err instanceof Error ? err.message : String(err)
           }`,
         })
+        // Even on AI failure, record the attempt — the user clicked
+        // Fix, the system tried, and re-surfacing the same finding
+        // on the next lint creates the exact loop we're trying to
+        // break. They can manually un-suppress later if they want
+        // to retry.
+        try {
+          const { recordAttempt } = await import("@/lib/lint-suppressions")
+          await recordAttempt(pp, item)
+        } catch (e) {
+          console.warn("[lint] failed to record fix attempt:", e)
+        }
         // Fall through to the classic handler below.
       }
     }
@@ -428,6 +496,17 @@ export function LintView() {
         }
       }
 
+      // Classic fix path completed — record so the finding is
+      // suppressed on the next lint run. Same intent as the AI path
+      // above: the user took action; don't re-surface unless they
+      // ask.
+      try {
+        const { recordAttempt } = await import("@/lib/lint-suppressions")
+        await recordAttempt(pp, item)
+      } catch (e) {
+        console.warn("[lint] failed to record fix attempt:", e)
+      }
+
       // Refresh tree
       const tree = await listDirectory(pp)
       setFileTree(tree)
@@ -472,6 +551,13 @@ export function LintView() {
     bulkAbortRef.current = { aborted: false }
     setBulkRunning(true)
     const writtenAll: string[] = []
+    // Items the agent attempted (success OR failure). Recorded as
+    // suppressions when the run finishes so the next lint pass
+    // doesn't re-surface the same set. The user's intent on Bulk
+    // Fix is "try them all and don't bug me about the ones that
+    // can't be auto-resolved" — anything else creates the
+    // fix→fail→re-show→fix loop they complained about.
+    const attempted: LintItem[] = []
     let done = 0
     let succeeded = 0
     let failed = 0
@@ -518,8 +604,10 @@ export function LintView() {
           }
           useLintStore.getState().removeItem(item.id)
           succeeded += 1
+          attempted.push(item)
         } catch (err) {
           failed += 1
+          attempted.push(item)
           console.error("[bulk-fix] item failed", item.id, err)
         }
         done += 1
@@ -537,6 +625,17 @@ export function LintView() {
         filesWritten: writtenAll,
       })
       const pp = normalizePath(project.path)
+      // Persist suppressions for every attempted item — one round
+      // trip, not N. Future lint runs hide these unless the user
+      // explicitly clears or shows them.
+      if (attempted.length > 0) {
+        try {
+          const { recordAttempts } = await import("@/lib/lint-suppressions")
+          await recordAttempts(pp, attempted)
+        } catch (e) {
+          console.warn("[bulk-fix] failed to record attempts:", e)
+        }
+      }
       const tree = await listDirectory(pp)
       setFileTree(tree)
       bumpDataVersion()
@@ -707,6 +806,23 @@ export function LintView() {
                 count: lintStats.skipped,
               })}
             </span>
+          )}
+          {showResults && suppressedCount > 0 && (
+            <button
+              type="button"
+              onClick={handleShowSuppressed}
+              disabled={running}
+              className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:cursor-default disabled:opacity-60"
+              title={t("lint.suppressedTooltip", {
+                defaultValue:
+                  "Findings already attempted in a previous fix. Click to clear and re-run lint so they show up again.",
+              })}
+            >
+              {t("lint.suppressedCount", {
+                defaultValue: `${suppressedCount} already attempted`,
+                count: suppressedCount,
+              })}
+            </button>
           )}
         </div>
         <div className="flex items-center gap-2">
