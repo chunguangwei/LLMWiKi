@@ -5,6 +5,8 @@ import type { FileNode } from "@/types/wiki"
 import { useActivityStore } from "@/stores/activity-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
+import { parseFrontmatter } from "@/lib/frontmatter"
+import { WIKI_TYPE_OPTIONS } from "@/lib/wiki-type-options"
 
 /**
  * Wiki sub-folders whose contents are RAW imports, not knowledge
@@ -104,7 +106,7 @@ export interface LintStats {
 }
 
 export interface LintResult {
-  type: "orphan" | "broken-link" | "no-outlinks" | "semantic"
+  type: "orphan" | "broken-link" | "no-outlinks" | "semantic" | "frontmatter-type"
   severity: "warning" | "info"
   page: string
   detail: string
@@ -278,6 +280,18 @@ export async function runStructuralLintWithStats(
   // `target` so the lint row reads like the wiki.
   const brokenByTarget = new Map<string, { target: string; pages: Set<string> }>()
 
+  // Build the canonical type set ONCE per lint run. Sources from
+  // WIKI_TYPE_OPTIONS (the same list the type selector + write-time
+  // validation use) plus `overview` (the wiki's framing page, has
+  // its own type even though the selector hides it) and `other`
+  // (the explicit escape hatch). Any frontmatter `type:` outside
+  // this set is suggested for normalisation.
+  const canonicalTypes: ReadonlySet<string> = new Set([
+    ...WIKI_TYPE_OPTIONS.map((o) => o.value),
+    "overview",
+    "other",
+  ])
+
   for (const p of pages) {
     const shortName = getRelativePath(p.path, wikiRoot)
 
@@ -289,6 +303,35 @@ export async function runStructuralLintWithStats(
         severity: "info",
         page: shortName,
         detail: "No other pages link to this page.",
+      })
+    }
+
+    // Frontmatter type check — every page should declare a canonical
+    // `type:` so the knowledge tree, lint, and reconcile can place
+    // it. Two failure modes:
+    //   - missing → warning (no `type:` at all, page is a "lost
+    //     resource" the system can't classify)
+    //   - non-canonical → info (LLM or legacy import emitted a
+    //     synonym like `type: 笔记` — works through alias
+    //     normalisation but should be cleaned up for clarity)
+    const { frontmatter: fm } = parseFrontmatter(p.content)
+    const rawType =
+      fm && typeof fm === "object" && typeof (fm as Record<string, unknown>).type === "string"
+        ? ((fm as Record<string, unknown>).type as string).trim()
+        : ""
+    if (rawType.length === 0) {
+      results.push({
+        type: "frontmatter-type",
+        severity: "warning",
+        page: shortName,
+        detail: "Missing frontmatter `type:` — set one of the canonical types (concept / entity / note / report / ...).",
+      })
+    } else if (!canonicalTypes.has(rawType)) {
+      results.push({
+        type: "frontmatter-type",
+        severity: "info",
+        page: shortName,
+        detail: `Non-canonical \`type: ${rawType}\` — rename to a canonical slug from WIKI_TYPE_OPTIONS (e.g. note / report / article).`,
       })
     }
 
