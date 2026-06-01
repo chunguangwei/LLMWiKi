@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.29",
+    date: "2026-06-01",
+    highlights: {
+      en: [
+        "Search runs in parallel. The Rust backend previously walked wiki/ and read+scored each .md sequentially. Now fans out per-file read+score across the tokio blocking pool (bounded at 32 concurrent reads). For wikis past ~500 pages the wall-clock drops to ~1/N on N-core machines.",
+      ],
+      zh: [
+        "搜索改并行扫描。后端原本顺序读每个 .md 然后评分。现在每个文件的「读 + 评分」放进 tokio 阻塞池并发跑（最多 32 个同时读）。500 页以上的 wiki 搜索耗时降到 ~1/N（N = CPU 核心数）。",
+      ],
+    },
+  },
+  {
     version: "0.4.28",
     date: "2026-06-01",
     highlights: {
