@@ -26,6 +26,26 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.25",
+    date: "2026-06-01",
+    highlights: {
+      en: [
+        "Dark mode lands. Settings → Interface → Theme picks System / Light / Dark. A sun/moon icon next to the gear in the sidebar cycles through them with one click. System follows your OS preference and flips live when you toggle the OS. The full UI was audited for hardcoded colors — ~30 accent-text utility classes got dark variants, mermaid diagrams now match the theme, the wiki editor and knowledge tree adapt without further work.",
+        "index.md auto-management now covers all 34 page types, not just the original 6 LLM-generated ones. Notes, reports, articles, books, 笔记, 报告 — every page with a canonical frontmatter `type:` lands in its section. Chinese folder names (笔记/, 报告/, 概念/, …) are recognised both as type aliases (`type: 笔记` → note) and as folder fallbacks for pages without a type. New `<!-- manual -->` heading marker lets you opt a section out of auto-management.",
+        "LLM annotator for index.md. Optional Labs flag: after every reconcile, batch-call the LLM to write a one-line description for each undescribed bullet. Cached by page body hash, so unchanged pages don't re-spend tokens. Cost: ~one LLM call per ~25 newly-written pages. Idempotent; safe to leave on. Settings → Labs → \"LLM-annotated index.md descriptions\".",
+        "Frontend bundle split. The main entry shrunk from 1.7 MB to 632 KB (-63%). Mermaid (1.4 MB), cytoscape graph engine (563 KB), and the wiki editor (693 KB) now load on demand when you open those views — first paint is significantly faster on cold start.",
+        "Labs section is now localised (Chinese / English match your UI language) and aligned — the sub-toggle (\"Chat agent can write wiki pages\") no longer breaks the toggle column. New app logo: stacked-books with knowledge-graph nodes overlay; icon canvas cropped so the Dock shows the same silhouette as other macOS apps.",
+      ],
+      zh: [
+        "深色模式。Settings → 界面 → 主题选 跟随系统 / 浅色 / 深色。Sidebar 设置齿轮上方的 太阳/月亮 图标一键循环切换。跟随系统会用 OS 主题，OS 切换时实时同步。整套 UI 走查过，30 处硬编码颜色加了 dark 变体；mermaid 图跟随主题；wiki 编辑器和知识树都自适应。",
+        "index.md 自动整理覆盖全部 34 种页面类型（不再只是 6 种 LLM 生成的知识层）。笔记、报告、文章、书籍——每个 frontmatter 里有规范 `type:` 的页面都自动落到对应分段。中文文件夹（笔记/、报告/、概念/...）作为类型别名（`type: 笔记` → note）和无 type 页面的目录回退都识别。新增 `<!-- manual -->` 段标记，可让某段免疫自动整理。",
+        "index.md 条目 LLM 自动描述。Labs 可选开关：每次 reconcile 之后批量调 LLM 给没描述的条目写一句话说明。按页面正文哈希缓存——内容不变的页面不再花 token。开销：每新增约 25 个页面一次调用。幂等，可常开。Settings → Labs → 「index.md 条目 LLM 自动描述」。",
+        "前端打包拆 chunk。主 entry 从 1.7 MB 缩到 632 KB（-63%）。Mermaid（1.4 MB）、cytoscape 图引擎（563 KB）、wiki 编辑器（693 KB）按需加载——冷启首屏明显更快。",
+        "Labs 段中文化（按当前 UI 语言显示）+ 排版对齐——子开关「Chat Agent 可以写 wiki 页面」不再让开关列错位。新 logo：书叠 + 知识图节点叠加；图标画布裁剪后 Dock 显示与其他 macOS 应用一致。",
+      ],
+    },
+  },
+  {
     version: "0.4.24",
     date: "2026-06-01",
     highlights: {
