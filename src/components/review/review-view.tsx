@@ -359,7 +359,7 @@ function ReviewCard({
           ))}
         </div>
       ) : (
-        <div className="flex items-center gap-1 text-xs text-emerald-600">
+        <div className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
           <Check className="h-3 w-3" />
           {item.resolvedAction}
         </div>

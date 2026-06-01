@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import type { WikiProject, FileNode } from "@/types/wiki"
 import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
+import type { Theme } from "@/lib/theme"
 
 /**
  * Wire protocol used when `provider === "custom"`. Other providers have a
@@ -281,6 +282,13 @@ interface WikiState {
   embeddingConfig: EmbeddingConfig
   multimodalConfig: MultimodalConfig
   outputLanguage: OutputLanguage
+  /**
+   * Light / dark theme preference. `"system"` follows the OS via the
+   * `prefers-color-scheme` media query; `"light"` / `"dark"` are
+   * explicit overrides. Applied to `<html>` via the `.dark` class —
+   * see `src/lib/theme.ts` for the apply / subscribe seam.
+   */
+  theme: Theme
   proxyConfig: ProxyConfig
   scheduledImportConfig: ScheduledImportConfig
   sourceWatchConfig: SourceWatchConfig
@@ -365,6 +373,7 @@ interface WikiState {
   setEmbeddingConfig: (config: EmbeddingConfig) => void
   setMultimodalConfig: (config: MultimodalConfig) => void
   setOutputLanguage: (lang: OutputLanguage) => void
+  setTheme: (theme: Theme) => void
   setProxyConfig: (config: ProxyConfig) => void
   setScheduledImportConfig: (config: ScheduledImportConfig) => void
   setSourceWatchConfig: (config: SourceWatchConfig) => void
@@ -442,6 +451,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   },
 
   outputLanguage: "auto",
+  theme: "system",
 
   proxyConfig: {
     enabled: false,
@@ -482,6 +492,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setEmbeddingConfig: (embeddingConfig) => set({ embeddingConfig }),
   setMultimodalConfig: (multimodalConfig) => set({ multimodalConfig }),
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
+  setTheme: (theme) => set({ theme }),
   setProxyConfig: (proxyConfig) => set({ proxyConfig }),
   setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
@@ -499,4 +510,4 @@ export const useWikiStore = create<WikiState>((set) => ({
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
-export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig }
+export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig, Theme }

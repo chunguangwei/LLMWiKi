@@ -1276,9 +1276,9 @@ function StreamingThinkingBlock({ content }: { content: string }) {
       <div className="flex items-center gap-1.5 mb-1.5">
         <span className="text-sm animate-pulse">💭</span>
         <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Thinking...</span>
-        <span className="text-[10px] text-amber-600/50 dark:text-amber-500/40">{lines.length} lines</span>
+        <span className="text-[10px] text-amber-600 dark:text-amber-400/50 dark:text-amber-500/40">{lines.length} lines</span>
       </div>
-      <div className="h-[5lh] overflow-hidden text-xs text-amber-800/70 dark:text-amber-300/60 font-mono leading-relaxed">
+      <div className="h-[5lh] overflow-hidden text-xs text-amber-800 dark:text-amber-200/70 dark:text-amber-300/60 font-mono leading-relaxed">
         {visibleLines.map((line, i) => (
           <div
             key={lines.length - 5 + i}
@@ -1308,12 +1308,12 @@ function ThinkingBlock({ content }: { content: string }) {
       >
         <span className="text-sm">💭</span>
         <span className="font-medium">Thought for {lines.length} lines</span>
-        <span className="text-amber-600/60 dark:text-amber-500/60">
+        <span className="text-amber-600 dark:text-amber-400/60 dark:text-amber-500/60">
           {expanded ? "▼" : "▶"}
         </span>
       </button>
       {expanded && (
-        <div className="border-t border-amber-500/20 px-2.5 py-2 text-xs text-amber-800/80 dark:text-amber-300/70 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono leading-relaxed">
+        <div className="border-t border-amber-500/20 px-2.5 py-2 text-xs text-amber-800 dark:text-amber-200/80 dark:text-amber-300/70 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono leading-relaxed">
           {content}
         </div>
       )}

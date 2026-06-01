@@ -7,7 +7,8 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadTheme } from "@/lib/project-store"
+import { applyTheme, subscribeToSystemThemeChanges, type Theme } from "@/lib/theme"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
@@ -30,6 +31,29 @@ function App() {
   useEffect(() => {
     setupAutoSave()
     startClipWatcher()
+  }, [])
+
+  // Theme switching: re-apply whenever the store's theme changes,
+  // AND subscribe to OS color-scheme changes so a "system"-mode user
+  // sees the app flip live when they toggle their OS theme. The
+  // store subscription handles explicit Light/Dark too — same path,
+  // same render seam, no fork.
+  useEffect(() => {
+    applyTheme(useWikiStore.getState().theme)
+    const unsubStore = useWikiStore.subscribe((state, prev) => {
+      if (state.theme !== prev.theme) applyTheme(state.theme)
+    })
+    const unsubSystem = subscribeToSystemThemeChanges(() => {
+      // Only re-apply when the user is in "system" mode — otherwise
+      // their explicit Light/Dark override should win.
+      if (useWikiStore.getState().theme === "system") {
+        applyTheme("system")
+      }
+    })
+    return () => {
+      unsubStore()
+      unsubSystem()
+    }
   }, [])
 
   // Cmd+R / Ctrl+R — reload the webview. Tauri's webview does NOT
@@ -263,6 +287,21 @@ function App() {
         const savedLang = await loadLanguage()
         if (savedLang) {
           await i18n.changeLanguage(savedLang)
+        }
+        // Theme. "system" by default, persisted as a plain string —
+        // apply to <html> right after loading so first paint already
+        // reflects the user's choice. Falls back to "system" when the
+        // stored value is missing or corrupt (a fresh install or a
+        // user who never opened Settings).
+        try {
+          const savedTheme = (await loadTheme()) as Theme | null
+          const theme: Theme = savedTheme === "light" || savedTheme === "dark" || savedTheme === "system"
+            ? savedTheme
+            : "system"
+          useWikiStore.getState().setTheme(theme)
+          applyTheme(theme)
+        } catch {
+          applyTheme("system")
         }
         // Experimental / Labs flags. Default false when missing —
         // a fresh install never auto-enables an experimental

@@ -157,7 +157,7 @@ export function SchemaUpgradeSection() {
 
       <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 space-y-2">
         <div className="flex items-start gap-2">
-          <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-600" />
+          <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-600 dark:text-amber-400" />
           <div>
             <h3 className="text-sm font-medium">{t("settings.sections.schemaUpgrade.warningTitle")}</h3>
             <p className="text-sm text-muted-foreground mt-1">
@@ -176,14 +176,14 @@ export function SchemaUpgradeSection() {
               {t("settings.sections.schemaUpgrade.loading")}
             </span>
           ) : isAlreadyComprehensive ? (
-            <span className="inline-flex items-center gap-1 text-emerald-600">
+            <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
               <CheckCircle2 className="h-4 w-4" />
               {t("settings.sections.schemaUpgrade.alreadyComprehensive")}
             </span>
           ) : currentSchema === null ? (
             <span className="text-muted-foreground">{t("settings.sections.schemaUpgrade.notFound")}</span>
           ) : (
-            <span className="text-amber-600">{t("settings.sections.schemaUpgrade.legacy")}</span>
+            <span className="text-amber-600 dark:text-amber-400">{t("settings.sections.schemaUpgrade.legacy")}</span>
           )}
         </div>
 
@@ -210,7 +210,7 @@ export function SchemaUpgradeSection() {
         <div
           className={
             result.kind === "ok"
-              ? "rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm text-emerald-700"
+              ? "rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm text-emerald-700 dark:text-emerald-300"
               : "rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
           }
         >

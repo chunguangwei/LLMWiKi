@@ -282,6 +282,24 @@ export async function loadLanguage(): Promise<string | null> {
   return (await store.get<string>(LANGUAGE_KEY)) ?? null
 }
 
+/**
+ * UI theme preference: "system" | "light" | "dark". Stored as a
+ * plain string with the same one-key-per-pref convention as the
+ * Labs flags — a future addition (custom palette, font scale) lands
+ * as its own key, no migration.
+ */
+const THEME_KEY = "theme"
+
+export async function saveTheme(theme: string): Promise<void> {
+  const store = await getStore()
+  await store.set(THEME_KEY, theme)
+}
+
+export async function loadTheme(): Promise<string | null> {
+  const store = await getStore()
+  return (await store.get<string>(THEME_KEY)) ?? null
+}
+
 const OUTPUT_LANGUAGE_KEY = "outputLanguage"
 const PROJECT_OUTPUT_LANGUAGE_KEY = "projectOutputLanguages"
 const PROJECT_FILE_SYNC_KEY = "projectFileSyncEnabled"
