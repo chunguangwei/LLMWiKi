@@ -22,6 +22,62 @@ export default defineConfig(async () => ({
     __APP_VERSION__: JSON.stringify(pkgJson.version),
   },
 
+  build: {
+    // Production chunk split. The default rollup output bundled
+    // everything into a single ~1.7 MB index-*.js, which delays the
+    // first paint while the parser munches through libraries the
+    // user might not need until they navigate into a specific view
+    // (math rendering, graph view, editor). Pulling them into
+    // separate chunks lets the main entry stay small and lazy
+    // routes pull in their dependencies on demand.
+    //
+    // Heuristic: name chunks by their dominant package. Each bucket
+    // corresponds to one user-visible feature so a chunk only loads
+    // when the user uses the feature.
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (!id.includes("/node_modules/")) return undefined
+          if (id.includes("/katex/") || id.includes("/rehype-katex/")) {
+            return "vendor-katex"
+          }
+          if (id.includes("/mermaid/") || id.includes("/@mermaid-js/")) {
+            return "vendor-mermaid"
+          }
+          if (id.includes("/cytoscape")) {
+            return "vendor-cytoscape"
+          }
+          if (id.includes("/@milkdown/") || id.includes("/prosemirror-")) {
+            return "vendor-editor"
+          }
+          if (
+            id.includes("/react-markdown/") ||
+            id.includes("/remark-") ||
+            id.includes("/rehype-") ||
+            id.includes("/unified/") ||
+            id.includes("/mdast-") ||
+            id.includes("/hast-") ||
+            id.includes("/micromark")
+          ) {
+            return "vendor-markdown"
+          }
+          if (
+            id.includes("/react/") ||
+            id.includes("/react-dom/") ||
+            id.includes("/scheduler/")
+          ) {
+            return "vendor-react"
+          }
+          // Catch-all vendor bundle for small libs — they stay
+          // cacheable across releases as a group.
+          return "vendor"
+        },
+      },
+    },
+    sourcemap: false,
+    chunkSizeWarningLimit: 700,
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent vite from obscuring rust errors
