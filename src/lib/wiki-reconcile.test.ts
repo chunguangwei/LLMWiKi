@@ -356,7 +356,7 @@ describe("reconcileWiki — index.md auto-add (missing knowledge pages)", () => 
     expect(idx).toMatch(/- \[\[concepts\/bar\|Bar\]\]/)
   })
 
-  it("skips non-knowledge types (queries/, raw/, sources/, notes)", async () => {
+  it("skips queries/ and raw/ but DOES index notes (Karpathy frame: notes are Storage too)", async () => {
     setFile(`${WIKI}/index.md`, "# Wiki Index\n")
     setFile(`${WIKI}/queries/q.md`, typedPage("query", "Q"))
     setFile(`${WIKI}/raw/r.md`, typedPage("note", "R"))
@@ -375,7 +375,84 @@ describe("reconcileWiki — index.md auto-add (missing knowledge pages)", () => 
     ])
 
     const r = await reconcileWiki(PROJECT)
-    expect(r.totalIndexRowsAdded).toBe(0)
+    // queries/ + raw/ folders are skipped unconditionally; notes/n.md
+    // (type: note) is in the canonical taxonomy and is added under
+    // a freshly-created `## Notes` section.
+    expect(r.totalIndexRowsAdded).toBe(1)
+    const idx = fs.files.get(`${WIKI}/index.md`)!
+    expect(idx).toMatch(/## Notes/)
+    expect(idx).toMatch(/- \[\[notes\/n\|N\]\]/)
+    expect(idx).not.toMatch(/q\.md/)
+    expect(idx).not.toMatch(/raw\/r/)
+  })
+
+  it("adds non-knowledge canonical types too (notes / reports / books / …)", async () => {
+    setFile(`${WIKI}/index.md`, "# Wiki Index\n")
+    setFile(`${WIKI}/笔记/n.md`, typedPage("note", "笔记 N"))
+    setFile(`${WIKI}/报告/r.md`, typedPage("report", "报告 R"))
+    setFile(`${WIKI}/书籍/b.md`, typedPage("book", "书籍 B"))
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("笔记", `${WIKI}/笔记`, [pageNode("n.md", `${WIKI}/笔记/n.md`)]),
+      dirNode("报告", `${WIKI}/报告`, [pageNode("r.md", `${WIKI}/报告/r.md`)]),
+      dirNode("书籍", `${WIKI}/书籍`, [pageNode("b.md", `${WIKI}/书籍/b.md`)]),
+    ])
+
+    const r = await reconcileWiki(PROJECT)
+    expect(r.totalIndexRowsAdded).toBe(3)
+    const idx = fs.files.get(`${WIKI}/index.md`)!
+    expect(idx).toMatch(/## Notes/)
+    expect(idx).toMatch(/## Reports/)
+    expect(idx).toMatch(/## Books/)
+  })
+
+  it("normalises Chinese frontmatter type alias (`type: 笔记` → note)", async () => {
+    setFile(`${WIKI}/index.md`, "# Wiki Index\n")
+    setFile(`${WIKI}/笔记/foo.md`, typedPage("笔记", "Foo"))
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("笔记", `${WIKI}/笔记`, [pageNode("foo.md", `${WIKI}/笔记/foo.md`)]),
+    ])
+
+    const r = await reconcileWiki(PROJECT)
+    expect(r.totalIndexRowsAdded).toBe(1)
+    expect(fs.files.get(`${WIKI}/index.md`)!).toMatch(/## Notes/)
+  })
+
+  it("falls back to folder name when frontmatter type is missing / unknown", async () => {
+    setFile(`${WIKI}/index.md`, "# Wiki Index\n")
+    // No type field at all.
+    setFile(`${WIKI}/报告/q.md`, "---\ntitle: Q\n---\n\nbody\n")
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("报告", `${WIKI}/报告`, [pageNode("q.md", `${WIKI}/报告/q.md`)]),
+    ])
+
+    const r = await reconcileWiki(PROJECT)
+    expect(r.totalIndexRowsAdded).toBe(1)
+    expect(fs.files.get(`${WIKI}/index.md`)!).toMatch(/## Reports/)
+  })
+
+  it("respects `<!-- manual -->` marker — section is preserved verbatim", async () => {
+    setFile(`${WIKI}/index.md`, [
+      "# Wiki Index",
+      "",
+      "## Notes <!-- manual -->",
+      "- 用户自管理的内容，reconcile 不能动",
+      "",
+    ].join("\n"))
+    setFile(`${WIKI}/笔记/foo.md`, typedPage("note", "Foo"))
+    setTree(WIKI, [
+      pageNode("index.md", `${WIKI}/index.md`),
+      dirNode("笔记", `${WIKI}/笔记`, [pageNode("foo.md", `${WIKI}/笔记/foo.md`)]),
+    ])
+
+    const r = await reconcileWiki(PROJECT)
+    expect(r.totalIndexRowsAdded).toBe(0)  // manual section blocks auto-add
+    const idx = fs.files.get(`${WIKI}/index.md`)!
+    expect(idx).toMatch(/## Notes <!-- manual -->/)
+    expect(idx).toMatch(/用户自管理的内容/)
+    expect(idx).not.toMatch(/笔记\/foo/)
   })
 
   it("synthesises a new index.md when missing AND there are candidates", async () => {
@@ -395,11 +472,12 @@ describe("reconcileWiki — index.md auto-add (missing knowledge pages)", () => 
   })
 
   it("does NOT synthesise an index.md when wiki has no candidates", async () => {
-    // No knowledge-type pages → no index drift to fix → no new file.
-    setFile(`${WIKI}/notes/n.md`, typedPage("note", "N"))
+    // No pages mapped to a canonical type → no index drift to fix.
+    // `type: other` is the escape hatch and never gets auto-listed.
+    setFile(`${WIKI}/misc/x.md`, typedPage("other", "X"))
     setTree(WIKI, [
-      dirNode("notes", `${WIKI}/notes`, [
-        pageNode("n.md", `${WIKI}/notes/n.md`),
+      dirNode("misc", `${WIKI}/misc`, [
+        pageNode("x.md", `${WIKI}/misc/x.md`),
       ]),
     ])
 

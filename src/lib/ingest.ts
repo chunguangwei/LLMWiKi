@@ -890,19 +890,17 @@ async function autoIngestImpl(
     ? `${writtenPaths.length} files written${reviewItems.length > 0 ? `, ${reviewItems.length} review item(s)` : ""}`
     : "No files generated"
 
-  // Mechanical index.md backfill — defense-in-depth against the LLM
-  // index-update stage missing pages, or failing entirely and leaving
-  // freshly-written knowledge pages orphaned in the index. PR #13's
-  // reconcileWiki auto-adds missing concept / entity / source /
-  // synthesis / finding / comparison entries; we run it silently
-  // after every autoIngest so the user never has to remember to
-  // click "Cleanup refs" manually.
+  // Mechanical index.md backfill — Karpathy-frame discipline: index
+  // is the addressing layer; every page in Storage must be reachable
+  // through it. Run reconcile after EVERY autoIngest that wrote
+  // anything (no path-prefix gating) so user-curated types (notes,
+  // reports, books, …) land in the index too, not just the 6 LLM-
+  // generated knowledge types.
   //
-  // Best-effort: failure here is logged but never bubbles. The
-  // page WAS written; the index is just stale, which is a much
-  // softer failure than losing data. Skipped when zero knowledge
-  // pages were written — pure-source-summary runs don't need it.
-  if (writtenPaths.some(isKnowledgePagePath)) {
+  // Best-effort: failure here is logged but never bubbles. The page
+  // WAS written; a stale index is a much softer failure than losing
+  // data. Skipped only when autoIngest produced zero files.
+  if (writtenPaths.length > 0) {
     try {
       const { reconcileWiki } = await import("./wiki-reconcile")
       const result = await reconcileWiki(pp)
@@ -927,34 +925,6 @@ async function autoIngestImpl(
   })
 
   return writtenPaths
-}
-
-/**
- * Heuristic for "this is a knowledge-layer page the index should
- * list". Matches the AUTO_INDEX_TYPES set inside wiki-reconcile.ts —
- * keep in sync if that list changes.
- *
- * We work off path prefixes rather than re-reading frontmatter
- * because the paths in writtenPaths are project-relative and
- * already encode the type (concepts/foo.md → concept). Saves a
- * fresh disk read per file.
- */
-function isKnowledgePagePath(p: string): boolean {
-  const norm = p.replace(/\\/g, "/").toLowerCase()
-  return (
-    norm.includes("wiki/concepts/") ||
-    norm.includes("wiki/entities/") ||
-    norm.includes("wiki/sources/") ||
-    norm.includes("wiki/synthesis/") ||
-    norm.includes("wiki/findings/") ||
-    norm.includes("wiki/comparisons/") ||
-    norm.startsWith("concepts/") ||
-    norm.startsWith("entities/") ||
-    norm.startsWith("sources/") ||
-    norm.startsWith("synthesis/") ||
-    norm.startsWith("findings/") ||
-    norm.startsWith("comparisons/")
-  )
 }
 
 /**

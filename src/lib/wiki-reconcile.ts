@@ -461,8 +461,13 @@ function rewriteIndexFile(
         ...(INDEX_SECTION_ALIASES[type]?.map((a) => a.toLowerCase()) ?? []),
       ]
       const bullets = entries.map((e) => formatIndexBullet(e))
+      const before = body
       body = insertOrCreateSection(body, headingText, aliasesLower, bullets)
-      rowsAdded += entries.length
+      // Only count rows that actually landed — `insertOrCreateSection`
+      // bails when the target section is marked `<!-- manual -->`,
+      // returning the input unchanged. Counting those would over-
+      // report and trigger a false-positive write in dry-run flows.
+      if (body !== before) rowsAdded += entries.length
     }
   }
 
@@ -495,28 +500,41 @@ interface IndexCandidate {
 }
 
 /**
- * Knowledge types the auto-add pass covers. Limited to the LLM-generated
- * taxonomy where drift is most painful — the agent creates pages without
- * remembering to update index.md, and these are the types with stable
- * naming conventions (concepts/, entities/, …).
+ * Karpathy-frame principle: index.md is the "addressing layer" / memory
+ * map of the wiki. Every page in Storage MUST be reachable via the
+ * Index — otherwise the LLM (processor) can't see it exists and starts
+ * making duplicate / off-topic decisions ("there's no page on X, I'll
+ * write one" when there already is).
  *
- * Notes / reports / articles / etc. are USER-curated; their organisation
- * inside index.md is a layout choice we shouldn't make for them. They're
- * still tracked everywhere else (lint, search, knowledge tree), just not
- * auto-listed here.
+ * This means the auto-add pass needs to cover EVERY canonical type,
+ * not just the 6 LLM-generated ones. User-curated types (notes,
+ * reports, books, …) are also Storage — leaving them off the map
+ * breaks the framework.
+ *
+ * The auto-add still SKIPS:
+ *   - `overview` — that's the wiki's framing, not an indexable page
+ *   - `other` — escape-hatch type without a natural section
+ *   - `query` — chat-saved replies have their own ## Queries flow
  */
 const AUTO_INDEX_TYPES: ReadonlySet<string> = new Set([
-  "concept",
-  "entity",
-  "source",
-  "synthesis",
-  "finding",
-  "comparison",
+  // Knowledge layer (LLM-generated)
+  "concept", "entity", "source", "synthesis", "finding", "comparison",
+  // Single-page everyday types
+  "travel-plan", "manual", "project-doc", "tutorial", "book", "recipe",
+  "note", "report", "article", "meeting", "decision", "project",
+  "film-tv", "music", "game", "menu", "shopping-list", "fitness-plan",
+  "contract", "invoice", "medical-record", "insurance",
+  "code-snippet", "api-doc", "error-log",
+  // Multi-page (decomposable) types
+  "paper", "tool", "dataset", "person", "company", "regulation",
+  // Research types
+  "thesis", "methodology",
 ])
 
-/** Canonical heading text by type. Plural form, English — users can
- *  rename in the file and the next pass will pick up the new name
- *  via INDEX_SECTION_ALIASES. */
+/** Canonical heading text per type. English plural — predictable and
+ *  doesn't churn when UI language toggles. Localised matches happen
+ *  via INDEX_SECTION_ALIASES so a hand-authored `## 概念` is
+ *  recognised and reused instead of getting a duplicate `## Concepts`. */
 const INDEX_SECTION_HEADINGS: Record<string, string> = {
   concept: "Concepts",
   entity: "Entities",
@@ -524,18 +542,137 @@ const INDEX_SECTION_HEADINGS: Record<string, string> = {
   synthesis: "Synthesis",
   finding: "Findings",
   comparison: "Comparisons",
+  "travel-plan": "Travel Plans",
+  manual: "Manuals",
+  "project-doc": "Project Documents",
+  tutorial: "Tutorials",
+  book: "Books",
+  recipe: "Recipes",
+  note: "Notes",
+  report: "Reports",
+  article: "Articles",
+  meeting: "Meetings",
+  decision: "Decisions",
+  project: "Projects",
+  "film-tv": "Film & TV",
+  music: "Music",
+  game: "Games",
+  menu: "Menus",
+  "shopping-list": "Shopping Lists",
+  "fitness-plan": "Fitness Plans",
+  contract: "Contracts",
+  invoice: "Invoices",
+  "medical-record": "Medical Records",
+  insurance: "Insurance",
+  "code-snippet": "Code Snippets",
+  "api-doc": "API Docs",
+  "error-log": "Error Logs",
+  paper: "Papers",
+  tool: "Tools",
+  dataset: "Datasets",
+  person: "People",
+  company: "Companies",
+  regulation: "Regulations",
+  thesis: "Theses",
+  methodology: "Methodologies",
 }
 
-/** Localised / legacy heading aliases that ALSO count as the target
- *  section. Keeps existing hand-authored indexes from getting a
- *  duplicate section appended. */
+/** Heading aliases — when the existing index uses any of these as a
+ *  section heading, that section is treated as the canonical bucket
+ *  for the type. Covers English / Chinese / legacy alternatives. */
 const INDEX_SECTION_ALIASES: Record<string, string[]> = {
   concept: ["concepts", "概念", "concept"],
   entity: ["entities", "实体", "entity"],
-  source: ["sources", "来源", "source"],
+  source: ["sources", "来源", "源", "source", "source documents"],
   synthesis: ["synthesis", "综合", "syntheses"],
   finding: ["findings", "结论", "finding"],
   comparison: ["comparisons", "对比", "comparison"],
+  "travel-plan": ["travel plans", "旅游方案", "出行方案", "travel"],
+  manual: ["manuals", "用户手册", "手册", "manual"],
+  "project-doc": ["project documents", "项目文档", "项目文档", "project docs"],
+  tutorial: ["tutorials", "教程", "tutorial"],
+  book: ["books", "书籍", "book"],
+  recipe: ["recipes", "食谱", "recipe"],
+  note: ["notes", "笔记", "note"],
+  report: ["reports", "报告", "report"],
+  article: ["articles", "文章", "article"],
+  meeting: ["meetings", "会议", "meeting"],
+  decision: ["decisions", "决策", "decision"],
+  project: ["projects", "项目", "project"],
+  "film-tv": ["film & tv", "影视", "film-tv", "film and tv"],
+  music: ["music", "音乐"],
+  game: ["games", "游戏", "game"],
+  menu: ["menus", "菜单", "menu"],
+  "shopping-list": ["shopping lists", "购物清单", "shopping"],
+  "fitness-plan": ["fitness plans", "健身计划", "fitness"],
+  contract: ["contracts", "合同", "contract"],
+  invoice: ["invoices", "发票", "invoice"],
+  "medical-record": ["medical records", "医疗记录", "medical"],
+  insurance: ["insurance", "保险", "保险单"],
+  "code-snippet": ["code snippets", "代码片段", "snippets"],
+  "api-doc": ["api docs", "api文档", "api"],
+  "error-log": ["error logs", "错误日志", "errors"],
+  paper: ["papers", "论文", "paper"],
+  tool: ["tools", "工具", "tool"],
+  dataset: ["datasets", "数据集", "dataset"],
+  person: ["people", "人物", "persons"],
+  company: ["companies", "公司", "company"],
+  regulation: ["regulations", "法规", "regulation"],
+  thesis: ["theses", "thesis", "论文（thesis）"],
+  methodology: ["methodologies", "方法论", "methodology"],
+}
+
+/** Maps a frontmatter `type:` value that ISN'T a canonical slug to
+ *  the canonical one. Handles old pages where the agent wrote the
+ *  Chinese name (`type: 笔记`) before PR #12 enforced canonical
+ *  slugs at writePage. */
+const TYPE_ALIAS_TO_CANONICAL: Record<string, string> = {}
+for (const [canonical, aliases] of Object.entries(INDEX_SECTION_ALIASES)) {
+  for (const alias of aliases) {
+    TYPE_ALIAS_TO_CANONICAL[alias.toLowerCase()] = canonical
+  }
+}
+
+/** Maps a folder-name (Chinese or English) to the canonical type.
+ *  Used as a fallback when a page's frontmatter `type:` is missing
+ *  or unrecognisable — the folder it lives in is a strong signal. */
+const FOLDER_TO_CANONICAL_TYPE: Record<string, string> = {}
+for (const [canonical, aliases] of Object.entries(INDEX_SECTION_ALIASES)) {
+  for (const alias of aliases) {
+    FOLDER_TO_CANONICAL_TYPE[alias.toLowerCase()] = canonical
+  }
+}
+
+/** Section headings the user explicitly marked manual — preserved
+ *  verbatim by the rewriter. Detection: trailing `<!-- manual -->`
+ *  HTML comment on the heading line. */
+const MANUAL_MARKER_RE = /<!--\s*manual\s*-->/i
+
+/**
+ * Resolve a page's canonical type from its frontmatter `type:` value
+ * and/or its folder. Returns null when no signal lands inside the
+ * taxonomy — those pages stay off the index entirely (the caller
+ * already excludes structural files like overview.md).
+ *
+ *   1. Frontmatter type IS canonical → done.
+ *   2. Frontmatter type matches a Chinese / legacy alias →
+ *      normalise (e.g. `type: 笔记` → `note`).
+ *   3. Slug's first folder name matches a known Chinese / English
+ *      folder convention → infer (`笔记/foo.md` → `note`).
+ *   4. Else: null. Off-taxonomy + uncategorisable.
+ */
+function resolveCanonicalType(rawType: unknown, slug: string): string | null {
+  if (typeof rawType === "string" && rawType.trim().length > 0) {
+    const trimmed = rawType.trim()
+    if (AUTO_INDEX_TYPES.has(trimmed)) return trimmed
+    const aliased = TYPE_ALIAS_TO_CANONICAL[trimmed.toLowerCase()]
+    if (aliased && AUTO_INDEX_TYPES.has(aliased)) return aliased
+  }
+  const firstSegment = slug.split("/")[0]?.toLowerCase() ?? ""
+  if (firstSegment.length === 0) return null
+  const inferred = FOLDER_TO_CANONICAL_TYPE[firstSegment]
+  if (inferred && AUTO_INDEX_TYPES.has(inferred)) return inferred
+  return null
 }
 
 function toTitleCase(s: string): string {
@@ -570,13 +707,28 @@ function insertOrCreateSection(
   const lines = content.split("\n")
 
   // Find the start line of a matching section (any heading level).
+  // Strip an `<!-- manual -->` marker from the heading text BEFORE
+  // matching, but if the marker is present, the section is user-
+  // managed — bail out without touching it. The bullets won't land
+  // anywhere (caller's autoIngest invariant is that the page already
+  // exists; the user just opted out of auto-listing).
   const headingRe = /^(#{1,6})\s+(.+?)\s*$/
   let sectionStart = -1
   let sectionLevel = 0
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(headingRe)
     if (!m) continue
-    const text = m[2].trim().toLowerCase()
+    const rawText = m[2].trim()
+    if (MANUAL_MARKER_RE.test(rawText)) {
+      // Strip the marker for alias-matching purposes.
+      const stripped = rawText.replace(MANUAL_MARKER_RE, "").trim().toLowerCase()
+      if (aliasesLower.includes(stripped)) {
+        // User-managed section for this type — leave it alone.
+        return content
+      }
+      continue
+    }
+    const text = rawText.toLowerCase()
     if (aliasesLower.includes(text)) {
       sectionStart = i
       sectionLevel = m[1].length
@@ -639,18 +791,18 @@ async function collectIndexCandidates(
 ): Promise<IndexCandidate[]> {
   const candidates: IndexCandidate[] = []
   for (const f of files) {
-    if (f.name === "index.md" || f.name === "log.md") continue
+    if (f.name === "index.md" || f.name === "log.md" || f.name === "purpose.md" || f.name === "schema.md" || f.name === "overview.md") continue
     const slug = relativeToSlug(getRelativePath(f.path, wikiRoot))
     if (slug.includes("/")) {
       const top = slug.split("/")[0]
-      // Skip ignored folders unconditionally — the agent's autoIngest
-      // never auto-indexes raw imports, scratch, or chat-saved queries.
-      // queries/ pages have their own chat-save append flow.
+      // Skip ignored folders unconditionally — raw imports, scratch,
+      // and chat-saved queries have their own flows.
       if (
         top === "raw" ||
         top === ".llm-wiki" ||
         top === ".llm-wiki-local" ||
-        top === "queries"
+        top === "queries" ||
+        top === "media"
       ) {
         continue
       }
@@ -662,15 +814,20 @@ async function collectIndexCandidates(
       continue
     }
     const { frontmatter } = parseFrontmatter(content)
-    if (!frontmatter || typeof frontmatter !== "object") continue
-    const fm = frontmatter as Record<string, unknown>
-    const type = typeof fm.type === "string" ? fm.type.trim() : ""
-    if (!AUTO_INDEX_TYPES.has(type)) continue
+    const fm =
+      frontmatter && typeof frontmatter === "object"
+        ? (frontmatter as Record<string, unknown>)
+        : {}
+
+    const canonical = resolveCanonicalType(fm.type, slug)
+    if (!canonical) continue
+    if (!AUTO_INDEX_TYPES.has(canonical)) continue
+
     const title =
       typeof fm.title === "string" && fm.title.length > 0
         ? fm.title
         : (slug.split("/").pop() ?? slug)
-    candidates.push({ slug, type, title })
+    candidates.push({ slug, type: canonical, title })
   }
   return candidates
 }
