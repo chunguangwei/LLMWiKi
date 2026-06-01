@@ -7,7 +7,7 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadTheme } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadTheme } from "@/lib/project-store"
 import { applyTheme, subscribeToSystemThemeChanges, type Theme } from "@/lib/theme"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
@@ -333,6 +333,12 @@ function App() {
         try {
           const flag = await loadExperimentalRawSaveToWiki()
           useWikiStore.getState().setExperimentalRawSaveToWiki(flag)
+        } catch {
+          // missing or corrupt → keep default false
+        }
+        try {
+          const flag = await loadExperimentalIndexAnnotations()
+          useWikiStore.getState().setExperimentalIndexAnnotations(flag)
         } catch {
           // missing or corrupt → keep default false
         }

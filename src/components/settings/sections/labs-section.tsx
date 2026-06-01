@@ -6,6 +6,7 @@ import {
   saveExperimentalChatAgent,
   saveExperimentalChatAgentCanWrite,
   saveExperimentalRawSaveToWiki,
+  saveExperimentalIndexAnnotations,
 } from "@/lib/project-store"
 
 /**
@@ -33,6 +34,8 @@ export function LabsSection() {
   const setChatAgentCanWrite = useWikiStore((s) => s.setExperimentalChatAgentCanWrite)
   const setChatAgent = useWikiStore((s) => s.setExperimentalChatAgent)
   const rawSaveToWiki = useWikiStore((s) => s.experimentalRawSaveToWiki)
+  const indexAnnotations = useWikiStore((s) => s.experimentalIndexAnnotations)
+  const setIndexAnnotations = useWikiStore((s) => s.setExperimentalIndexAnnotations)
   const setRawSaveToWiki = useWikiStore((s) => s.setExperimentalRawSaveToWiki)
 
   function toggleAgentIngest() {
@@ -87,6 +90,14 @@ export function LabsSection() {
     const next = !rawSaveToWiki
     setRawSaveToWiki(next)
     saveExperimentalRawSaveToWiki(next).catch((err) =>
+      console.warn("[labs] save failed:", err),
+    )
+  }
+
+  function toggleIndexAnnotations() {
+    const next = !indexAnnotations
+    setIndexAnnotations(next)
+    saveExperimentalIndexAnnotations(next).catch((err) =>
       console.warn("[labs] save failed:", err),
     )
   }
@@ -398,6 +409,65 @@ export function LabsSection() {
             <span
               className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
                 rawSaveToWiki ? "translate-x-4.5" : "translate-x-0.5"
+              }`}
+            />
+          </span>
+        </button>
+      </div>
+
+      {/* Index LLM annotations. After every reconcile (including the
+          autoIngest tail), batch-call the LLM to write a one-line
+          description for each undescribed index.md bullet. Cached by
+          body hash so unchanged pages don't re-spend tokens. */}
+      <div
+        className={`flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
+          indexAnnotations
+            ? "border-emerald-500/60 bg-emerald-500/10 dark:border-emerald-400/50 dark:bg-emerald-400/10"
+            : "border-border bg-background"
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">
+            {t("settings.sections.labs.indexAnnotationsLabel", {
+              defaultValue: "LLM-annotated index.md descriptions",
+            })}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {t("settings.sections.labs.indexAnnotationsHint", {
+              defaultValue:
+                "After every reconcile / autoIngest, batch-call the LLM to write a one-line description for each index.md bullet that doesn't have one yet. Descriptions are cached by page body hash so unchanged pages don't re-spend tokens. Cost: ~one LLM call per ~25 newly-written pages. Idempotent; safe to leave on.",
+            })}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={toggleIndexAnnotations}
+          role="switch"
+          aria-checked={indexAnnotations}
+          aria-label={t("settings.sections.labs.indexAnnotationsLabel", {
+            defaultValue: "LLM-annotated index.md descriptions",
+          })}
+          className="ml-3 flex shrink-0 items-center gap-2"
+        >
+          <span
+            className={`inline-block w-6 text-right text-xs font-semibold ${
+              indexAnnotations
+                ? "text-emerald-700 dark:text-emerald-300"
+                : "text-muted-foreground"
+            }`}
+          >
+            {indexAnnotations
+              ? t("settings.sections.labs.stateOn", { defaultValue: "ON" })
+              : t("settings.sections.labs.stateOff", { defaultValue: "OFF" })}
+          </span>
+          <span
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+              indexAnnotations ? "bg-emerald-500 dark:bg-emerald-400" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                indexAnnotations ? "translate-x-4.5" : "translate-x-0.5"
               }`}
             />
           </span>

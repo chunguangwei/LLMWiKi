@@ -592,6 +592,28 @@ export function LintView() {
       })
       if (!window.confirm(msg)) return
       const real = await reconcileWiki(pp)
+      // Optional LLM annotation pass — Labs flag. Runs after the
+      // mechanical reconcile so freshly-added bullets get their
+      // one-line descriptions filled in this same click.
+      let annotateSummary = ""
+      const wikiState = useWikiStore.getState()
+      if (wikiState.experimentalIndexAnnotations && hasUsableLlm(wikiState.llmConfig)) {
+        try {
+          const { annotateIndex } = await import("@/lib/wiki-index-annotate")
+          const ann = await annotateIndex({
+            projectPath: pp,
+            llmConfig: wikiState.llmConfig,
+          })
+          if (ann.attempted > 0) {
+            annotateSummary =
+              ` · ${ann.produced} new + ${ann.cached} cached descriptions` +
+              (ann.llmError ? " (LLM error mid-run)" : "")
+          }
+        } catch (err) {
+          console.warn("[reconcile] index-annotate failed:", err)
+          annotateSummary = " · annotate failed (see console)"
+        }
+      }
       const activity = useActivityStore.getState()
       activity.addItem({
         type: "lint",
@@ -602,7 +624,8 @@ export function LintView() {
           `${real.totalBrokenWikilinksReplaced} broken wikilinks · ` +
           `${real.totalRelatedEntriesRemoved} dangling related: · ` +
           `${real.totalIndexRowsDropped} index rows dropped · ` +
-          `${real.totalIndexRowsAdded} missing index entries added`,
+          `${real.totalIndexRowsAdded} missing index entries added` +
+          annotateSummary,
         filesWritten: real.changes.map((c) => c.slug),
       })
       const tree = await listDirectory(pp)

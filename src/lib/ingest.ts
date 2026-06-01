@@ -916,6 +916,32 @@ async function autoIngestImpl(
         err,
       )
     }
+
+    // LLM annotation layer — Karpathy: mechanical reconcile guarantees
+    // completeness; this gives each bullet its semantic one-liner.
+    // Gated on the Labs flag because it spends tokens. Idempotent +
+    // body-hash-cached, so repeat runs only pay for genuinely-new
+    // pages.
+    const wikiStore = (await import("@/stores/wiki-store")).useWikiStore
+    if (wikiStore.getState().experimentalIndexAnnotations) {
+      try {
+        const { annotateIndex } = await import("./wiki-index-annotate")
+        const ann = await annotateIndex({ projectPath: pp, llmConfig })
+        if (ann.produced > 0 || ann.cached > 0) {
+          console.log(
+            `[ingest] index-annotate: ${ann.produced} new + ${ann.cached} cached ` +
+              `descriptions (${ann.attempted} attempted, ${ann.failed} failed)` +
+              (ann.llmError ? " — LLM error mid-run" : "") +
+              `.`,
+          )
+        }
+      } catch (err) {
+        console.warn(
+          `[ingest] index-annotate failed after autoIngest of "${fileName}":`,
+          err,
+        )
+      }
+    }
   }
 
   activity.updateItem(activityId, {

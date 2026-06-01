@@ -357,6 +357,21 @@ interface WikiState {
    * Persisted via `saveExperimentalRawSaveToWiki` (project-store.ts).
    */
   experimentalRawSaveToWiki: boolean
+  /**
+   * **Labs / experimental** — when ON, every reconcile pass also runs
+   * the LLM annotator (`wiki-index-annotate`). For each index.md
+   * bullet that lacks a `— description`, the annotator reads the page,
+   * batch-calls the LLM with up to ~25 entries per call, and writes
+   * back one-line descriptions. Cached by body hash so unchanged
+   * pages don't re-spend tokens.
+   *
+   * Cost: ~one LLM round-trip per ~25 newly-written pages. Skipped
+   * entirely when no bullets need annotation (idempotent). Default
+   * OFF because it spends tokens.
+   *
+   * Persisted via `saveExperimentalIndexAnnotations` (project-store.ts).
+   */
+  experimentalIndexAnnotations: boolean
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -383,6 +398,7 @@ interface WikiState {
   setExperimentalChatAgent: (enabled: boolean) => void
   setExperimentalChatAgentCanWrite: (enabled: boolean) => void
   setExperimentalRawSaveToWiki: (enabled: boolean) => void
+  setExperimentalIndexAnnotations: (enabled: boolean) => void
   bumpDataVersion: () => void
 }
 
@@ -484,6 +500,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   experimentalChatAgent: false,
   experimentalChatAgentCanWrite: false,
   experimentalRawSaveToWiki: false,
+  experimentalIndexAnnotations: false,
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
@@ -507,6 +524,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     set({ experimentalChatAgentCanWrite }),
   setExperimentalRawSaveToWiki: (experimentalRawSaveToWiki) =>
     set({ experimentalRawSaveToWiki }),
+  setExperimentalIndexAnnotations: (experimentalIndexAnnotations) =>
+    set({ experimentalIndexAnnotations }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 

@@ -222,6 +222,18 @@ export async function loadExperimentalRawSaveToWiki(): Promise<boolean> {
   return (await store.get<boolean>(RAW_SAVE_TO_WIKI_FLAG_KEY)) ?? false
 }
 
+const INDEX_ANNOTATIONS_FLAG_KEY = "experimentalIndexAnnotations"
+
+export async function saveExperimentalIndexAnnotations(enabled: boolean): Promise<void> {
+  const store = await getStore()
+  await store.set(INDEX_ANNOTATIONS_FLAG_KEY, enabled)
+}
+
+export async function loadExperimentalIndexAnnotations(): Promise<boolean> {
+  const store = await getStore()
+  return (await store.get<boolean>(INDEX_ANNOTATIONS_FLAG_KEY)) ?? false
+}
+
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"
 
 function scheduledImportKey(projectPath: string): string {
