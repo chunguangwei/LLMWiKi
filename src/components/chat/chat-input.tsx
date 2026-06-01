@@ -247,7 +247,7 @@ export function ChatInput({
                 <button
                   type="button"
                   onClick={() => onRemoveImage(img.id)}
-                  className="shrink-0 rounded p-0.5 text-emerald-700/70 hover:bg-background hover:text-emerald-700 dark:text-emerald-400/70 dark:hover:text-emerald-300"
+                  className="shrink-0 rounded p-0.5 text-emerald-700 dark:text-emerald-300/70 hover:bg-background hover:text-emerald-700 dark:text-emerald-400/70 dark:hover:text-emerald-300"
                   title="Remove"
                 >
                   <X className="h-3 w-3" />

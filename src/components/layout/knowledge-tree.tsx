@@ -36,35 +36,35 @@ const TYPE_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; col
   manual:          { icon: BookOpen,        labelKey: "knowledgeTree.types.manual",        color: "text-orange-500",  order: 11 },
   "project-doc":   { icon: FileText,        labelKey: "knowledgeTree.types.projectDoc",    color: "text-blue-500",    order: 12 },
   tutorial:        { icon: GraduationCap,   labelKey: "knowledgeTree.types.tutorial",      color: "text-indigo-500",  order: 13 },
-  book:            { icon: BookOpen,        labelKey: "knowledgeTree.types.book",          color: "text-amber-600",   order: 14 },
+  book:            { icon: BookOpen,        labelKey: "knowledgeTree.types.book",          color: "text-amber-600 dark:text-amber-400",   order: 14 },
   recipe:          { icon: ChefHat,         labelKey: "knowledgeTree.types.recipe",        color: "text-rose-500",    order: 15 },
-  note:            { icon: StickyNote,      labelKey: "knowledgeTree.types.note",          color: "text-yellow-600",  order: 16 },
+  note:            { icon: StickyNote,      labelKey: "knowledgeTree.types.note",          color: "text-yellow-600 dark:text-yellow-400",  order: 16 },
   report:          { icon: FileText,        labelKey: "knowledgeTree.types.report",        color: "text-slate-500",   order: 17 },
   article:         { icon: Newspaper,       labelKey: "knowledgeTree.types.article",       color: "text-teal-500",    order: 18 },
-  meeting:         { icon: CalendarClock,   labelKey: "knowledgeTree.types.meeting",       color: "text-cyan-600",    order: 19 },
+  meeting:         { icon: CalendarClock,   labelKey: "knowledgeTree.types.meeting",       color: "text-cyan-600 dark:text-cyan-400",    order: 19 },
   decision:        { icon: Scale,           labelKey: "knowledgeTree.types.decision",      color: "text-violet-500",  order: 20 },
-  project:         { icon: FolderKanban,    labelKey: "knowledgeTree.types.project",       color: "text-blue-600",    order: 21 },
+  project:         { icon: FolderKanban,    labelKey: "knowledgeTree.types.project",       color: "text-blue-600 dark:text-blue-400",    order: 21 },
   "film-tv":       { icon: Clapperboard,    labelKey: "knowledgeTree.types.filmTv",        color: "text-fuchsia-500", order: 22 },
   music:           { icon: Music,           labelKey: "knowledgeTree.types.music",         color: "text-pink-500",    order: 23 },
-  game:            { icon: Gamepad2,        labelKey: "knowledgeTree.types.game",          color: "text-green-600",   order: 24 },
-  menu:            { icon: UtensilsCrossed, labelKey: "knowledgeTree.types.menu",          color: "text-orange-600",  order: 25 },
-  "shopping-list": { icon: ShoppingCart,    labelKey: "knowledgeTree.types.shoppingList",  color: "text-lime-600",    order: 26 },
+  game:            { icon: Gamepad2,        labelKey: "knowledgeTree.types.game",          color: "text-green-600 dark:text-green-400",   order: 24 },
+  menu:            { icon: UtensilsCrossed, labelKey: "knowledgeTree.types.menu",          color: "text-orange-600 dark:text-orange-400",  order: 25 },
+  "shopping-list": { icon: ShoppingCart,    labelKey: "knowledgeTree.types.shoppingList",  color: "text-lime-600 dark:text-lime-400",    order: 26 },
   "fitness-plan":  { icon: Dumbbell,        labelKey: "knowledgeTree.types.fitnessPlan",   color: "text-red-500",     order: 27 },
   contract:        { icon: FileSignature,   labelKey: "knowledgeTree.types.contract",      color: "text-stone-500",   order: 28 },
-  invoice:         { icon: Receipt,         labelKey: "knowledgeTree.types.invoice",       color: "text-emerald-600", order: 29 },
-  "medical-record":{ icon: HeartPulse,      labelKey: "knowledgeTree.types.medicalRecord", color: "text-red-600",     order: 30 },
-  insurance:       { icon: ShieldCheck,     labelKey: "knowledgeTree.types.insurance",     color: "text-green-700",   order: 31 },
+  invoice:         { icon: Receipt,         labelKey: "knowledgeTree.types.invoice",       color: "text-emerald-600 dark:text-emerald-400", order: 29 },
+  "medical-record":{ icon: HeartPulse,      labelKey: "knowledgeTree.types.medicalRecord", color: "text-red-600 dark:text-red-400",     order: 30 },
+  insurance:       { icon: ShieldCheck,     labelKey: "knowledgeTree.types.insurance",     color: "text-green-700 dark:text-green-300",   order: 31 },
   "code-snippet":  { icon: FileCode,        labelKey: "knowledgeTree.types.codeSnippet",   color: "text-zinc-500",    order: 32 },
   "api-doc":       { icon: Plug,            labelKey: "knowledgeTree.types.apiDoc",        color: "text-cyan-500",    order: 33 },
   "error-log":     { icon: Bug,             labelKey: "knowledgeTree.types.errorLog",      color: "text-red-400",     order: 34 },
   // ── multi-page (decomposable) types ──
   paper:           { icon: FileText,        labelKey: "knowledgeTree.types.paper",         color: "text-orange-500",  order: 40 },
   concept:         { icon: Lightbulb,       labelKey: "knowledgeTree.types.concept",       color: "text-purple-500",  order: 41 },
-  tool:            { icon: Wrench,          labelKey: "knowledgeTree.types.tool",          color: "text-slate-600",   order: 42 },
+  tool:            { icon: Wrench,          labelKey: "knowledgeTree.types.tool",          color: "text-slate-600 dark:text-slate-400",   order: 42 },
   dataset:         { icon: Database,        labelKey: "knowledgeTree.types.dataset",       color: "text-blue-400",    order: 43 },
   person:          { icon: User,            labelKey: "knowledgeTree.types.person",        color: "text-blue-500",    order: 44 },
-  company:         { icon: Building2,       labelKey: "knowledgeTree.types.company",       color: "text-indigo-600",  order: 45 },
-  regulation:      { icon: Scale,           labelKey: "knowledgeTree.types.regulation",    color: "text-amber-700",   order: 46 },
+  company:         { icon: Building2,       labelKey: "knowledgeTree.types.company",       color: "text-indigo-600 dark:text-indigo-400",  order: 45 },
+  regulation:      { icon: Scale,           labelKey: "knowledgeTree.types.regulation",    color: "text-amber-700 dark:text-amber-300",   order: 46 },
   // ── meta + legacy types ──
   synthesis:       { icon: GitMerge,        labelKey: "knowledgeTree.types.synthesis",     color: "text-red-500",     order: 50 },
   comparison:      { icon: BarChart3,       labelKey: "knowledgeTree.types.comparison",    color: "text-emerald-500", order: 51 },
@@ -356,7 +356,7 @@ function RawSourcesSection() {
         ) : (
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
-        <BookOpen className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+        <BookOpen className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
         <span className="flex-1 text-left font-medium text-muted-foreground">{t("knowledgeTree.rawSources", { defaultValue: "Raw Sources" })}</span>
         <span className="text-xs text-muted-foreground">{sources.length}</span>
       </button>

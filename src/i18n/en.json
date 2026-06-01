@@ -13,7 +13,9 @@
     "settings": "Settings",
     "switchProject": "Switch Project",
     "updateAvailable": "Update available",
-    "updateAvailableSuffix": " · update"
+    "updateAvailableSuffix": " · update",
+    "theme": "Theme",
+    "themeTooltip": "Theme: {{current}} · click to cycle"
   },
   "updateBanner": {
     "message": "Version {{version}} is available",
@@ -584,7 +586,14 @@
         "title": "Interface",
         "description": "UI language and appearance. Changes apply immediately and persist.",
         "uiLanguage": "UI Language",
-        "uiLanguageHint": "Affects labels, buttons, and other UI strings only. The AI output language is set separately in Output Preferences."
+        "uiLanguageHint": "Affects labels, buttons, and other UI strings only. The AI output language is set separately in Output Preferences.",
+        "theme": "Theme",
+        "themeHint": "System follows your OS preference and flips live when you toggle it. Light / Dark force the choice regardless of OS.",
+        "themeOptions": {
+          "system": "System",
+          "light": "Light",
+          "dark": "Dark"
+        }
       },
       "maintenance": {
         "title": "Maintenance",

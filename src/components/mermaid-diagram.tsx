@@ -54,9 +54,18 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
     async function render() {
       try {
         const mermaid = (await import("mermaid")).default
+        // Pick the mermaid theme from the live <html class="dark">
+        // marker so the diagram matches the rest of the UI. Read
+        // here rather than via the store so we don't need to pass
+        // the theme prop through every consumer; mermaid re-renders
+        // when `code` changes, and theme cache invalidation rides on
+        // svgCache.
+        const isDark =
+          typeof document !== "undefined" &&
+          document.documentElement.classList.contains("dark")
         mermaid.initialize({
           startOnLoad: false,
-          theme: "default",
+          theme: isDark ? "dark" : "default",
           securityLevel: "strict",
         })
 

@@ -125,7 +125,7 @@ export function ConfigBackupSection() {
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-emerald-600" />
+          <ShieldCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
           {t("settings.sections.configBackup.title", { defaultValue: "Config Backup" })}
         </h2>
         <p className="text-sm text-muted-foreground mt-1">
@@ -151,7 +151,7 @@ export function ConfigBackupSection() {
           </Button>
         </div>
         {pwTooShort && (
-          <p className="text-xs text-amber-600">{t("settings.sections.configBackup.pwTooShort", { defaultValue: "Password must be at least 8 characters." })}</p>
+          <p className="text-xs text-amber-600 dark:text-amber-400">{t("settings.sections.configBackup.pwTooShort", { defaultValue: "Password must be at least 8 characters." })}</p>
         )}
         <p className="text-xs text-muted-foreground">
           {t("settings.sections.configBackup.passwordHint", { defaultValue: "Remember this password — there is no recovery. It's needed to import on another machine." })}
@@ -184,7 +184,7 @@ export function ConfigBackupSection() {
         <div
           className={
             result.kind === "ok"
-              ? "rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm text-emerald-700 break-words"
+              ? "rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm text-emerald-700 dark:text-emerald-300 break-words"
               : "rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive break-words"
           }
         >
@@ -216,7 +216,7 @@ export function ConfigBackupSection() {
 
       {/* Security note */}
       <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 flex items-start gap-2">
-        <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-600 shrink-0" />
+        <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-600 dark:text-amber-400 shrink-0" />
         <p className="text-xs text-muted-foreground">
           {t("settings.sections.configBackup.securityNote", { defaultValue: "The exported file contains your API keys, encrypted. Anyone with the file AND the password can read them. Store both safely; the auto-backup's key lives in your OS keychain and never leaves this machine." })}
         </p>

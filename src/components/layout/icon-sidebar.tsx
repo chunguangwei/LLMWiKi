@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import {
-  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe,
+  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe, Sun, Moon, Monitor,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -10,6 +10,8 @@ import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { useTranslation } from "react-i18next"
 import logoImg from "@/assets/logo.jpg"
 import type { WikiState } from "@/stores/wiki-store"
+import type { Theme } from "@/lib/theme"
+import { saveTheme } from "@/lib/project-store"
 
 type NavView = WikiState["activeView"]
 
@@ -42,6 +44,20 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
   // remaining indicator that an update is available, so the user
   // never finds their way back to it.
   const updateAvailable = useUpdateStore((s) => hasAvailableUpdate(s))
+  const theme = useWikiStore((s) => s.theme)
+  const setTheme = useWikiStore((s) => s.setTheme)
+
+  // Theme quick-toggle: cycle system → light → dark → system. Each
+  // click is one-shot and persisted; App.tsx subscribes to the store
+  // and re-applies the .dark class via theme.ts, so we don't touch
+  // the DOM here.
+  function cycleTheme() {
+    const next: Theme = theme === "system" ? "light" : theme === "light" ? "dark" : "system"
+    setTheme(next)
+    void saveTheme(next).catch((err) =>
+      console.warn("[icon-sidebar] could not persist theme:", err),
+    )
+  }
 
   // Daemon health check
   const [daemonStatus, setDaemonStatus] = useState<string>("starting")
@@ -135,6 +151,34 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
               {daemonStatus === "starting" && "Clip server starting..."}
               {daemonStatus === "port_conflict" && "Port 19827 is in use — a previous LLM Wiki instance may still be running after an abnormal exit. Fully quit all copies (or restart your machine) and relaunch to restore the Web Clipper."}
               {daemonStatus === "error" && "Clip server error. Restarting..."}
+            </TooltipContent>
+          </Tooltip>
+          {/* Theme quick-toggle. Cycles system → light → dark and
+              shows the icon for the CURRENT preference (Monitor for
+              system, Sun for light, Moon for dark). Tooltip names the
+              next state so the click outcome is predictable. */}
+          <Tooltip>
+            <TooltipTrigger
+              onClick={cycleTheme}
+              className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground"
+              aria-label={t("nav.theme", { defaultValue: "Theme" })}
+            >
+              {theme === "system" ? (
+                <Monitor className="h-5 w-5" />
+              ) : theme === "light" ? (
+                <Sun className="h-5 w-5" />
+              ) : (
+                <Moon className="h-5 w-5" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {t("nav.themeTooltip", {
+                defaultValue: "Theme: {{current}} · click to cycle",
+                current: t(
+                  `settings.sections.interface.themeOptions.${theme}`,
+                  { defaultValue: theme.charAt(0).toUpperCase() + theme.slice(1) },
+                ),
+              })}
             </TooltipContent>
           </Tooltip>
           <Tooltip>

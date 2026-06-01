@@ -13,7 +13,9 @@
     "settings": "设置",
     "switchProject": "切换项目",
     "updateAvailable": "有可用更新",
-    "updateAvailableSuffix": " · 有更新"
+    "updateAvailableSuffix": " · 有更新",
+    "theme": "主题",
+    "themeTooltip": "主题:{{current}} · 点击切换"
   },
   "updateBanner": {
     "message": "新版本 {{version}} 已发布",
@@ -584,7 +586,14 @@
         "title": "界面",
         "description": "界面语言和外观样式。切换后立即生效并持久化。",
         "uiLanguage": "UI 语言",
-        "uiLanguageHint": "只影响按钮、标签这些 UI 文案,不影响 AI 输出语言(那个在\"输出偏好\"里单独设置)。"
+        "uiLanguageHint": "只影响按钮、标签这些 UI 文案,不影响 AI 输出语言(那个在\"输出偏好\"里单独设置)。",
+        "theme": "主题",
+        "themeHint": "「跟随系统」会用 OS 的主题，OS 切换会实时跟着切；「浅色」/「深色」强制指定，不受系统影响。",
+        "themeOptions": {
+          "system": "跟随系统",
+          "light": "浅色",
+          "dark": "深色"
+        }
       },
       "maintenance": {
         "title": "维护",
