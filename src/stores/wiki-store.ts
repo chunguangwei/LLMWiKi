@@ -372,6 +372,22 @@ interface WikiState {
    * Persisted via `saveExperimentalIndexAnnotations` (project-store.ts).
    */
   experimentalIndexAnnotations: boolean
+  /**
+   * **Labs / experimental** — when ON, every autoIngest run pauses
+   * between LLM generation and the actual writeFile step. A preview
+   * dialog shows the LLM's proposed file list (paths + content
+   * preview); the user clicks Apply to commit or Cancel to skip
+   * without writing.
+   *
+   * The LLM tokens for analyse + generate are spent regardless —
+   * the gate exists to prevent disk pollution from a misguided LLM
+   * split (wrong slugs, duplicate concept pages, off-topic
+   * decompositions). Cancel = no disk damage; Apply = same as
+   * the current default.
+   *
+   * Persisted via `saveExperimentalIngestPreview` (project-store.ts).
+   */
+  experimentalIngestPreview: boolean
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -399,6 +415,7 @@ interface WikiState {
   setExperimentalChatAgentCanWrite: (enabled: boolean) => void
   setExperimentalRawSaveToWiki: (enabled: boolean) => void
   setExperimentalIndexAnnotations: (enabled: boolean) => void
+  setExperimentalIngestPreview: (enabled: boolean) => void
   bumpDataVersion: () => void
 }
 
@@ -501,6 +518,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   experimentalChatAgentCanWrite: false,
   experimentalRawSaveToWiki: false,
   experimentalIndexAnnotations: false,
+  experimentalIngestPreview: false,
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
@@ -526,6 +544,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     set({ experimentalRawSaveToWiki }),
   setExperimentalIndexAnnotations: (experimentalIndexAnnotations) =>
     set({ experimentalIndexAnnotations }),
+  setExperimentalIngestPreview: (experimentalIngestPreview) =>
+    set({ experimentalIngestPreview }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 

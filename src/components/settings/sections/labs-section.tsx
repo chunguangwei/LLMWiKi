@@ -7,6 +7,7 @@ import {
   saveExperimentalChatAgentCanWrite,
   saveExperimentalRawSaveToWiki,
   saveExperimentalIndexAnnotations,
+  saveExperimentalIngestPreview,
 } from "@/lib/project-store"
 
 /**
@@ -36,6 +37,8 @@ export function LabsSection() {
   const rawSaveToWiki = useWikiStore((s) => s.experimentalRawSaveToWiki)
   const indexAnnotations = useWikiStore((s) => s.experimentalIndexAnnotations)
   const setIndexAnnotations = useWikiStore((s) => s.setExperimentalIndexAnnotations)
+  const ingestPreview = useWikiStore((s) => s.experimentalIngestPreview)
+  const setIngestPreview = useWikiStore((s) => s.setExperimentalIngestPreview)
   const setRawSaveToWiki = useWikiStore((s) => s.setExperimentalRawSaveToWiki)
 
   function toggleAgentIngest() {
@@ -98,6 +101,14 @@ export function LabsSection() {
     const next = !indexAnnotations
     setIndexAnnotations(next)
     saveExperimentalIndexAnnotations(next).catch((err) =>
+      console.warn("[labs] save failed:", err),
+    )
+  }
+
+  function toggleIngestPreview() {
+    const next = !ingestPreview
+    setIngestPreview(next)
+    saveExperimentalIngestPreview(next).catch((err) =>
       console.warn("[labs] save failed:", err),
     )
   }
@@ -468,6 +479,65 @@ export function LabsSection() {
             <span
               className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
                 indexAnnotations ? "translate-x-4.5" : "translate-x-0.5"
+              }`}
+            />
+          </span>
+        </button>
+      </div>
+
+      {/* Ingest preview gate. When ON, autoIngest pauses between LLM
+          generation and disk writes to show a preview dialog. Tokens
+          are spent regardless of the user's choice; the gate prevents
+          disk damage from a misguided LLM split. */}
+      <div
+        className={`flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
+          ingestPreview
+            ? "border-emerald-500/60 bg-emerald-500/10 dark:border-emerald-400/50 dark:bg-emerald-400/10"
+            : "border-border bg-background"
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">
+            {t("settings.sections.labs.ingestPreviewLabel", {
+              defaultValue: "Preview autoIngest writes before applying",
+            })}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {t("settings.sections.labs.ingestPreviewHint", {
+              defaultValue:
+                "Every autoIngest pauses after the LLM stage with a dialog listing the files about to be written. Click Apply to commit or Cancel to skip — no disk writes either way until you confirm. LLM tokens are spent regardless; the gate exists to catch misguided splits / wrong slugs before they pollute the wiki.",
+            })}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={toggleIngestPreview}
+          role="switch"
+          aria-checked={ingestPreview}
+          aria-label={t("settings.sections.labs.ingestPreviewLabel", {
+            defaultValue: "Preview autoIngest writes before applying",
+          })}
+          className="ml-3 flex shrink-0 items-center gap-2"
+        >
+          <span
+            className={`inline-block w-6 text-right text-xs font-semibold ${
+              ingestPreview
+                ? "text-emerald-700 dark:text-emerald-300"
+                : "text-muted-foreground"
+            }`}
+          >
+            {ingestPreview
+              ? t("settings.sections.labs.stateOn", { defaultValue: "ON" })
+              : t("settings.sections.labs.stateOff", { defaultValue: "OFF" })}
+          </span>
+          <span
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+              ingestPreview ? "bg-emerald-500 dark:bg-emerald-400" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                ingestPreview ? "translate-x-4.5" : "translate-x-0.5"
               }`}
             />
           </span>

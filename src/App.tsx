@@ -7,7 +7,7 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadTheme } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadExperimentalIngestPreview, loadTheme } from "@/lib/project-store"
 import { applyTheme, subscribeToSystemThemeChanges, type Theme } from "@/lib/theme"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
@@ -15,6 +15,7 @@ import { startClipWatcher } from "@/lib/clip-watcher"
 import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
+import { IngestPreviewDialog } from "@/components/ingest-preview-dialog"
 import type { WikiProject } from "@/types/wiki"
 import { APP_REPO, APP_RELEASES_URL } from "@/lib/app-repo"
 
@@ -342,6 +343,12 @@ function App() {
         } catch {
           // missing or corrupt → keep default false
         }
+        try {
+          const flag = await loadExperimentalIngestPreview()
+          useWikiStore.getState().setExperimentalIngestPreview(flag)
+        } catch {
+          // missing or corrupt → keep default false
+        }
         const lastProject = await getLastProject()
         if (lastProject) {
           try {
@@ -586,6 +593,7 @@ function App() {
         onOpenChange={setShowCreateDialog}
         onCreated={handleProjectOpened}
       />
+      <IngestPreviewDialog />
     </>
   )
 }
