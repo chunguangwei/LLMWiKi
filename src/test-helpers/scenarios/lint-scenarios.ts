@@ -6,7 +6,12 @@ import type { LintScenario } from "./types"
 // [[link]] to it. Scenario wikis here are built with that in mind.
 
 function page(title: string, body: string): string {
-  return `---\ntitle: ${title}\n---\n\n# ${title}\n\n${body}\n`
+  // Frontmatter `type: concept` is required by the new
+  // `frontmatter-type` lint rule. We pick `concept` arbitrarily —
+  // the lint scenarios here are exercising orphan / broken-link /
+  // no-outlinks behavior, not the type taxonomy, so any canonical
+  // type works as long as it's PRESENT.
+  return `---\ntype: concept\ntitle: ${title}\n---\n\n# ${title}\n\n${body}\n`
 }
 
 export const lintScenarios: LintScenario[] = [

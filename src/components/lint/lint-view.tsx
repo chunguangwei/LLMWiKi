@@ -57,7 +57,8 @@ const LINT_TYPE_ORDER: Record<LintItem["type"], number> = {
   "broken-link": 0,
   orphan: 1,
   "no-outlinks": 2,
-  semantic: 3,
+  "frontmatter-type": 3,
+  semantic: 4,
 }
 
 export function groupByType(items: readonly LintItem[]): Array<{
@@ -174,6 +175,7 @@ export function LintView() {
     orphan: { icon: Unlink, label: t("lint.typeLabels.orphan") },
     "broken-link": { icon: Link2Off, label: t("lint.typeLabels.broken-link") },
     "no-outlinks": { icon: ArrowUpRight, label: t("lint.typeLabels.no-outlinks") },
+    "frontmatter-type": { icon: AlertTriangle, label: t("lint.typeLabels.frontmatter-type", { defaultValue: "Frontmatter type" }) },
     semantic: { icon: BrainCircuit, label: t("lint.typeLabels.semantic") },
   }), [t])
 
