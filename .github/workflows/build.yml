@@ -15,16 +15,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Universal macOS binary — one .dmg / .app runs on both
-          # Intel and Apple Silicon. Tauri's `universal-apple-darwin`
-          # target builds aarch64 + x86_64 and lipo-merges them, so
-          # end users don't have to pick the right download (which
-          # they always get wrong). Doubles the macOS job wall-clock
-          # (~10m → ~20m); macOS minutes are the spendiest, but the
-          # cross-arch UX win is worth it.
+          # macOS Apple Silicon only. We previously tried
+          # `--target universal-apple-darwin` but pdfium ships in this
+          # repo as an arm64-only `libpdfium.dylib`, so the x86_64
+          # leg of the universal build fails the link step with
+          # "Undefined symbols for architecture x86_64". Restoring
+          # universal needs a fat pdfium dylib (lipo'd from bblanchon
+          # /pdfium-binaries mac-x64 + the existing arm64 .dylib)
+          # committed to src-tauri/pdfium/. Until then ship aarch64
+          # only — Intel Mac support is a known gap, tracked separately.
           - platform: macos-latest
-            args: '--target universal-apple-darwin'
-            rust_target: aarch64-apple-darwin,x86_64-apple-darwin
+            args: '--target aarch64-apple-darwin'
+            rust_target: aarch64-apple-darwin
           - platform: ubuntu-22.04
             args: ''
             rust_target: ''

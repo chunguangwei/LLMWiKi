@@ -26,11 +26,11 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: "0.4.26",
+    version: "0.4.27",
     date: "2026-06-01",
     highlights: {
       en: [
-        "Universal macOS build. One .dmg / .app runs on Intel AND Apple Silicon — no more picking the wrong architecture. Existing v0.4.25 users on Intel Macs can now update.",
+        "Re-release of v0.4.26 — the universal macOS build in v0.4.26 broke at link time because the bundled pdfium dylib is arm64-only. Reverted to Apple-Silicon-only macOS for now (Intel Mac support tracked separately; needs a fat-binary pdfium). Linux + Windows artifacts in v0.4.26 are unaffected.",
         "Lint stops looping on un-fixable findings. After you (or Bulk Fix) attempt a finding once, it's recorded as \"already tried\" and hidden from future lint runs by default. A toolbar pill `N already attempted` shows what's hidden — click to clear and re-run if you want to retry. Solves the \"fix → fails silently → re-shows → fix again\" loop.",
         "Reconcile shows the actual diff before applying. Replaces the old \"3 broken wikilinks · 1 index row\" confirm dialog with a per-file unified diff: every change visible line-by-line before you commit. Apply / Cancel.",
         "Lint flags missing or non-canonical `type:` frontmatter. Pages with no `type:` are warnings; pages with off-taxonomy types (`type: 笔记`, `type: blogpost`) are info nudges. Both feed through the existing fix / suppress / fold flow.",
