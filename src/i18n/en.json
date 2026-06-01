@@ -595,6 +595,24 @@
           "dark": "Dark"
         }
       },
+      "labs": {
+        "title": "Labs (Experimental)",
+        "description": "Features that aren't validated for general use yet. Opt in if you want to help shake them out; opt out anytime — your data and settings are unaffected.",
+        "stateOn": "ON",
+        "stateOff": "OFF",
+        "agentIngestLabel": "Agent ingest (experimental)",
+        "agentIngestHint": "Shows a 🤖 button next to each source file. A multi-turn LLM agent reads the source via tool calls (read_chunk / search_source) and writes wiki pages (write_wiki_page / update_wiki_page) — vs the classic single-shot analyse + generate pipeline. Costs more tokens. Quality not yet validated on long real-world docs; uncovered topics surface as Review items.",
+        "aiLintFixLabel": "AI lint fix (experimental)",
+        "aiLintFixHint": "Replaces the lint Fix button's hardcoded actions (orphan → append to index.md, broken-link → push to Review) with an LLM mini-agent that decides per-item how to repair the wiki — fixing the link, cross-linking the orphan to topic-adjacent pages, adding wikilinks to a no-outlinks page. Costs LLM tokens per click; falls back to classic fix if the agent fails.",
+        "chatAgentLabel": "Chat agent (experimental)",
+        "chatAgentHint": "Upgrades chat from a single-turn stream into a tool-calling agent. When the LLM needs info it can call web_fetch (any URL, zero config), web_search (your configured Tavily / SerpApi / SearXNG / Ollama), search_local_files (project-scoped), and wiki inspection tools. Costs more tokens and drops the per-token streaming UX in agent mode — the first response arrives as a complete block once the agent finishes its tool calls.",
+        "chatAgentCanWriteLabel": "Chat agent can write wiki pages (experimental)",
+        "chatAgentCanWriteHint": "Adds write_wiki_page + update_wiki_page to the chat agent's tools. Use this when you want the agent to create / update pages directly from chat (\"save this as a wiki page\", \"update concepts/foo with this\"). The prompt rails it to write ONLY when you explicitly ask. delete + link tools are NOT included — those stay in ingest / lint-fix paths. Requires Chat agent ON.",
+        "chatAgentCanWriteParentOff": "Enable Chat agent first to use this sub-flag.",
+        "rawSaveToWikiLabel": "Raw Save to Wiki — skip wikify rewrite",
+        "rawSaveToWikiHint": "By default, Save to Wiki sends the chat reply through a short LLM rewrite that strips conversational tone (\"Based on...\", \"Here's a summary...\") before writing the page. Turn this on to skip that pass and persist the reply verbatim — useful for record-keeping, code-heavy answers, or content where the rewrite over-edits. autoIngest and raw source preservation continue to run either way.",
+        "disclaimer": "Labs features may change shape, lose toggle state, or be removed without a version bump. They are NOT covered by the auto-update's compatibility guarantees."
+      },
       "maintenance": {
         "title": "Maintenance",
         "description": "Tools for cleaning up the wiki — detect and merge duplicate entities/concepts that the LLM created under different names across re-ingests.",
