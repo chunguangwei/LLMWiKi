@@ -15,9 +15,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Universal macOS binary — one .dmg / .app runs on both
+          # Intel and Apple Silicon. Tauri's `universal-apple-darwin`
+          # target builds aarch64 + x86_64 and lipo-merges them, so
+          # end users don't have to pick the right download (which
+          # they always get wrong). Doubles the macOS job wall-clock
+          # (~10m → ~20m); macOS minutes are the spendiest, but the
+          # cross-arch UX win is worth it.
           - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
-            rust_target: aarch64-apple-darwin
+            args: '--target universal-apple-darwin'
+            rust_target: aarch64-apple-darwin,x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: ''
             rust_target: ''
