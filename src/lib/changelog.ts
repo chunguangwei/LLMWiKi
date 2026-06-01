@@ -26,6 +26,26 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.26",
+    date: "2026-06-01",
+    highlights: {
+      en: [
+        "Universal macOS build. One .dmg / .app runs on Intel AND Apple Silicon — no more picking the wrong architecture. Existing v0.4.25 users on Intel Macs can now update.",
+        "Lint stops looping on un-fixable findings. After you (or Bulk Fix) attempt a finding once, it's recorded as \"already tried\" and hidden from future lint runs by default. A toolbar pill `N already attempted` shows what's hidden — click to clear and re-run if you want to retry. Solves the \"fix → fails silently → re-shows → fix again\" loop.",
+        "Reconcile shows the actual diff before applying. Replaces the old \"3 broken wikilinks · 1 index row\" confirm dialog with a per-file unified diff: every change visible line-by-line before you commit. Apply / Cancel.",
+        "Lint flags missing or non-canonical `type:` frontmatter. Pages with no `type:` are warnings; pages with off-taxonomy types (`type: 笔记`, `type: blogpost`) are info nudges. Both feed through the existing fix / suppress / fold flow.",
+        "Frontend bundle keeps trimming. Main entry stays at 632 KB (-63% vs pre-PR-#28); per-feature chunks (mermaid, cytoscape, editor) load on demand.",
+      ],
+      zh: [
+        "macOS Universal 包。一个 .dmg / .app 同时跑 Intel 和 Apple Silicon——不用再选架构下载错。v0.4.25 用 Intel Mac 的用户现在可以更新了。",
+        "Lint 不再死循环修不好的发现项。你（或 Bulk Fix）尝试一次后，记录为「已尝试」并默认从后续检查里隐藏。工具栏出现 `已尝试 N 条` 标记，可点击清空重跑。解决「修→静默失败→再出现→再修」的循环。",
+        "Reconcile 应用前显示实际 diff。原本「3 broken wikilinks · 1 index row」那个总计弹窗换成每文件 unified diff——逐行可见再 Apply 或 Cancel。",
+        "Lint 检测缺失 / 非规范的 frontmatter `type:`。没有 `type:` 的页面是 warning；type 不在分类法里的（`type: 笔记`、`type: blogpost`）是 info 提示。两者都走现有 修复 / 隐藏 / 折叠 流。",
+        "前端打包持续瘦身。主 entry 维持在 632 KB（比 PR #28 前 -63%）；mermaid / cytoscape / editor 按需加载。",
+      ],
+    },
+  },
+  {
     version: "0.4.25",
     date: "2026-06-01",
     highlights: {
