@@ -24,6 +24,7 @@ import { useActivityStore } from "@/stores/activity-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { useTranslation } from "react-i18next"
+import { ReconcilePreviewDialog } from "./reconcile-preview-dialog"
 
 export function groupLintResultsForDisplay(results: readonly LintItem[]): {
   warnings: LintItem[]
@@ -202,6 +203,19 @@ export function LintView() {
   // attempted". Surfaced as a small pill in the toolbar so the user
   // knows nothing got silently lost — click to show / clear.
   const [suppressedCount, setSuppressedCount] = useState(0)
+  // Reconcile preview state — null when the dialog is closed; when
+  // set, the dialog renders with the dry-run results so the user
+  // can review the actual diffs before clicking Apply.
+  const [previewState, setPreviewState] = useState<{
+    changes: import("./reconcile-preview-dialog").PreviewChange[]
+    totals: {
+      files: number
+      brokenLinks: number
+      relatedDropped: number
+      indexDropped: number
+      indexAdded: number
+    }
+  } | null>(null)
   // Per-type fold state. Maps "warning:broken-link" / "info:orphan"
   // to "expanded?". A missing key falls back to the auto-fold rule
   // (expanded when count ≤ AUTO_FOLD_THRESHOLD). User clicks the
@@ -651,9 +665,16 @@ export function LintView() {
   }
 
   /**
-   * Mechanical cleanup: dry-run reconcile to see totals → confirm →
-   * actual reconcile → re-run lint to refresh the view. Pure non-LLM
-   * pass; safe to run repeatedly.
+   * Mechanical cleanup, step 1 of 2: dry-run the reconciler, then
+   * open the per-file preview dialog. The user reviews the actual
+   * diff before clicking Apply, which calls `handleApplyReconcile`
+   * below to run the real (non-dry) pass + annotation + activity
+   * logging.
+   *
+   * Why a dialog instead of `window.confirm()`: the old flow only
+   * showed totals ("3 broken wikilinks · 1 index row dropped"),
+   * which made the user trust the count blind. Showing the actual
+   * diff per file turns the cleanup into an informed action.
    */
   async function handleReconcile() {
     if (!project || reconciling) return
@@ -675,21 +696,44 @@ export function LintView() {
         )
         return
       }
-      const msg = t("lint.reconcileConfirm", {
-        defaultValue:
-          `Cleanup will rewrite ${dry.changes.length} file(s):\n` +
-          `  · ${dry.totalBrokenWikilinksReplaced} broken [[X]] → plain text\n` +
-          `  · ${dry.totalRelatedEntriesRemoved} dangling related: entries removed\n` +
-          `  · ${dry.totalIndexRowsDropped} index.md row(s) dropped\n` +
-          `  · ${dry.totalIndexRowsAdded} missing knowledge page(s) added to index.md\n\n` +
-          "queries/ and sources/ files are preserved as raw. Proceed?",
-        files: dry.changes.length,
-        links: dry.totalBrokenWikilinksReplaced,
-        related: dry.totalRelatedEntriesRemoved,
-        index: dry.totalIndexRowsDropped,
-        added: dry.totalIndexRowsAdded,
+      setPreviewState({
+        changes: dry.changes,
+        totals: {
+          files: dry.changes.length,
+          brokenLinks: dry.totalBrokenWikilinksReplaced,
+          relatedDropped: dry.totalRelatedEntriesRemoved,
+          indexDropped: dry.totalIndexRowsDropped,
+          indexAdded: dry.totalIndexRowsAdded,
+        },
       })
-      if (!window.confirm(msg)) return
+    } catch (err) {
+      console.error("[reconcile] dry-run failed:", err)
+      window.alert(
+        t("lint.reconcileFailed", {
+          defaultValue: `Cleanup failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      )
+    } finally {
+      setReconciling(false)
+    }
+  }
+
+  /**
+   * Step 2 of 2: user clicked Apply in the preview dialog. Run the
+   * real reconcile + optional LLM annotation + activity logging,
+   * then re-run lint so the cleaned-up state is reflected in the
+   * findings list.
+   */
+  async function handleApplyReconcile() {
+    if (!project) return
+    const pp = normalizePath(project.path)
+    setPreviewState(null)
+    setReconciling(true)
+    try {
+      const { reconcileWiki } = await import("@/lib/wiki-reconcile")
       const real = await reconcileWiki(pp)
       // Optional LLM annotation pass — Labs flag. Runs after the
       // mechanical reconcile so freshly-added bullets get their
@@ -955,6 +999,22 @@ export function LintView() {
           </div>
         )}
       </div>
+
+      <ReconcilePreviewDialog
+        open={previewState !== null}
+        changes={previewState?.changes ?? []}
+        totals={
+          previewState?.totals ?? {
+            files: 0,
+            brokenLinks: 0,
+            relatedDropped: 0,
+            indexDropped: 0,
+            indexAdded: 0,
+          }
+        }
+        onApply={handleApplyReconcile}
+        onCancel={() => setPreviewState(null)}
+      />
     </div>
   )
 }
