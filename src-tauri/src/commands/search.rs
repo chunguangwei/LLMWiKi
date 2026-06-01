@@ -150,45 +150,106 @@ pub async fn search_project_inner(
 
     let wiki_root = Path::new(&project_path).join("wiki");
     if wiki_root.exists() {
-        let mut searched_files = 0usize;
+        // Phase 1: walk the directory tree once (cheap, sync) and
+        // collect the .md paths up to MAX_SEARCH_FILES. Don't read
+        // bodies here — that's the expensive part we want to fan
+        // out across the runtime's blocking pool.
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
         for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
             if !entry.file_type().is_file()
                 || entry.path().extension().and_then(|s| s.to_str()) != Some("md")
             {
                 continue;
             }
-            searched_files += 1;
-            if searched_files > MAX_SEARCH_FILES {
+            paths.push(entry.path().to_path_buf());
+            if paths.len() >= MAX_SEARCH_FILES {
                 eprintln!(
                     "[Search] stopped scanning wiki after {MAX_SEARCH_FILES} markdown files in {project_path}"
                 );
                 break;
             }
-            let content = match fs::read_to_string(entry.path()) {
-                Ok(content) => content,
+        }
+
+        // Phase 2: fan out read+score across tokio's blocking pool.
+        // Sequential `fs::read_to_string` + `score_file` on 1000+
+        // pages dominates the wall-clock; parallel reduces it to ~1/N
+        // on N-core machines. JoinSet collects results as tasks
+        // complete; ordering is restored by the per-result sort below.
+        // Bound concurrency at SEARCH_PARALLELISM so a wiki with
+        // tens of thousands of files doesn't fan out 10k OS reads at
+        // once — that thrashes the page cache without speedup.
+        const SEARCH_PARALLELISM: usize = 32;
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(SEARCH_PARALLELISM));
+        let mut join_set: tokio::task::JoinSet<(
+            std::path::PathBuf,
+            Option<String>,
+            Option<ProjectSearchResult>,
+        )> = tokio::task::JoinSet::new();
+
+        let effective_tokens = std::sync::Arc::new(effective_tokens);
+        let query_phrase = std::sync::Arc::new(query_phrase);
+        let query = std::sync::Arc::new(query);
+        let project_path_arc = std::sync::Arc::new(project_path.clone());
+
+        for path in paths {
+            let sem = semaphore.clone();
+            let tokens = effective_tokens.clone();
+            let phrase = query_phrase.clone();
+            let q = query.clone();
+            let pp = project_path_arc.clone();
+            join_set.spawn(async move {
+                let _permit = match sem.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => return (path, None, None),
+                };
+                let content = match tokio::task::spawn_blocking({
+                    let p = path.clone();
+                    move || fs::read_to_string(&p)
+                })
+                .await
+                {
+                    Ok(Ok(content)) => content,
+                    _ => return (path, None, None),
+                };
+                let stem = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string());
+                let hit = score_file(
+                    pp.as_str(),
+                    &path,
+                    &content,
+                    tokens.as_slice(),
+                    phrase.as_str(),
+                    q.as_str(),
+                    include_content,
+                );
+                (path, stem, hit)
+            });
+        }
+
+        // Phase 3: drain. `page_paths_by_stem` collision detection
+        // moves to a single-threaded merge step here — the previous
+        // sequential loop did it inline, but we need to serialize the
+        // BTreeMap mutations anyway.
+        while let Some(joined) = join_set.join_next().await {
+            let (path, stem, hit) = match joined {
+                Ok(t) => t,
                 Err(_) => continue,
             };
-            if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
+            if let Some(stem) = stem {
                 let previous = page_paths_by_stem.insert(
-                    stem.to_string(),
-                    relative_to_project(&project_path, entry.path()),
+                    stem.clone(),
+                    relative_to_project(&project_path, &path),
                 );
                 if let Some(previous) = previous {
                     eprintln!(
                         "[Search] duplicate wiki page stem '{stem}': '{previous}' and '{}' share one vector page_id",
-                        relative_to_project(&project_path, entry.path())
+                        relative_to_project(&project_path, &path)
                     );
                 }
             }
-            if let Some(hit) = score_file(
-                &project_path,
-                entry.path(),
-                &content,
-                &effective_tokens,
-                &query_phrase,
-                &query,
-                include_content,
-            ) {
+            if let Some(hit) = hit {
                 results.push(hit);
             }
         }
