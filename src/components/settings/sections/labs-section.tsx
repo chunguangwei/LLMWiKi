@@ -139,7 +139,7 @@ export function LabsSection() {
           className="ml-3 flex shrink-0 items-center gap-2"
         >
           <span
-            className={`text-xs font-semibold ${
+            className={`inline-block w-6 text-right text-xs font-semibold ${
               agentIngest
                 ? "text-emerald-700 dark:text-emerald-300"
                 : "text-muted-foreground"
@@ -195,7 +195,7 @@ export function LabsSection() {
           className="ml-3 flex shrink-0 items-center gap-2"
         >
           <span
-            className={`text-xs font-semibold ${
+            className={`inline-block w-6 text-right text-xs font-semibold ${
               aiLintFix
                 ? "text-emerald-700 dark:text-emerald-300"
                 : "text-muted-foreground"
@@ -251,7 +251,7 @@ export function LabsSection() {
           className="ml-3 flex shrink-0 items-center gap-2"
         >
           <span
-            className={`text-xs font-semibold ${
+            className={`inline-block w-6 text-right text-xs font-semibold ${
               chatAgent
                 ? "text-emerald-700 dark:text-emerald-300"
                 : "text-muted-foreground"
@@ -275,11 +275,14 @@ export function LabsSection() {
         </button>
       </div>
 
-      {/* Chat-agent write tools — nested under Chat agent. Visually
-          indented + disabled when the parent flag is off so the
-          dependency is obvious. */}
+      {/* Chat-agent write tools — depends on the Chat agent flag.
+          Kept at the same horizontal alignment as sibling cards
+          (no `ml-6` indent) so the toggle column stays a clean
+          vertical line; the dependency is signalled inline with a
+          "↳" prefix on the label + dashed border + opacity when the
+          parent flag is off. */}
       <div
-        className={`ml-6 flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
+        className={`flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
           !chatAgent
             ? "border-dashed border-border bg-muted/20 opacity-60"
             : chatAgentCanWrite
@@ -289,6 +292,7 @@ export function LabsSection() {
       >
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">
+            <span className="mr-1 text-muted-foreground">↳</span>
             {t("settings.sections.labs.chatAgentCanWriteLabel", {
               defaultValue: "Chat agent can write wiki pages (experimental)",
             })}
@@ -319,7 +323,7 @@ export function LabsSection() {
           }
         >
           <span
-            className={`text-xs font-semibold ${
+            className={`inline-block w-6 text-right text-xs font-semibold ${
               chatAgentCanWrite
                 ? "text-emerald-700 dark:text-emerald-300"
                 : "text-muted-foreground"
@@ -376,7 +380,7 @@ export function LabsSection() {
           className="ml-3 flex shrink-0 items-center gap-2"
         >
           <span
-            className={`text-xs font-semibold ${
+            className={`inline-block w-6 text-right text-xs font-semibold ${
               rawSaveToWiki
                 ? "text-emerald-700 dark:text-emerald-300"
                 : "text-muted-foreground"
