@@ -673,6 +673,45 @@ async function autoIngestImpl(
   // ── Step 3: Write files ───────────────────────────────────────
   activity.updateItem(activityId, { detail: "Writing files..." })
   await migrateLegacySourceSummaryIfSafe(pp, sourceIdentity, sourceSummaryPath)
+
+  // Optional preview gate (Labs flag `experimentalIngestPreview`).
+  // Parse the LLM output into FileBlocks BEFORE writing, push them
+  // through the ingest-preview store, and await the user's
+  // accept / reject. Tokens are already spent at this point — the
+  // gate exists to prevent disk pollution from a misguided LLM
+  // result, not to save tokens.
+  if (useWikiStore.getState().experimentalIngestPreview) {
+    const { blocks: previewBlocks } = parseFileBlocks(generation)
+    const PREVIEW_CHARS = 600
+    const apply = await (async () => {
+      try {
+        const { requestIngestPreview } = await import("@/stores/ingest-preview-store")
+        return await requestIngestPreview({
+          title: fileName,
+          blocks: previewBlocks.map((b) => ({
+            path: b.path,
+            contentPreview: b.content.slice(0, PREVIEW_CHARS),
+            contentLength: b.content.length,
+          })),
+        })
+      } catch (err) {
+        console.warn("[ingest] preview dispatch failed, applying anyway:", err)
+        return true
+      }
+    })()
+    if (!apply) {
+      activity.updateItem(activityId, {
+        status: "done",
+        detail: "Cancelled at preview — no files written.",
+        filesWritten: [],
+      })
+      console.log(
+        `[ingest] preview-cancelled for "${fileName}" — ${previewBlocks.length} blocks dropped.`,
+      )
+      return []
+    }
+  }
+
   const { writtenPaths, warnings: writeWarnings, hardFailures } = await writeFileBlocks(
     pp,
     generation,

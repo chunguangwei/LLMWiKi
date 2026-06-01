@@ -616,6 +616,8 @@
         "rawSaveToWikiHint": "By default, Save to Wiki sends the chat reply through a short LLM rewrite that strips conversational tone (\"Based on...\", \"Here's a summary...\") before writing the page. Turn this on to skip that pass and persist the reply verbatim — useful for record-keeping, code-heavy answers, or content where the rewrite over-edits. autoIngest and raw source preservation continue to run either way.",
         "indexAnnotationsLabel": "LLM-annotated index.md descriptions",
         "indexAnnotationsHint": "After every reconcile / autoIngest, batch-call the LLM to write a one-line description for each index.md bullet that doesn't have one yet. Descriptions are cached by page body hash so unchanged pages don't re-spend tokens. Cost: ~one LLM call per ~25 newly-written pages. Idempotent; safe to leave on.",
+        "ingestPreviewLabel": "Preview autoIngest writes before applying",
+        "ingestPreviewHint": "Every autoIngest pauses after the LLM stage with a dialog listing the files about to be written. Click Apply to commit or Cancel to skip — no disk writes either way until you confirm. LLM tokens are spent regardless; the gate exists to catch misguided splits / wrong slugs before they pollute the wiki.",
         "disclaimer": "Labs features may change shape, lose toggle state, or be removed without a version bump. They are NOT covered by the auto-update's compatibility guarantees."
       },
       "maintenance": {

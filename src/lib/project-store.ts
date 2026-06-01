@@ -234,6 +234,18 @@ export async function loadExperimentalIndexAnnotations(): Promise<boolean> {
   return (await store.get<boolean>(INDEX_ANNOTATIONS_FLAG_KEY)) ?? false
 }
 
+const INGEST_PREVIEW_FLAG_KEY = "experimentalIngestPreview"
+
+export async function saveExperimentalIngestPreview(enabled: boolean): Promise<void> {
+  const store = await getStore()
+  await store.set(INGEST_PREVIEW_FLAG_KEY, enabled)
+}
+
+export async function loadExperimentalIngestPreview(): Promise<boolean> {
+  const store = await getStore()
+  return (await store.get<boolean>(INGEST_PREVIEW_FLAG_KEY)) ?? false
+}
+
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"
 
 function scheduledImportKey(projectPath: string): string {

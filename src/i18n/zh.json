@@ -616,6 +616,8 @@
         "rawSaveToWikiHint": "默认情况下「保存到 Wiki」会先经过一次小型 LLM 改写，去掉聊天腔（「基于...」「这里是总结...」）。开启此项跳过这一步，原文保留——适合留底、代码偏多的回答、或那些改写会过度编辑的内容。autoIngest 和原始来源持久化照常运行。",
         "indexAnnotationsLabel": "index.md 条目 LLM 自动描述",
         "indexAnnotationsHint": "每次 reconcile / autoIngest 跑完，批量调 LLM 给 index.md 中没有描述的条目加一行说明。按页面正文哈希缓存——内容没变的页面不会重复消耗 token。开销：每新增约 25 个页面一次 LLM 调用。幂等，可常开。",
+        "ingestPreviewLabel": "autoIngest 写盘前预览",
+        "ingestPreviewHint": "每次 autoIngest 在 LLM 阶段完成后暂停，弹窗列出即将写入的文件。点 Apply 提交，点 Cancel 跳过——确认前不会写盘。LLM token 已花，这个开关防止 LLM 错误的拆分 / 错误的 slug 污染 wiki。",
         "disclaimer": "Labs 功能可能在版本号不变的情况下改变形态、丢失开关状态、或者被移除。不受自动更新的兼容性保证。"
       },
       "maintenance": {
