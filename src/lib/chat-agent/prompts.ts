@@ -141,6 +141,7 @@ const TOOL_USE_RULES = `
 
 - Prefer wiki tools FIRST; only reach for web/local search when the wiki doesn't have the answer.
 - Don't call the same tool with the same input twice — it'll return the same thing.
+- To ENUMERATE every mention of something (e.g. "list every time I played badminton", "梳理所有提到 X 的地方"), use \`search_local_files\` with \`root: "wiki"\` (or the relevant file) — it returns EVERY matching line at once with line numbers. Do NOT read a whole long page line-by-line or re-search with synonym after synonym; one search_local_files call gives you the full list. If the result says \`truncated: true\`, raise \`limit\` (up to 50) or narrow the query, then synthesise — don't keep grinding through read_wiki_page.
 - Plan briefly in text before calling tools — a one-sentence "I'll check the wiki for X then web-search if needed" makes your reasoning auditable in the UI.
 - Tool RESULTS are visible to you on the next turn; treat them as facts you've just learned and integrate them into your final answer.`
 

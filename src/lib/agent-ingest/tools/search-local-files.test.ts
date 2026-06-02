@@ -183,6 +183,45 @@ describe("search_local_files — happy path", () => {
     expect(r.matches.map((m) => m.path)).toEqual(["wanted.md"])
   })
 
+  it("returns EVERY matching line within a single file (not just the first)", async () => {
+    setFile(
+      "/p/wiki/diary.md",
+      [
+        "2019-04-02 打了羽毛球",
+        "随便写点别的",
+        "2020-06-11 又去打羽毛球了",
+        "无关行",
+        "2021-09-30 周末羽毛球",
+      ].join("\n"),
+    )
+    setTree("/p/wiki", [
+      { name: "diary.md", path: "/p/wiki/diary.md", is_dir: false },
+    ])
+    const ctx = mockCtx()
+    const r = (await searchLocalFilesTool.execute(
+      { query: "羽毛球", root: "wiki" },
+      ctx,
+    )) as Extract<SearchLocalFilesResult, { ok: true }>
+    expect(r.ok).toBe(true)
+    expect(r.matches).toHaveLength(3)
+    expect(r.matches.map((m) => m.line)).toEqual([1, 3, 5])
+    expect(r.matches.every((m) => m.path === "wiki/diary.md")).toBe(true)
+    expect(r.matches[0].snippet).toContain("2019-04-02")
+  })
+
+  it("strips trailing CRLF so Windows files give clean snippets", async () => {
+    setFile("/p/win.md", "2019 羽毛球\r\n中间\r\n2020 羽毛球\r\n")
+    setTree("/p", [{ name: "win.md", path: "/p/win.md", is_dir: false }])
+    const ctx = mockCtx()
+    const r = (await searchLocalFilesTool.execute(
+      { query: "羽毛球" },
+      ctx,
+    )) as Extract<SearchLocalFilesResult, { ok: true }>
+    expect(r.matches).toHaveLength(2)
+    expect(r.matches[0].snippet).toBe("2019 羽毛球")
+    expect(r.matches[0].snippet).not.toContain("\r")
+  })
+
   it("respects limit and reports truncated", async () => {
     setFile("/p/a.md", "needle")
     setFile("/p/b.md", "needle")

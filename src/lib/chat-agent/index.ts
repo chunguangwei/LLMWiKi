@@ -67,10 +67,13 @@ export interface RunChatAgentOpts {
   /** Output language pin ("zh" / "en" / "auto"). */
   outputLanguage?: string
   signal?: AbortSignal
-  /** Cumulative billed-tokens cap. Default 80_000 — small chats finish
-   *  inside 8–10 turns, this is enough to not surprise the user. */
+  /** Cumulative billed-tokens cap. Default 120_000 — enough headroom for
+   *  enumeration tasks ("list every time I mention X") that fan out across
+   *  several search_local_files + read_wiki_page calls over a long page. */
   maxTokens?: number
-  /** Hard cap on turns. Default 10. */
+  /** Hard cap on turns. Default 16 — multi-step "梳理/列举" queries need a
+   *  few search → read → refine rounds before synthesising; 10 was too
+   *  tight and surfaced as "Hit the turn budget — answer may be partial." */
   maxTurns?: number
   /** Progress hook fired after each LLM turn. Useful for the UI to show
    *  "thinking… tool X" without re-rendering the entire chat. */
@@ -123,8 +126,8 @@ export interface ChatAgentResult {
   reason: string
 }
 
-const DEFAULT_MAX_TOKENS = 80_000
-const DEFAULT_MAX_TURNS = 10
+const DEFAULT_MAX_TOKENS = 120_000
+const DEFAULT_MAX_TURNS = 16
 const HISTORY_MAX_MESSAGES = 6  // ~3 user/assistant exchanges
 
 export async function runChatAgent(opts: RunChatAgentOpts): Promise<ChatAgentResult> {

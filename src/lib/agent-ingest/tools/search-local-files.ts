@@ -7,6 +7,14 @@
  * asks about something that lives in their own files but isn't yet
  * in the wiki — raw sources, drafts, scratch notes, etc.
  *
+ * Returns EVERY matching line (one entry per line, up to
+ * `max_matches_per_file`), not just the first hit per file. This is
+ * what makes "list all the times I mention X" answerable in a single
+ * call: a long diary page with 30 badminton entries yields 30 dated
+ * snippets, so the agent can enumerate them directly instead of
+ * re-reading the whole page or re-searching with different keywords
+ * (the failure mode that used to burn the chat-agent turn budget).
+ *
  * Strict project-scope: every result lives under `ctx.project.path`.
  * `root` is a project-relative subdirectory; traversal-escape inputs
  * (".." segments, absolute paths, "wiki" / "raw/sources" are fine,
@@ -18,10 +26,11 @@
  * command later — the interface here doesn't change.
  *
  * Limits (intentional, soft):
- *   - max_matches per call:  50
- *   - max_files_scanned:     500   (early-exit even if matches < max)
- *   - max_file_size_bytes:   200_000 (skip larger files)
- *   - snippet_chars:         200    (around the first match per file)
+ *   - max_matches per call:        50  (across all files)
+ *   - max_matches_per_file:        50  (one entry per matching line)
+ *   - max_files_scanned:           500 (early-exit even if matches < max)
+ *   - max_file_size_bytes:         200_000 (skip larger files)
+ *   - snippet_chars:               200 (the trimmed matching line)
  *
  * Skipped subdirs (always): node_modules / .git / dist / target /
  * .next / __pycache__ / .venv / venv — covers the noisy
@@ -54,9 +63,9 @@ export type SearchLocalFilesResult =
       matches: Array<{
         /** Project-relative path with forward slashes. */
         path: string
-        /** First line containing the match, trimmed to snippet_chars. */
+        /** The matching line, trimmed to snippet_chars. */
         snippet: string
-        /** 1-indexed line number of the first match. */
+        /** 1-indexed line number of this match. */
         line: number
       }>
       files_scanned: number
@@ -65,8 +74,9 @@ export type SearchLocalFilesResult =
   | { error: "invalid_input"; detail: string }
   | { error: "scan_failed"; detail: string }
 
-const DEFAULT_LIMIT = 20
+const DEFAULT_LIMIT = 30
 const MAX_LIMIT = 50
+const MAX_MATCHES_PER_FILE = 50
 const MAX_FILES_SCANNED = 500
 const MAX_FILE_SIZE_BYTES = 200_000
 const SNIPPET_CHARS = 200
@@ -88,13 +98,18 @@ export const searchLocalFilesTool: ToolDefinition<SearchLocalFilesInput, SearchL
   name: "search_local_files",
   description:
     "Search file CONTENTS inside the user's current project for a plain " +
-    "substring. Returns up to 20 matches (max 50) with a one-line snippet " +
-    "around the hit. Scoped strictly to the project directory — relative " +
-    "subroots (`raw/sources`, `wiki`) are allowed, absolute paths and " +
-    "path traversal (../) are rejected. Use this when the user is asking " +
-    "about something that's in their files but not yet in the wiki — raw " +
-    "sources, drafts, scratch notes — before falling back to web_fetch / " +
-    "web_search.\n\n" +
+    "substring. Returns EVERY matching line (one entry per line, with its " +
+    "line number + snippet), up to `limit` total (default 30, max 50). " +
+    "This is the right tool to ENUMERATE all mentions of something — e.g. " +
+    "'list every time I played badminton' — in one call: search `wiki` (or " +
+    "the relevant file) and you get all the dated lines at once, so you do " +
+    "NOT need to read the whole page or re-search with different keywords. " +
+    "If the result is `truncated`, narrow the query or raise `limit`.\n\n" +
+    "Scoped strictly to the project directory — relative subroots " +
+    "(`raw/sources`, `wiki`) are allowed, absolute paths and path traversal " +
+    "(../) are rejected. Use this for anything in the user's files: ingested " +
+    "wiki pages, raw sources, drafts, scratch notes — before falling back to " +
+    "web_fetch / web_search.\n\n" +
     "Search is plain-text + case-insensitive by default. Provide a `glob` " +
     "(e.g. '*.md' or 'notes-*.txt') to filter by filename. The walk skips " +
     "noisy directories (node_modules, .git, dist, etc.) automatically.",
@@ -121,7 +136,7 @@ export const searchLocalFilesTool: ToolDefinition<SearchLocalFilesInput, SearchL
       },
       limit: {
         type: "integer",
-        description: `Max matches to return (1–${MAX_LIMIT}, default ${DEFAULT_LIMIT}).`,
+        description: `Max matching lines to return across all files (1–${MAX_LIMIT}, default ${DEFAULT_LIMIT}).`,
         minimum: 1,
         maximum: MAX_LIMIT,
       },
@@ -201,18 +216,40 @@ export const searchLocalFilesTool: ToolDefinition<SearchLocalFilesInput, SearchL
         const content = await readFile(node.path).catch(() => null)
         if (content === null) continue
         if (content.length > MAX_FILE_SIZE_BYTES) continue
-        const haystack = caseSensitive ? content : content.toLowerCase()
-        const idx = haystack.indexOf(needle)
-        if (idx < 0) continue
-        const { line, snippet } = locate(content, idx)
         const rel = node.path.startsWith(projectRoot + "/")
           ? node.path.slice(projectRoot.length + 1)
           : node.path
-        matches.push({
-          path: rel,
-          snippet: snippet.length > SNIPPET_CHARS ? snippet.slice(0, SNIPPET_CHARS) + "…" : snippet,
-          line,
-        })
+        // Collect EVERY matching line in this file (one entry per line),
+        // up to MAX_MATCHES_PER_FILE. A line containing the needle more
+        // than once still yields a single entry. This is what lets the
+        // agent enumerate "all mentions of X" from one call.
+        // Split on \r?\n so Windows CRLF files don't leave a trailing \r
+        // in the snippet (the user's diary case came from the Windows build).
+        const lines = content.split(/\r?\n/)
+        let fileMatches = 0
+        for (let li = 0; li < lines.length; li++) {
+          if (matches.length >= limit) {
+            truncated = true
+            return
+          }
+          const rawLine = lines[li]
+          const hay = caseSensitive ? rawLine : rawLine.toLowerCase()
+          if (!hay.includes(needle)) continue
+          const trimmed = rawLine.trim()
+          matches.push({
+            path: rel,
+            snippet:
+              trimmed.length > SNIPPET_CHARS ? trimmed.slice(0, SNIPPET_CHARS) + "…" : trimmed,
+            line: li + 1,
+          })
+          fileMatches += 1
+          if (fileMatches >= MAX_MATCHES_PER_FILE) {
+            // More hits may exist in this file; flag it so the agent can
+            // narrow the query if it needs the rest.
+            truncated = true
+            break
+          }
+        }
       }
     }
 
@@ -270,20 +307,6 @@ function compileSimpleGlob(glob: string): RegExp | null {
   } catch {
     return null
   }
-}
-
-function locate(content: string, matchIdx: number): { line: number; snippet: string } {
-  let line = 1
-  let lineStart = 0
-  for (let i = 0; i < matchIdx; i++) {
-    if (content[i] === "\n") {
-      line += 1
-      lineStart = i + 1
-    }
-  }
-  const lineEnd = content.indexOf("\n", matchIdx)
-  const end = lineEnd < 0 ? content.length : lineEnd
-  return { line, snippet: content.slice(lineStart, end).trim() }
 }
 
 function clampLimit(raw: number | undefined): number {
