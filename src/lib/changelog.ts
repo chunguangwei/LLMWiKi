@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.36",
+    date: "2026-06-03",
+    highlights: {
+      en: [
+        "Chat now tries agent search first, then falls back to classic search automatically. On a tool-calling provider (Anthropic / MiniMax / custom Anthropic-style), chat runs the agent loop first; if it runs out of budget, returns nothing, or errors, chat quietly re-answers with classic retrieval instead of showing a partial \"answer may be partial\" reply. On a subprocess-CLI provider (Claude Code CLI / Codex CLI), which can't run the agent loop, it uses classic search directly. Any reply produced by classic search while agent mode is on now carries a small \"🔍 Classic search\" badge so you can tell which path answered — this replaces the wordier provider notice from 0.4.35.",
+      ],
+      zh: [
+        "聊天现在会先尝试 agent 搜索，不行再自动回退到普通搜索。在支持工具调用的 provider（Anthropic / MiniMax / 自定义 Anthropic 协议）上，聊天先跑 agent 循环；如果预算耗尽、没返回内容或报错，就静默改用普通检索重新作答，而不是甩给你一句「answer may be partial」的半成品。在无法运行 agent 循环的子进程 CLI provider（Claude Code CLI / Codex CLI）上，则直接用普通搜索。开着 agent 模式时、由普通搜索给出的回答，现在会带一个小小的「🔍 普通搜索」标签，让你一眼看出是哪条路径作答的——它取代了 0.4.35 里那条更啰嗦的 provider 提示。",
+      ],
+    },
+  },
+  {
     version: "0.4.35",
     date: "2026-06-02",
     highlights: {
