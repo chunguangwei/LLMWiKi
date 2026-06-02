@@ -385,17 +385,21 @@ function actionLooksLikeResearch(action: string): boolean {
 }
 
 function actionLooksLikeOpen(action: string): boolean {
+  // Prefix match — the OPTIONS-line prompt asks for short labels but the
+  // LLM still emits localized / padded forms ("Open in editor", "Open page",
+  // "打开编辑", "查看页面", "Edit"). Exact equality silently dropped these
+  // and the click looked like a no-op.
   const lower = action.trim().toLowerCase()
-  return (
-    lower === "open" ||
-    lower === "view" ||
-    lower === "open page" ||
-    lower === "view page" ||
-    lower === "打开" ||
-    lower === "查看" ||
-    lower === "打开页面" ||
-    lower === "查看页面"
-  )
+  if (!lower) return false
+  const prefixes = [
+    "open",
+    "view",
+    "edit",
+    "打开",
+    "查看",
+    "编辑",
+  ]
+  return prefixes.some((p) => lower.startsWith(p))
 }
 
 /** Detect if an action is a dismissal (no-op) or should create a page.
