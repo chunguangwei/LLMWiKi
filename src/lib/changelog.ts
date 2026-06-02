@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.32",
+    date: "2026-06-02",
+    highlights: {
+      en: [
+        "Claude Code CLI: a clean exit that produces no answer text no longer shows a blank \"connected but returned empty content\". The transport now surfaces what the CLI actually emitted (captured stdout / stderr) and points at the most common cause — a SessionStart hook or custom output-style in your ~/.claude config intercepting the non-interactive (`claude -p`) turn. Test it with `claude -p \"hi\"` in a terminal: if that's also empty, the fix is in your Claude config. This converts a dead-end error into an actionable one.",
+      ],
+      zh: [
+        "Claude Code CLI：干净退出但没有回答文本时，不再只显示空洞的「connected but returned empty content」。传输层现在会把 CLI 实际输出的内容（捕获的 stdout / stderr）显示出来，并指出最常见的原因——你 ~/.claude 配置里的 SessionStart hook 或自定义 output-style 拦截了非交互（`claude -p`）那一轮。可以在终端跑 `claude -p \"hi\"` 验证：如果也是空的，问题在你的 Claude 配置而非 LLM Wiki。把死胡同报错变成可行动的报错。",
+      ],
+    },
+  },
+  {
     version: "0.4.31",
     date: "2026-06-02",
     highlights: {
