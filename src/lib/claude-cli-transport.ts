@@ -207,11 +207,20 @@ export async function streamClaudeCodeCli(
   }
   signal?.addEventListener("abort", abortListener)
 
+  // Whether the parser ever produced visible text. Drives the
+  // clean-but-empty diagnostic below: a code-0 exit with zero emitted
+  // text is the confusing "connected but returned empty content" case.
+  // Instead of leaving the caller with a bare empty string, we surface
+  // whatever stdout the CLI did emit (hook events, a result we couldn't
+  // classify, etc.) so the failure is self-explaining.
+  let emittedText = false
+
   try {
     // Listen FIRST so we don't miss the very first event on fast CLIs.
     unlistenData = await listen<string>(`claude-cli:${streamId}`, (event) => {
       const token = parse(event.payload)
       if (token !== null) {
+        if (token.trim()) emittedText = true
         onToken(token)
       } else {
         // Parser didn't recognize this line. Stash it in case the
@@ -232,6 +241,16 @@ export async function streamClaudeCodeCli(
             onError(
               new Error(buildExitError(code, stderr, unparsedLines.join("\n"))),
             ),
+          )
+        } else if (!emittedText) {
+          // Clean exit (code 0) but the CLI produced no assistant text
+          // and no usable `result`. Common cause: a SessionStart hook or
+          // output-style in the user's ~/.claude config that consumes the
+          // turn, or a model that returned only a tool_use / thinking
+          // block. Surface the captured stdout so the user can see what
+          // actually came back instead of a blank "empty content".
+          finishWith(() =>
+            onError(new Error(buildEmptyError(stderr, unparsedLines.join("\n")))),
           )
         } else {
           finishWith(onDone)
@@ -318,4 +337,31 @@ export function buildExitError(
     "terminal with the same prompt to see what's wrong, or switch to",
     "the official Anthropic API in Settings.",
   ].join(" ")
+}
+
+/**
+ * Build the message for a clean exit (code 0) that produced no usable
+ * assistant text. The most common real-world trigger is a SessionStart
+ * hook or custom output-style in the user's ~/.claude config that
+ * reshapes or swallows the first turn when `claude` is run
+ * non-interactively (`-p`). We show the captured stdout so the user can
+ * see what the CLI actually emitted and act on it, rather than a blank
+ * "connected but returned empty content".
+ */
+export function buildEmptyError(
+  stderr: string = "",
+  unparsedStdout: string = "",
+): string {
+  const head =
+    "Claude Code CLI connected but returned no answer text. This usually " +
+    "means a SessionStart hook or a custom output-style in your ~/.claude " +
+    "config is intercepting the non-interactive (`claude -p`) turn. Try " +
+    "running `claude -p \"hi\"` in a terminal: if that's also empty, the " +
+    "fix is in your Claude config, not LLM Wiki."
+  const diag = stderr.trim()
+    ? `\n\n— stderr —\n${stderr.trim()}`
+    : unparsedStdout.trim()
+      ? `\n\n— captured stdout —\n${unparsedStdout.trim()}`
+      : ""
+  return head + diag
 }

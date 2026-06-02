@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest"
 import {
   createClaudeCodeStreamParser,
   buildExitError,
+  buildEmptyError,
 } from "../claude-cli-transport"
 
 describe("createClaudeCodeStreamParser", () => {
@@ -214,5 +215,33 @@ describe("buildExitError", () => {
     expect(msg).toMatch(/silently/)
     expect(msg).toMatch(/terminal/)
     expect(msg).toMatch(/Anthropic API/)
+  })
+})
+
+describe("buildEmptyError", () => {
+  it("points at hooks / output-style as the likely cause", () => {
+    const msg = buildEmptyError()
+    expect(msg).toMatch(/no answer text/i)
+    expect(msg).toMatch(/SessionStart hook|output-style/i)
+    expect(msg).toMatch(/claude -p/)
+  })
+
+  it("appends captured stdout when no stderr is present", () => {
+    const stdout = '{"type":"system","subtype":"hook_response","output":"…"}'
+    const msg = buildEmptyError("", stdout)
+    expect(msg).toContain("captured stdout")
+    expect(msg).toContain("hook_response")
+  })
+
+  it("prefers stderr over captured stdout", () => {
+    const msg = buildEmptyError("real stderr", "unrelated stdout")
+    expect(msg).toContain("real stderr")
+    expect(msg).not.toContain("unrelated stdout")
+  })
+
+  it("omits the diagnostic block when neither is present", () => {
+    const msg = buildEmptyError("", "")
+    expect(msg).not.toContain("stderr")
+    expect(msg).not.toContain("captured stdout")
   })
 })
