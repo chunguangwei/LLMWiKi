@@ -137,6 +137,45 @@ describe("runChatAgent — text-only reply", () => {
   })
 })
 
+describe("runChatAgent — incomplete flag (drives classic fallback)", () => {
+  it("incomplete=false for a clean text reply", async () => {
+    setupEmptyProject()
+    const llm = new ScriptedLlm([textTurn("Here is your answer.")])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    const result = await runChatAgent({
+      userMessage: "hi",
+      history: emptyHistory(),
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+    })
+
+    expect(result.incomplete).toBe(false)
+  })
+
+  it("incomplete=true when the run hits the turn budget", async () => {
+    setupEmptyProject()
+    // First turn calls a tool; with maxTurns:1 the runner stops at the top
+    // of the next iteration with stopReason "max_turns" before asking the
+    // LLM again, so a single scripted turn is enough.
+    const llm = new ScriptedLlm([
+      toolUseTurn({ name: "search_local_files", input: { query: "x", root: "wiki" } }),
+    ])
+    vi.spyOn(agentLlmModule, "createAgentLlm").mockReturnValue(llm)
+
+    const result = await runChatAgent({
+      userMessage: "list every mention of x",
+      history: emptyHistory(),
+      project: PROJECT,
+      llmConfig: LLM_CONFIG,
+      maxTurns: 1,
+    })
+
+    expect(result.incomplete).toBe(true)
+    expect(result.reason).toMatch(/turn budget/i)
+  })
+})
+
 describe("runChatAgent — web_fetch path", () => {
   it("forwards the fetched markdown into the toolCalls summary, returns final text", async () => {
     setupEmptyProject()

@@ -7,8 +7,9 @@ import "katex/dist/katex.min.css"
 import {
   Bot, User, FileText, BookmarkPlus, ChevronDown, ChevronRight, RefreshCw, Copy, Check,
   Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, Layout, Globe,
-  TrendingUp, Target, Image as ImageIcon,
+  TrendingUp, Target, Image as ImageIcon, Search,
 } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { lastQueryPages } from "@/components/chat/chat-panel"
@@ -70,6 +71,7 @@ interface ChatMessageProps {
 }
 
 function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessageProps) {
+  const { t } = useTranslation()
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   const isAssistant = message.role === "assistant"
@@ -95,6 +97,11 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
       <div className="max-w-[80%] flex flex-col gap-1.5">
         {isAssistant && message.toolCalls && message.toolCalls.length > 0 && (
           <ToolCallsBlock toolCalls={message.toolCalls} />
+        )}
+        {isAssistant && message.retrieval === "classic" && (
+          <span className="inline-flex w-fit items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted-foreground">
+            <Search className="h-3 w-3" /> {t("chat.classicSearchBadge")}
+          </span>
         )}
         <div
           className={`rounded-lg px-3 py-2 text-sm ${

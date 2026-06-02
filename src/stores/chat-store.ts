@@ -22,6 +22,16 @@ export interface DisplayMessage {
   conversationId: string
   references?: MessageReference[]  // pages cited in this response, saved at creation time
   /**
+   * How this assistant reply was produced. "classic" tags answers that
+   * came from classic (toolless) retrieval while the user had agent mode
+   * ON — either the provider can't run the agent loop, or the agent
+   * attempt was unsatisfactory and we fell back. The chat-message
+   * renderer shows a small "Classic search" badge so the user knows
+   * agent search wasn't (or couldn't be) used. Undefined = no badge
+   * (a normal agent answer, or agent mode was off entirely).
+   */
+  retrieval?: "classic"
+  /**
    * Tool calls that produced this assistant response. Populated by the
    * chat-agent path (Phase G2.2); undefined / empty for classic-chat
    * messages. The chat-message renderer shows them as a foldable block
@@ -142,7 +152,11 @@ interface ChatState {
   setConversations: (conversations: Conversation[]) => void
   setStreaming: (streaming: boolean) => void
   appendStreamToken: (token: string) => void
-  finalizeStream: (content: string, references?: MessageReference[]) => void
+  finalizeStream: (
+    content: string,
+    references?: MessageReference[],
+    opts?: { retrieval?: "classic" },
+  ) => void
   setMode: (mode: ChatState["mode"]) => void
   setIngestSource: (path: string | null) => void
   clearMessages: () => void
@@ -329,7 +343,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: state.streamingContent + token,
     })),
 
-  finalizeStream: (content, references) =>
+  finalizeStream: (content, references, opts) =>
     set((state) => {
       const { activeConversationId, conversations } = state
       if (!activeConversationId) {
@@ -346,6 +360,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         timestamp: Date.now(),
         conversationId: activeConversationId,
         references,
+        retrieval: opts?.retrieval,
       }
 
       return {

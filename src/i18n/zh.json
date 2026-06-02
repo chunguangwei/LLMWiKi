@@ -188,7 +188,7 @@
     "renameConversation": "重命名对话",
     "renamePlaceholder": "对话名称",
     "deleteConversationTooltip": "删除对话",
-    "agentUnavailableOnProvider": "ℹ️ 当前「{{provider}}」provider 不支持 agent 搜索——它是子进程 CLI，没有工具调用通道——本次已改用普通检索回答。要对 wiki 做 agent 式搜索（读取页面、grep 文件、列举所有提到某事的地方），请在 设置 → LLM 切换到支持工具调用的 provider（如 Anthropic、OpenAI / Azure、MiniMax）。"
+    "classicSearchBadge": "普通搜索"
   },
   "chatSearch": {
     "headerPrefix": "搜索：",

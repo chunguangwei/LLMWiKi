@@ -122,6 +122,14 @@ export interface ChatAgentResult {
   turnsUsed: number
   tokensSpent: number
   budgetExhausted: boolean
+  /**
+   * True when the run stopped because it ran out of budget — either
+   * `max_turns` or `max_tokens`. The caller treats this as "the agent
+   * didn't finish cleanly" and falls back to classic search, since the
+   * reply is likely partial. (Distinct from `budgetExhausted`, which is
+   * token-only, for backward compat.)
+   */
+  incomplete: boolean
   /** Human-readable stop reason ("done_called", "max_turns", ...). */
   reason: string
 }
@@ -220,6 +228,9 @@ export async function runChatAgent(opts: RunChatAgentOpts): Promise<ChatAgentRes
     turnsUsed: runResult.turnsUsed,
     tokensSpent: runResult.tokensSpent,
     budgetExhausted: runResult.stopReason === "max_tokens",
+    incomplete:
+      runResult.stopReason === "max_turns" ||
+      runResult.stopReason === "max_tokens",
     reason: humaniseStopReason(runResult.stopReason),
   }
 }

@@ -49,22 +49,6 @@ function formatDate(timestamp: number): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" })
 }
 
-/**
- * Human-readable name for a provider id, used in the agent-fallback
- * notice. Only the subprocess CLIs that can hit the fallback need a
- * friendly label; anything else falls back to the raw id.
- */
-function friendlyProviderName(provider: string): string {
-  switch (provider) {
-    case "claude-code":
-      return "Claude Code CLI"
-    case "codex-cli":
-      return "Codex CLI"
-    default:
-      return provider
-  }
-}
-
 function ConversationSidebar() {
   const { t } = useTranslation()
   const conversations = useChatStore((s) => s.conversations)
@@ -433,10 +417,6 @@ export function ChatPanel() {
   const setFileTree = useWikiStore((s) => s.setFileTree)
 
   const abortRef = useRef<AbortController | null>(null)
-  // Conversations we've already warned that the agent path is unavailable
-  // on the current provider. Keyed by `${convId}::${provider}` so switching
-  // provider re-warns, but we don't repeat the notice every message.
-  const agentFallbackWarnedRef = useRef<Set<string>>(new Set())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const dropTargetRef = useRef<HTMLDivElement>(null)
@@ -687,22 +667,35 @@ export function ChatPanel() {
       //     providers) instead of throwing "doesn't support provider".
       //   - agent loop throws — caller sees the error in the chat
       const chatAgentEnabled = useWikiStore.getState().experimentalChatAgent
-      if (
+      const agentCapable =
         chatAgentEnabled &&
         hasUsableLlm(llmConfig) &&
         providerSupportsToolAgent(llmConfig.provider) &&
-        project
-      ) {
-        // Lock the input + wire abort. Agent mode doesn't stream
-        // tokens, but `isStreaming` is also what disables the send
-        // button + drives the Stop control — without setting it the
-        // user can rapid-fire follow-up sends and spin up parallel
-        // agent loops. The AbortController is the same shape classic
-        // streaming uses (abortRef.current), so handleStop reuses
-        // unchanged.
+        !!project
+
+      // Badge the eventual classic answer with "Classic search" whenever the
+      // user has agent mode ON but we end up answering with classic
+      // retrieval — either the provider can't run the agent loop (subprocess
+      // CLI), or the agent attempt below was unsatisfactory and we fell back.
+      // Agent-off chats get no badge (classic is the only mode they expect).
+      let markClassic =
+        chatAgentEnabled &&
+        hasUsableLlm(llmConfig) &&
+        !!project &&
+        !providerSupportsToolAgent(llmConfig.provider)
+
+      // Agent-first: on a tool-calling provider, try the agent loop. If it
+      // comes back unsatisfactory (ran out of budget, empty text, or threw)
+      // we fall through to classic search below instead of committing a
+      // partial reply. A clean agent answer is committed and we return.
+      if (agentCapable) {
+        // Lock the input + wire abort. Agent mode doesn't stream tokens, but
+        // `isStreaming` also disables send + drives Stop. Same AbortController
+        // shape as classic streaming so handleStop is reused unchanged.
         const controller = new AbortController()
         abortRef.current = controller
         setStreaming(true)
+        let fallToClassic = false
         try {
           const searchApiConfig = useWikiStore.getState().searchApiConfig
           const outputLanguage = useWikiStore.getState().outputLanguage
@@ -723,51 +716,35 @@ export function ChatPanel() {
             signal: controller.signal,
             canWrite,
           })
-          addAssistantTurn(result.text || `_(${result.reason})_`, {
-            toolCalls: result.toolCalls,
-            fetchedSources: result.fetchedSources,
-          })
+          // "Unsatisfactory" per the agreed rule: ran out of budget
+          // (max_turns / max_tokens) or produced no substantive text → fall
+          // back to classic search rather than commit a partial/empty reply.
+          if (result.incomplete || result.text.trim().length === 0) {
+            fallToClassic = true
+          } else {
+            addAssistantTurn(result.text, {
+              toolCalls: result.toolCalls,
+              fetchedSources: result.fetchedSources,
+            })
+          }
         } catch (err) {
-          const detail = err instanceof Error ? err.message : String(err)
-          // AbortError from a user Stop click shouldn't read as a
-          // crash — the agent intentionally stopped. Anything else
-          // is a real failure worth surfacing.
+          // A user Stop click is intentional — surface "(stopped)" and bail.
+          // Any other error: fall back to classic rather than dead-ending on
+          // "Chat-agent failed".
           if (controller.signal.aborted) {
             addMessage("assistant", `_(stopped)_`)
           } else {
-            addMessage("assistant", `Chat-agent failed: ${detail}`)
+            fallToClassic = true
           }
         } finally {
-          setStreaming(false)
           if (abortRef.current === controller) abortRef.current = null
         }
-        return
-      }
-
-      // The agent flag is ON and we have a usable LLM + open project, but the
-      // active provider is a subprocess CLI (claude-code / codex-cli) with no
-      // tool-calling channel — so the agent block above was skipped and we're
-      // about to answer with classic retrieval. Without a word, the user just
-      // sees a normal RAG reply and assumes agent search ran (and failed).
-      // Surface the fallback ONCE per conversation+provider. System messages
-      // render as an inline notice and are excluded from LLM history (both
-      // paths filter to user/assistant), so this doesn't pollute the context.
-      if (
-        chatAgentEnabled &&
-        hasUsableLlm(llmConfig) &&
-        project &&
-        !providerSupportsToolAgent(llmConfig.provider)
-      ) {
-        const warnKey = `${convId}::${llmConfig.provider}`
-        if (!agentFallbackWarnedRef.current.has(warnKey)) {
-          agentFallbackWarnedRef.current.add(warnKey)
-          addMessage(
-            "system",
-            t("chat.agentUnavailableOnProvider", {
-              provider: friendlyProviderName(llmConfig.provider),
-            }),
-          )
+        if (!fallToClassic) {
+          setStreaming(false)
+          return
         }
+        // Fall through to the classic path below and badge its answer.
+        markClassic = true
       }
 
       setStreaming(true)
@@ -1059,7 +1036,7 @@ export function ChatPanel() {
           onReasoningToken: appendReasoning,
           onDone: () => {
             closeReasoning()
-            finalizeStream(accumulated, queryRefs)
+            finalizeStream(accumulated, queryRefs, markClassic ? { retrieval: "classic" } : undefined)
             abortRef.current = null
             // save-worthy detection removed — user has direct "Save to Wiki" button on each message
           },
