@@ -45,3 +45,25 @@ export function hasUsableLlm(
   if (PROVIDERS_WITHOUT_KEY.has(cfg.provider)) return true
   return (cfg.apiKey ?? "").trim().length > 0
 }
+
+/**
+ * Subprocess transports (`claude-code`, `codex-cli`) drive a local CLI
+ * as a plain text-completion engine — there is no function/tool-calling
+ * channel. The agent paths (chat-agent, agent-ingest, agent-lint-fix)
+ * all assume an LLM that can emit structured tool calls, so they CANNOT
+ * run on these providers.
+ *
+ * Callers gate on this to fall back to the classic (toolless) path
+ * instead of letting createAgentLlm() throw "doesn't support provider"
+ * in the user's face. The classic chat/ingest paths support these
+ * providers fine via streamChat.
+ */
+export const SUBPROCESS_PROVIDERS: ReadonlySet<LlmProvider> = new Set<LlmProvider>([
+  "claude-code",
+  "codex-cli",
+])
+
+/** True when the provider can run the tool-calling agent paths. */
+export function providerSupportsToolAgent(provider: LlmProvider): boolean {
+  return !SUBPROCESS_PROVIDERS.has(provider)
+}

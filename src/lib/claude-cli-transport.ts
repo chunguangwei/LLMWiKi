@@ -33,6 +33,9 @@ export function createClaudeCodeStreamParser() {
   // turn via `assistant` events so we can diff new content off the end
   // and only emit what wasn't already streamed.
   let emittedFromAssistant = ""
+  // Whether we've emitted ANY text this run (deltas or assistant). Drives
+  // the `result`-event fallback below.
+  let emittedAnything = false
 
   return function parseLine(rawLine: string): string | null {
     const line = rawLine.trim()
@@ -57,6 +60,7 @@ export function createClaudeCodeStreamParser() {
         const delta = event.delta as Record<string, unknown> | undefined
         if (delta?.type === "text_delta" && typeof delta.text === "string") {
           sawDelta = true
+          emittedAnything = true
           return delta.text
         }
       }
@@ -85,15 +89,34 @@ export function createClaudeCodeStreamParser() {
       if (text.startsWith(emittedFromAssistant)) {
         const novel = text.slice(emittedFromAssistant.length)
         emittedFromAssistant = text
+        if (novel) emittedAnything = true
         return novel || null
       }
       // Non-prefix change: cli sent something different than expected.
       // Reset tracker and emit the new text wholesale.
       emittedFromAssistant = text
+      emittedAnything = true
       return text
     }
 
-    // Ignore session init, tool_use, result summary, unknown types.
+    // Final result summary. Normally redundant with the assistant
+    // text we already streamed, so we skip it. But in environments
+    // where the assistant turn arrives empty or is dropped (observed
+    // when the CLI is spawned from the macOS GUI with a stripped env /
+    // a SessionStart hook reshaping the first turn), the `result`
+    // event still carries the authoritative final answer string. Use
+    // it as a last-resort fallback so the user gets the reply instead
+    // of a misleading "connected but returned empty content".
+    if (type === "result" && obj.subtype === "success" && !emittedAnything) {
+      const result = obj.result
+      if (typeof result === "string" && result.trim()) {
+        emittedAnything = true
+        return result
+      }
+      return null
+    }
+
+    // Ignore session init, tool_use, unknown types.
     return null
   }
 }

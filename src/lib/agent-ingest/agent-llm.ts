@@ -620,6 +620,21 @@ export function createAgentLlm(config: LlmConfig): AgentLlm {
   ) {
     return new OpenAiAgentLlm(config)
   }
+  // Subprocess CLIs (claude-code / codex-cli) drive a local binary as a
+  // plain text engine — there's no tool-calling channel, so the agent
+  // loop can't run on them. Give an actionable message instead of a
+  // generic "not supported" so the user knows the limitation is
+  // structural and how to work around it.
+  if (provider === "claude-code" || provider === "codex-cli") {
+    throw new Error(
+      `The "${provider}" provider runs a local CLI as a text-only engine ` +
+        "and can't do tool-calling, which the agent loop requires. " +
+        "For agent ingest / lint-fix, switch the active provider to " +
+        "Anthropic, OpenAI, Azure OpenAI, Ollama, MiniMax, or a Custom " +
+        "endpoint. (Regular chat and classic ingest still work with " +
+        `"${provider}".)`,
+    )
+  }
   throw new Error(
     `agent ingest doesn't support provider "${provider}" yet. ` +
       "Use Anthropic, OpenAI, Azure OpenAI, Ollama, MiniMax, or " +

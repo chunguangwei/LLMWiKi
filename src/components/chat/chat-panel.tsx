@@ -8,7 +8,7 @@ import { useChatStore, chatMessagesToLLM } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
 import { runChatAgent } from "@/lib/chat-agent"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { hasUsableLlm, providerSupportsToolAgent } from "@/lib/has-usable-llm"
 import { executeIngestWrites } from "@/lib/ingest"
 import { listDirectory, readFile } from "@/commands/fs"
 import { deleteChatConversation } from "@/lib/persist"
@@ -661,9 +661,18 @@ export function ChatPanel() {
       //   - flag is off (default)
       //   - no usable LLM (offline / unconfigured)
       //   - no project open
+      //   - provider is a subprocess CLI (claude-code / codex-cli) with
+      //     no tool-calling channel — the agent loop can't run on it, so
+      //     we fall back to classic streaming (which DOES support these
+      //     providers) instead of throwing "doesn't support provider".
       //   - agent loop throws — caller sees the error in the chat
       const chatAgentEnabled = useWikiStore.getState().experimentalChatAgent
-      if (chatAgentEnabled && hasUsableLlm(llmConfig) && project) {
+      if (
+        chatAgentEnabled &&
+        hasUsableLlm(llmConfig) &&
+        providerSupportsToolAgent(llmConfig.provider) &&
+        project
+      ) {
         // Lock the input + wire abort. Agent mode doesn't stream
         // tokens, but `isStreaming` is also what disables the send
         // button + drives the Stop control — without setting it the
