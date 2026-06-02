@@ -82,12 +82,46 @@ describe("createClaudeCodeStreamParser", () => {
     expect(parse(line)).toBe("Part one. Part two.")
   })
 
-  it("returns null for system init, result, tool_use, and unknown types", () => {
+  it("returns null for system init, tool_use, and unknown types", () => {
     const parse = createClaudeCodeStreamParser()
     expect(parse(JSON.stringify({ type: "system", subtype: "init" }))).toBeNull()
-    expect(parse(JSON.stringify({ type: "result", subtype: "success", result: "done" }))).toBeNull()
     expect(parse(JSON.stringify({ type: "tool_use", id: "x" }))).toBeNull()
     expect(parse(JSON.stringify({ type: "future_type_we_dont_know" }))).toBeNull()
+  })
+
+  it("skips the `result` event when assistant text was already emitted", () => {
+    // The normal case: result is redundant with the streamed answer,
+    // so emitting it would duplicate the whole reply.
+    const parse = createClaudeCodeStreamParser()
+    const asst = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Hello." }] },
+    })
+    expect(parse(asst)).toBe("Hello.")
+    expect(
+      parse(JSON.stringify({ type: "result", subtype: "success", result: "Hello." })),
+    ).toBeNull()
+  })
+
+  it("falls back to the `result` event when no assistant text arrived", () => {
+    // GUI-spawn / hook-reshaped runs where the assistant turn is empty
+    // or dropped: the result string is the only carrier of the answer.
+    // Without this fallback the user sees "connected but empty content".
+    const parse = createClaudeCodeStreamParser()
+    expect(parse(JSON.stringify({ type: "system", subtype: "init" }))).toBeNull()
+    expect(
+      parse(JSON.stringify({ type: "result", subtype: "success", result: "LLM_WIKI_TEST_OK" })),
+    ).toBe("LLM_WIKI_TEST_OK")
+  })
+
+  it("ignores an empty / error `result` event (no spurious emit)", () => {
+    const parse = createClaudeCodeStreamParser()
+    expect(
+      parse(JSON.stringify({ type: "result", subtype: "success", result: "   " })),
+    ).toBeNull()
+    expect(
+      parse(JSON.stringify({ type: "result", subtype: "error_max_turns", result: "x" })),
+    ).toBeNull()
   })
 
   it("returns null for malformed JSON or blank lines", () => {

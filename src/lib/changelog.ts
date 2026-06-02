@@ -26,6 +26,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.31",
+    date: "2026-06-02",
+    highlights: {
+      en: [
+        "Chat now works with the Claude Code CLI provider even when the \"Chat agent\" Labs flag is on. The agent loop needs function/tool-calling, which the CLI subprocess (a text-only engine) can't do — it used to hard-fail with \"agent ingest doesn't support provider claude-code\". Chat now detects subprocess providers (claude-code / codex-cli) and quietly falls back to classic streaming instead. Agent ingest / lint-fix still require a tool-calling provider and now say so clearly.",
+        "Claude Code CLI no longer falsely reports \"connected but returned empty content\". When the CLI is spawned from the macOS GUI, a stripped environment or a SessionStart hook can leave the streamed assistant turn empty; the parser now falls back to the authoritative final `result` string so the reply still comes through.",
+      ],
+      zh: [
+        "开了 Labs「Chat agent」开关时，用 Claude Code CLI 也能正常对话了。Agent 循环需要函数/工具调用，而 CLI 子进程是纯文本引擎做不到——以前会直接报「agent ingest doesn't support provider claude-code」。现在对话检测到子进程类 provider（claude-code / codex-cli）会自动回退到经典流式对话。Agent 摄取 / lint 修复仍需要支持工具调用的 provider，报错也说清楚了。",
+        "Claude Code CLI 不再误报「连上但返回空内容」。从 macOS 图形界面启动 CLI 时，精简环境或 SessionStart hook 可能让流式 assistant turn 为空；解析器现在会用权威的最终 `result` 字段兜底，回复照样能拿到。",
+      ],
+    },
+  },
+  {
     version: "0.4.30",
     date: "2026-06-02",
     highlights: {

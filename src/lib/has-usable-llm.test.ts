@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest"
 import {
   hasUsableLlm,
+  providerSupportsToolAgent,
   PROVIDERS_WITHOUT_KEY,
+  SUBPROCESS_PROVIDERS,
   type LlmProvider,
 } from "./has-usable-llm"
 
@@ -96,6 +98,27 @@ describe("hasUsableLlm", () => {
     expect(PROVIDERS_WITHOUT_KEY.has("google")).toBe(false)
     expect(PROVIDERS_WITHOUT_KEY.has("azure")).toBe(false)
     expect(PROVIDERS_WITHOUT_KEY.has("minimax")).toBe(false)
+  })
+
+  it("providerSupportsToolAgent is false only for subprocess CLIs", () => {
+    // Subprocess engines can't tool-call → agent paths must skip them.
+    expect(providerSupportsToolAgent("claude-code")).toBe(false)
+    expect(providerSupportsToolAgent("codex-cli")).toBe(false)
+    expect(SUBPROCESS_PROVIDERS.has("claude-code")).toBe(true)
+    expect(SUBPROCESS_PROVIDERS.has("codex-cli")).toBe(true)
+    // Everything else can run the agent loop.
+    for (const p of [
+      "openai",
+      "anthropic",
+      "google",
+      "azure",
+      "ollama",
+      "custom",
+      "minimax",
+    ] as const) {
+      expect(providerSupportsToolAgent(p)).toBe(true)
+      expect(SUBPROCESS_PROVIDERS.has(p)).toBe(false)
+    }
   })
 
   // Exhaustiveness guard. Every member of the LlmProvider union
