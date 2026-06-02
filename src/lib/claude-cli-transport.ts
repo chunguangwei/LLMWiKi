@@ -191,11 +191,28 @@ export async function streamClaudeCodeCli(
     unlistenDone?.()
   }
 
+  // The HTTP transport's contract is that the returned promise stays
+  // pending until streaming is fully done (onDone/onError fired). The
+  // subprocess `invoke("claude_cli_spawn")` call, however, resolves the
+  // moment the child is spawned — long before the model's tokens arrive
+  // over events. Awaiting only the spawn meant callers that read the
+  // accumulated text right after `await streamChat(...)` (the connection
+  // / function provider tests) always saw an empty string, while
+  // streaming chat — which consumes tokens via callbacks as they land —
+  // looked fine. We gate the returned promise on this completion latch
+  // so both paths honour the same "resolves when the stream ends"
+  // contract.
+  let resolveCompletion!: () => void
+  const completion = new Promise<void>((resolve) => {
+    resolveCompletion = resolve
+  })
+
   const finishWith = (cb: () => void) => {
     if (finished) return
     finished = true
     cleanup()
     cb()
+    resolveCompletion()
   }
 
   const abortListener = () => {
@@ -264,6 +281,10 @@ export async function streamClaudeCodeCli(
       messages,
     }
     await invoke("claude_cli_spawn", payload)
+    // Spawn succeeded — now wait for the stream to actually finish
+    // (onDone/onError via the :done event) before resolving, so callers
+    // that synchronously inspect accumulated text see the full reply.
+    await completion
   } catch (err) {
     finishWith(() => {
       const message = err instanceof Error ? err.message : String(err)

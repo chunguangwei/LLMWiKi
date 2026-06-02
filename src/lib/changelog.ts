@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.33",
+    date: "2026-06-02",
+    highlights: {
+      en: [
+        "Fixed the real cause of Claude Code CLI's \"connected but returned empty content\" on the connection / function provider tests. The subprocess transport resolved its promise the moment the CLI was spawned — before any model tokens arrived over events — so the test read an empty buffer every time, while streaming chat (which consumes tokens as they land) worked fine. The transport now waits for the stream to actually finish before resolving, matching the HTTP path and the Codex CLI transport. The connection / function tests pass with Claude Code now.",
+      ],
+      zh: [
+        "修复了 Claude Code CLI 在连接 / 功能测试里「connected but returned empty content」的真正根因。子进程传输层在 CLI 一启动就 resolve 了 promise——这时模型的 token 还没通过事件到达——所以测试每次读到的都是空缓冲;而对话(token 边到边消费)却正常。现在传输层会等流真正结束再 resolve,与 HTTP 路径和 Codex CLI 传输层一致。Claude Code 的连接 / 功能测试现在能通过了。",
+      ],
+    },
+  },
+  {
     version: "0.4.32",
     date: "2026-06-02",
     highlights: {
