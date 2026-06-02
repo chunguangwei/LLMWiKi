@@ -49,6 +49,22 @@ function formatDate(timestamp: number): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" })
 }
 
+/**
+ * Human-readable name for a provider id, used in the agent-fallback
+ * notice. Only the subprocess CLIs that can hit the fallback need a
+ * friendly label; anything else falls back to the raw id.
+ */
+function friendlyProviderName(provider: string): string {
+  switch (provider) {
+    case "claude-code":
+      return "Claude Code CLI"
+    case "codex-cli":
+      return "Codex CLI"
+    default:
+      return provider
+  }
+}
+
 function ConversationSidebar() {
   const { t } = useTranslation()
   const conversations = useChatStore((s) => s.conversations)
@@ -417,6 +433,10 @@ export function ChatPanel() {
   const setFileTree = useWikiStore((s) => s.setFileTree)
 
   const abortRef = useRef<AbortController | null>(null)
+  // Conversations we've already warned that the agent path is unavailable
+  // on the current provider. Keyed by `${convId}::${provider}` so switching
+  // provider re-warns, but we don't repeat the notice every message.
+  const agentFallbackWarnedRef = useRef<Set<string>>(new Set())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const dropTargetRef = useRef<HTMLDivElement>(null)
@@ -722,6 +742,32 @@ export function ChatPanel() {
           if (abortRef.current === controller) abortRef.current = null
         }
         return
+      }
+
+      // The agent flag is ON and we have a usable LLM + open project, but the
+      // active provider is a subprocess CLI (claude-code / codex-cli) with no
+      // tool-calling channel — so the agent block above was skipped and we're
+      // about to answer with classic retrieval. Without a word, the user just
+      // sees a normal RAG reply and assumes agent search ran (and failed).
+      // Surface the fallback ONCE per conversation+provider. System messages
+      // render as an inline notice and are excluded from LLM history (both
+      // paths filter to user/assistant), so this doesn't pollute the context.
+      if (
+        chatAgentEnabled &&
+        hasUsableLlm(llmConfig) &&
+        project &&
+        !providerSupportsToolAgent(llmConfig.provider)
+      ) {
+        const warnKey = `${convId}::${llmConfig.provider}`
+        if (!agentFallbackWarnedRef.current.has(warnKey)) {
+          agentFallbackWarnedRef.current.add(warnKey)
+          addMessage(
+            "system",
+            t("chat.agentUnavailableOnProvider", {
+              provider: friendlyProviderName(llmConfig.provider),
+            }),
+          )
+        }
       }
 
       setStreaming(true)

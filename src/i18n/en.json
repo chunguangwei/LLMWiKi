@@ -187,7 +187,8 @@
     "typeAMessage": "Type a message...",
     "renameConversation": "Rename conversation",
     "renamePlaceholder": "Conversation title",
-    "deleteConversationTooltip": "Delete conversation"
+    "deleteConversationTooltip": "Delete conversation",
+    "agentUnavailableOnProvider": "ℹ️ The \"{{provider}}\" provider can't run agent search — it's a subprocess CLI with no tool-calling channel — so this reply used classic retrieval instead. To search your wiki agentically (read pages, grep files, enumerate all mentions of something), switch to a tool-calling provider (e.g. Anthropic, OpenAI / Azure, MiniMax) in Settings → LLM."
   },
   "chatSearch": {
     "headerPrefix": "Search:",
