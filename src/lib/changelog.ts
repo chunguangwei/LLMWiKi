@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.34",
+    date: "2026-06-02",
+    highlights: {
+      en: [
+        "Chat agent (Labs) can now answer \"list every time I mention X\" questions over long pages. Its local-file search used to return only the FIRST hit per file, so for records that live in one long diary/notes page the agent could never enumerate them — it re-read the whole page and re-searched with synonyms until it ran out of turns and replied \"answer may be partial\". It now returns EVERY matching line (with line numbers) in a single search, so \"梳理我什么时候打过羽毛球\" and similar enumerations actually complete. Windows (CRLF) files now produce clean snippets too, and the agent's turn/token budget was raised so multi-step \"梳理/列举\" queries finish.",
+      ],
+      zh: [
+        "聊天 agent（Labs）现在能正确回答「梳理我所有提到 X 的地方」这类问题。此前它的本地文件搜索每个文件只返回「第一处」命中——对于记录都在同一个超长日记/笔记页里的情况，agent 根本列不全，只能反复读整页、换同义词重搜，直到耗光步数回一句「answer may be partial」。现在一次搜索就返回「每一处」匹配行（带行号），「梳理我什么时候打过羽毛球」之类的枚举能真正跑完。Windows（CRLF）文件的片段也不再残留乱码，agent 的步数 / token 预算也调高了，多步「梳理 / 列举」查询不再中途截断。",
+      ],
+    },
+  },
+  {
     version: "0.4.33",
     date: "2026-06-02",
     highlights: {
