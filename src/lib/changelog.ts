@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.35",
+    date: "2026-06-02",
+    highlights: {
+      en: [
+        "Chat now tells you when agent search isn't running. With the \"Chat agent\" Labs flag on but a subprocess-CLI provider selected (Claude Code CLI / Codex CLI), the agent loop can't run — those engines have no tool-calling channel — so chat quietly fell back to classic retrieval, and a normal reply looked like agent search had run and found nothing. Chat now shows a one-time inline notice explaining the fallback and pointing you to switch to a tool-calling provider (Anthropic, OpenAI / Azure, MiniMax) to enable agentic wiki search. The notice is UI-only and never enters the model's context.",
+      ],
+      zh: [
+        "聊天现在会告诉你 agent 搜索没在运行。当「Chat agent」Labs 开关开着、但选的是子进程 CLI provider（Claude Code CLI / Codex CLI）时，agent 循环无法运行——这类引擎没有工具调用通道——聊天会静默回退到经典检索，一条普通回复看起来就像 agent 搜过却什么都没找到。现在聊天会显示一条一次性内联提示，说明发生了回退，并指引你切换到支持工具调用的 provider（Anthropic、OpenAI / Azure、MiniMax）以启用对 wiki 的 agent 式搜索。该提示仅在界面显示，绝不进入模型上下文。",
+      ],
+    },
+  },
+  {
     version: "0.4.34",
     date: "2026-06-02",
     highlights: {
