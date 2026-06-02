@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.30",
+    date: "2026-06-02",
+    highlights: {
+      en: [
+        "Claude Code / Codex CLI detection now also looks in ~/.local/bin and other common install locations. macOS apps launched from Finder inherit a stripped-down PATH that misses non-shell installers, so users of the official native installer (`curl … | sh`) previously saw \"`claude` not found on PATH\" even though `which claude` worked in their terminal. Same fix applies to Codex.",
+      ],
+      zh: [
+        "Claude Code / Codex CLI 探测现在也会找 ~/.local/bin 等常见安装路径。macOS 从 Finder 启动的应用只继承一份精简 PATH，看不到非 shell 装的二进制，所以用官方原生安装器（`curl … | sh`）的人之前即便终端里 `which claude` 能找到，应用里也会报 \"`claude` not found on PATH\"。Codex 同样的问题一起修了。",
+      ],
+    },
+  },
+  {
     version: "0.4.29",
     date: "2026-06-01",
     highlights: {
