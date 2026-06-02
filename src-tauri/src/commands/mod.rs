@@ -1,4 +1,5 @@
 pub mod claude_cli;
+pub mod cli_finder;
 pub mod codex_cli;
 pub mod config_backup;
 pub mod config_crypto;

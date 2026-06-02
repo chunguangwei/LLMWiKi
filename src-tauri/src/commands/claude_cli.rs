@@ -54,17 +54,7 @@ pub struct ClaudeMessage {
 }
 
 fn find_claude_command() -> Result<PathBuf, String> {
-    #[cfg(windows)]
-    {
-        if let Ok(path) = which::which("claude.cmd") {
-            return Ok(path);
-        }
-        if let Ok(path) = which::which("claude.exe") {
-            return Ok(path);
-        }
-    }
-
-    which::which("claude").map_err(|_| "`claude` not found on PATH".to_string())
+    super::cli_finder::find_cli("claude")
 }
 
 /// Locate `claude` on PATH and confirm it's runnable by calling
