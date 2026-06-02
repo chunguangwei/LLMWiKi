@@ -52,17 +52,7 @@ fn append_capped_line(collected: &mut String, line: &str, limit_bytes: usize) {
 }
 
 fn find_codex_command() -> Result<PathBuf, String> {
-    #[cfg(windows)]
-    {
-        if let Ok(path) = which::which("codex.cmd") {
-            return Ok(path);
-        }
-        if let Ok(path) = which::which("codex.exe") {
-            return Ok(path);
-        }
-    }
-
-    which::which("codex").map_err(|_| "`codex` not found on PATH".to_string())
+    super::cli_finder::find_cli("codex")
 }
 
 fn suppress_windows_console(_cmd: &mut Command) {
