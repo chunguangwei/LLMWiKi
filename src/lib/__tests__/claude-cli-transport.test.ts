@@ -1,9 +1,49 @@
-import { describe, it, expect } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+
+const tauriMocks = vi.hoisted(() => {
+  const listeners: Record<string, (event: { payload: unknown }) => void> = {}
+  return {
+    invoke: vi.fn(async (_command: string, _payload?: unknown): Promise<unknown> => undefined),
+    listen: vi.fn(async (event: string, cb: (event: { payload: unknown }) => void) => {
+      listeners[event] = cb
+      return vi.fn(() => {
+        delete listeners[event]
+      })
+    }),
+    emit: (event: string, payload: unknown) => listeners[event]?.({ payload }),
+    reset: () => {
+      for (const event of Object.keys(listeners)) {
+        delete listeners[event]
+      }
+    },
+  }
+})
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: tauriMocks.invoke }))
+vi.mock("@tauri-apps/api/event", () => ({ listen: tauriMocks.listen }))
+
 import {
   createClaudeCodeStreamParser,
   buildExitError,
   buildEmptyError,
+  streamClaudeCodeCli,
 } from "../claude-cli-transport"
+import type { LlmConfig } from "@/stores/wiki-store"
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  tauriMocks.reset()
+  tauriMocks.invoke.mockResolvedValue(undefined)
+})
+
+const CLAUDE_CFG = {
+  provider: "claude-code",
+  apiKey: "",
+  model: "claude-opus-4-8",
+  ollamaUrl: "",
+  customEndpoint: "",
+  maxContextSize: 200000,
+} as unknown as LlmConfig
 
 describe("createClaudeCodeStreamParser", () => {
   it("emits text from a single stream_event text_delta", () => {
@@ -243,5 +283,76 @@ describe("buildEmptyError", () => {
     const msg = buildEmptyError("", "")
     expect(msg).not.toContain("stderr")
     expect(msg).not.toContain("captured stdout")
+  })
+})
+
+describe("streamClaudeCodeCli", () => {
+  it("does not resolve until the claude CLI done event arrives", async () => {
+    // Regression: the transport used to resolve the moment
+    // claude_cli_spawn returned (child spawned) — long before the
+    // model's tokens arrived over events. Callers that read the
+    // accumulated text right after `await streamChat(...)` (the
+    // connection / function provider tests) therefore always saw an
+    // empty string. The promise must stay pending until the :done
+    // event fires.
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    let settled = false
+    let resolveSpawn: (() => void) | undefined
+    tauriMocks.invoke.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveSpawn = resolve }),
+    )
+
+    const stream = streamClaudeCodeCli(
+      CLAUDE_CFG,
+      [{ role: "user", content: "Reply with one short word." }],
+      callbacks,
+    ).finally(() => { settled = true })
+
+    await vi.waitFor(() => expect(tauriMocks.invoke).toHaveBeenCalledTimes(1))
+    expect(tauriMocks.invoke).toHaveBeenCalledWith(
+      "claude_cli_spawn",
+      expect.objectContaining({ model: "claude-opus-4-8" }),
+    )
+
+    // Spawn resolves — the stream must STILL be pending.
+    resolveSpawn?.()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(settled).toBe(false)
+    expect(callbacks.onDone).not.toHaveBeenCalled()
+
+    // Tokens arrive, then the done event. Only now does it resolve.
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+    tauriMocks.emit(
+      `claude-cli:${payload.streamId}`,
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Connected." }] } }),
+    )
+    tauriMocks.emit(`claude-cli:${payload.streamId}:done`, { code: 0, stderr: "" })
+
+    await stream
+
+    expect(callbacks.onToken).toHaveBeenCalledWith("Connected.")
+    expect(callbacks.onDone).toHaveBeenCalledTimes(1)
+    expect(callbacks.onError).not.toHaveBeenCalled()
+  })
+
+  it("surfaces buildEmptyError when the CLI exits 0 with no text", async () => {
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    const stream = streamClaudeCodeCli(
+      CLAUDE_CFG,
+      [{ role: "user", content: "hi" }],
+      callbacks,
+    )
+    await vi.waitFor(() => expect(tauriMocks.invoke).toHaveBeenCalledTimes(1))
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+    // Only hook noise, no assistant text, then a clean exit.
+    tauriMocks.emit(
+      `claude-cli:${payload.streamId}`,
+      JSON.stringify({ type: "system", subtype: "hook_started" }),
+    )
+    tauriMocks.emit(`claude-cli:${payload.streamId}:done`, { code: 0, stderr: "" })
+    await stream
+    expect(callbacks.onDone).not.toHaveBeenCalled()
+    expect(callbacks.onError).toHaveBeenCalledTimes(1)
+    expect(callbacks.onError.mock.calls[0][0].message).toMatch(/no answer text/i)
   })
 })
