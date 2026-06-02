@@ -31,9 +31,11 @@ export const CHANGELOG: ChangelogEntry[] = [
     highlights: {
       en: [
         "Claude Code / Codex CLI detection now also looks in ~/.local/bin and other common install locations. macOS apps launched from Finder inherit a stripped-down PATH that misses non-shell installers, so users of the official native installer (`curl … | sh`) previously saw \"`claude` not found on PATH\" even though `which claude` worked in their terminal. Same fix applies to Codex.",
+        "Review buttons like \"Open in editor\" / \"打开编辑\" / \"Edit\" now actually open the page. The action-label matcher used exact equality against a short list (open / view / 打开 / 查看), so localized or padded LLM-generated labels silently no-op'd. Switched to prefix matching, same shape the Skip / 跳过 detector already uses.",
       ],
       zh: [
         "Claude Code / Codex CLI 探测现在也会找 ~/.local/bin 等常见安装路径。macOS 从 Finder 启动的应用只继承一份精简 PATH，看不到非 shell 装的二进制，所以用官方原生安装器（`curl … | sh`）的人之前即便终端里 `which claude` 能找到，应用里也会报 \"`claude` not found on PATH\"。Codex 同样的问题一起修了。",
+        "Review 里 \"打开编辑\" / \"Open in editor\" / \"Edit\" 按钮现在真的能打开页面了。原本动作标签用完全相等匹配一个短列表（open / view / 打开 / 查看），LLM 实际生成的本地化或带后缀变体会被静默丢掉。改成前缀匹配，跟 Skip / 跳过 的探测一致。",
       ],
     },
   },
