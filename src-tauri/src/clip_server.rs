@@ -42,7 +42,9 @@ pub fn all_projects() -> Vec<(String, String)> {
 
 pub fn start_clip_server() {
     thread::spawn(|| {
-        let mut restart_count: u32 = 0;
+        // First assignment is the reset-on-successful-bind below; declare without
+        // a dead initializer.
+        let mut restart_count: u32;
 
         loop {
             // Try to bind the port with retries
