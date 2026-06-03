@@ -23,6 +23,7 @@ interface ActivityState {
   items: ActivityItem[]
   addItem: (item: Omit<ActivityItem, "id" | "createdAt">) => string
   updateItem: (id: string, updates: Partial<Pick<ActivityItem, "status" | "detail" | "filesWritten">>) => void
+  removeItem: (id: string) => void
   appendDetail: (id: string, text: string) => void
   clearDone: () => void
   /**
@@ -55,6 +56,11 @@ export const useActivityStore = create<ActivityState>((set) => ({
       items: state.items.map((item) =>
         item.id === id ? { ...item, ...updates } : item
       ),
+    })),
+
+  removeItem: (id) =>
+    set((state) => ({
+      items: state.items.filter((item) => item.id !== id),
     })),
 
   appendDetail: (id, text) =>

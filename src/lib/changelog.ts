@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.38",
+    date: "2026-06-03",
+    highlights: {
+      en: [
+        "Fixed the ingest \"Resume\" button feeling like it did nothing. Resuming a long-source ingest runs as a fresh task, so the old errored row used to just sit there unchanged — making it look dead and tempting a second click, which queued a duplicate run. The clicked row now clears immediately as feedback, and if the same source is already resuming it won't queue a duplicate. (The resume itself was working — it does continue from the last saved chunk, not from the start — but there was no sign the click registered.)",
+      ],
+      zh: [
+        "修复导入「继续」按钮像是点了没反应的问题。续跑长文档导入会以一个新任务运行，所以原来那条报错行不会有任何变化——看起来像死了，让人忍不住再点一下，结果排了一个重复任务。现在点「继续」后那条行会立刻消失作为反馈；如果同一个文件已经在续跑，则不会再排重复任务。（续跑本身是正常工作的——确实从上次存好的那一块接着跑，而不是从头开始——只是之前没有任何迹象表明点击生效了。）",
+      ],
+    },
+  },
+  {
     version: "0.4.37",
     date: "2026-06-03",
     highlights: {

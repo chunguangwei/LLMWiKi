@@ -151,9 +151,31 @@ export function ActivityPanel() {
   // long-source checkpoint — so a job killed at chunk 18/937 continues
   // from 18, not from scratch. Safe for any errored ingest item: the
   // ingest cache + checkpoint make re-runs idempotent.
-  const handleActivityResume = useCallback((sourcePath: string) => {
+  //
+  // The resume runs as a FRESH queue task + activity item, so we drop the
+  // clicked error row right away: that's the immediate feedback (the row
+  // would otherwise just sit there looking dead), and it stops a second
+  // click from spawning a duplicate "pending re-run" behind the one that's
+  // already processing. If the same source is already queued/processing we
+  // skip the enqueue entirely and just clear the stale error row.
+  const handleActivityResume = useCallback((itemId: string, sourcePath: string) => {
     if (!project) return
+    const activity = useActivityStore.getState()
+    const fileName = getFileName(sourcePath)
+    const alreadyActive = getQueue().some(
+      (t) => (t.status === "processing" || t.status === "pending") && getFileName(t.sourcePath) === fileName,
+    )
+    if (alreadyActive) {
+      activity.removeItem(itemId)
+      return
+    }
     void enqueueSourceIngest(project, [sourcePath], useWikiStore.getState().llmConfig)
+      .then((ids) => {
+        // Only drop the error row if we actually queued something. An empty
+        // result means nothing ran (no usable LLM / not ingestable) — keep
+        // the row so the failure stays visible.
+        if (ids.length > 0) activity.removeItem(itemId)
+      })
       .catch((err) => console.error("[activity-panel] resume ingest failed:", err))
   }, [project])
 
@@ -503,7 +525,7 @@ function FileSyncRow({ task, onRetry, onIgnore }: { task: FileChangeTask; onRetr
   )
 }
 
-function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCancel?: () => void; onResume?: (sourcePath: string) => void }) {
+function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCancel?: () => void; onResume?: (itemId: string, sourcePath: string) => void }) {
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const project = useWikiStore((s) => s.project)
   const { t } = useTranslation()
@@ -544,7 +566,7 @@ function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCance
         )}
         {canResume && (
           <button
-            onClick={() => onResume!(item.sourcePath!)}
+            onClick={() => onResume!(item.id, item.sourcePath!)}
             className="shrink-0 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
             title={t("activity.resumeTitle")}
           >
