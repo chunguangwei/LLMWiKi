@@ -8,6 +8,15 @@ export interface ActivityItem {
   detail: string
   filesWritten: string[]
   createdAt: number
+  /**
+   * Absolute path of the source file this activity ingested, when known.
+   * Set for classic source-ingest items so an interrupted/errored run can
+   * offer a one-click "Resume" — re-enqueueing the same path transparently
+   * resumes from the long-source checkpoint (see ingest.ts). Persisted
+   * across reloads, so resume survives the webview teardown that caused
+   * the interruption in the first place. Absent for lint/query items.
+   */
+  sourcePath?: string
 }
 
 interface ActivityState {

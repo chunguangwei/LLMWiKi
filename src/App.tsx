@@ -69,6 +69,18 @@ function App() {
       const isMeta = e.metaKey || e.ctrlKey
       if (isMeta && (e.key === "r" || e.key === "R")) {
         e.preventDefault()
+        // A reload tears down the webview and kills any in-flight task
+        // (ingest, lint, query) — those run as frontend JS, not a
+        // background process. A long-source ingest can be hundreds of
+        // sequential LLM calls; an accidental Cmd/Ctrl+R would wipe it.
+        // Guard the keystroke when something is running so the user has
+        // to confirm. (Progress is checkpointed, so a confirmed reload
+        // is recoverable via the activity panel's Resume — but the
+        // confirm stops the *accidental* case, which is the common one.)
+        const running = useActivityStore.getState().items.some((i) => i.status === "running")
+        if (running && !window.confirm(i18n.t("activity.reloadWhileRunningConfirm"))) {
+          return
+        }
         window.location.reload()
       }
     }

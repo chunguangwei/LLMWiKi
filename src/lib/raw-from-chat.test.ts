@@ -44,6 +44,7 @@ import {
   buildContextBlock,
   contextSidecarPath,
   readSourceWithSidecar,
+  isImageSourcePath,
   CHAT_CONTEXT_MARKER,
 } from "./raw-from-chat"
 import { enqueueSourceIngest } from "@/lib/source-lifecycle"
@@ -56,6 +57,22 @@ beforeEach(() => {
   dirs.clear()
   fetchAndExtractMock.mockReset()
   vi.clearAllMocks()
+})
+
+describe("isImageSourcePath", () => {
+  it("routes common + modern image formats to the vision path", () => {
+    for (const ext of ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg", "avif", "heic", "heif", "jfif"]) {
+      expect(isImageSourcePath(`/x/photo.${ext}`)).toBe(true)
+      expect(isImageSourcePath(`/x/photo.${ext.toUpperCase()}`)).toBe(true)  // case-insensitive
+    }
+  })
+
+  it("does NOT treat documents as images", () => {
+    for (const ext of ["epub", "pdf", "docx", "md", "txt", "json"]) {
+      expect(isImageSourcePath(`/x/doc.${ext}`)).toBe(false)
+    }
+    expect(isImageSourcePath("/x/noext")).toBe(false)
+  })
 })
 
 describe("buildContextBlock", () => {

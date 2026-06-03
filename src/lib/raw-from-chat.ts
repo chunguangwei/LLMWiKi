@@ -829,6 +829,20 @@ export async function addImagesToRawWithContext(
 }
 
 /**
+ * Image extensions routed through the vision-extraction path
+ * (addImagesToRawWithContext) instead of the text-ingest pipeline.
+ * Single source of truth for both `isImageSourcePath` below and the
+ * file-picker filters in sources-view. heic/avif/heif/jfif are common
+ * phone/modern formats; whether vision succeeds depends on the webview
+ * being able to decode them to JPEG (WKWebView on macOS handles heic;
+ * WebView2 on Windows does not — the user gets a vision error there).
+ */
+export const IMAGE_SOURCE_EXTENSIONS = [
+  "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff",
+  "svg", "avif", "heic", "heif", "jfif",
+] as const
+
+/**
  * Cheap test: does a file path look like an image we should route
  * through addImagesToRawWithContext rather than addFilesToRawWithContext?
  * Matches by extension only — same set the Rust read_file_as_base64
@@ -839,5 +853,5 @@ export function isImageSourcePath(path: string): boolean {
   const dot = name.lastIndexOf(".")
   if (dot < 0) return false
   const ext = name.slice(dot + 1)
-  return ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg"].includes(ext)
+  return (IMAGE_SOURCE_EXTENSIONS as readonly string[]).includes(ext)
 }

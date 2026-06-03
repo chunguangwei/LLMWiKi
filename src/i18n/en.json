@@ -777,7 +777,10 @@
   "activity": {
     "processing": "Processing: {{title}}",
     "done": "Done: {{title}}",
-    "clearCompleted": "Clear completed"
+    "clearCompleted": "Clear completed",
+    "resume": "Resume",
+    "resumeTitle": "Resume this ingest — continues from the last saved checkpoint",
+    "reloadWhileRunningConfirm": "A task is still running. Reloading will interrupt it (you can resume from the activity panel afterward). Reload anyway?"
   },
   "fileTree": {
     "noProject": "No project open"

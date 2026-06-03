@@ -24,6 +24,8 @@ import {
   type FileChangeTask,
 } from "@/commands/file-sync"
 import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
+import { enqueueSourceIngest } from "@/lib/source-lifecycle"
+import { useTranslation } from "react-i18next"
 
 const FILE_TYPE_ICONS: Record<string, typeof FileText> = {
   sources: BookOpen,
@@ -142,6 +144,17 @@ export function ActivityPanel() {
   const handleIngestCancel = useCallback((taskId: string) => {
     if (!project) return
     cancelTask(taskId)
+  }, [project])
+
+  // Resume an interrupted/errored ingest. Re-enqueueing the source path
+  // routes back through autoIngest, which transparently picks up the
+  // long-source checkpoint — so a job killed at chunk 18/937 continues
+  // from 18, not from scratch. Safe for any errored ingest item: the
+  // ingest cache + checkpoint make re-runs idempotent.
+  const handleActivityResume = useCallback((sourcePath: string) => {
+    if (!project) return
+    void enqueueSourceIngest(project, [sourcePath], useWikiStore.getState().llmConfig)
+      .catch((err) => console.error("[activity-panel] resume ingest failed:", err))
   }, [project])
 
   const handleCancelAll = useCallback(() => {
@@ -379,6 +392,7 @@ export function ActivityPanel() {
                 key={item.id}
                 item={item}
                 onCancel={matchingTask ? () => handleIngestCancel(matchingTask.id) : undefined}
+                onResume={handleActivityResume}
               />
             )
           })}
@@ -489,9 +503,14 @@ function FileSyncRow({ task, onRetry, onIgnore }: { task: FileChangeTask; onRetr
   )
 }
 
-function ActivityRow({ item, onCancel }: { item: ActivityItem; onCancel?: () => void }) {
+function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCancel?: () => void; onResume?: (sourcePath: string) => void }) {
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const project = useWikiStore((s) => s.project)
+  const { t } = useTranslation()
+  // Offer "Resume" only for errored ingest items that still know their
+  // source path. Re-ingest is idempotent (cache + checkpoint), so this
+  // covers both the "interrupted by reload" case and any mid-run failure.
+  const canResume = item.status === "error" && !!item.sourcePath && !!onResume
 
   function handleFileClick(filePath: string) {
     if (!project) return
@@ -521,6 +540,16 @@ function ActivityRow({ item, onCancel }: { item: ActivityItem; onCancel?: () => 
             title="Cancel"
           >
             <X className="h-3 w-3" />
+          </button>
+        )}
+        {canResume && (
+          <button
+            onClick={() => onResume!(item.sourcePath!)}
+            className="shrink-0 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
+            title={t("activity.resumeTitle")}
+          >
+            <RotateCcw className="h-3 w-3" />
+            {t("activity.resume")}
           </button>
         )}
       </div>

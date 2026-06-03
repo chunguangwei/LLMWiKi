@@ -53,4 +53,16 @@ describe("hydrateActivityItems", () => {
       "line with trailing newline\n⚠️ Interrupted by app reload — original task did not complete.",
     )
   })
+
+  it("preserves sourcePath when flipping a reload-killed ingest to error", () => {
+    // Resume from the activity panel re-enqueues item.sourcePath. The
+    // interruption that needs resuming is exactly a webview reload, so
+    // sourcePath MUST survive the running→error hydration that runs at
+    // startup — otherwise the Resume button has nothing to act on.
+    const out = hydrateActivityItems([
+      item({ status: "running", detail: "Analyzing long source chunk 18/937...", sourcePath: "/abs/book.epub" }),
+    ])
+    expect(out[0].status).toBe("error")
+    expect(out[0].sourcePath).toBe("/abs/book.epub")
+  })
 })

@@ -777,7 +777,10 @@
   "activity": {
     "processing": "处理中：{{title}}",
     "done": "已完成：{{title}}",
-    "clearCompleted": "清除已完成"
+    "clearCompleted": "清除已完成",
+    "resume": "继续",
+    "resumeTitle": "继续这次导入——从上次保存的检查点接着跑",
+    "reloadWhileRunningConfirm": "有任务正在运行。重新加载会中断它（之后可在活动面板里点「继续」恢复）。仍要重新加载吗？"
   },
   "fileTree": {
     "noProject": "未打开项目"

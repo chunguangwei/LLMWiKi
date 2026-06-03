@@ -19,7 +19,7 @@ import {
   importSourceFolder,
   isIngestableSourcePath,
 } from "@/lib/source-lifecycle"
-import { addImagesToRawWithContext } from "@/lib/raw-from-chat"
+import { addImagesToRawWithContext, isImageSourcePath, IMAGE_SOURCE_EXTENSIONS } from "@/lib/raw-from-chat"
 import { runAgentIngest } from "@/lib/agent-ingest"
 import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore } from "@/stores/review-store"
@@ -103,6 +103,32 @@ export function SourcesView() {
     }
   }
 
+  // Surface the "your model can't see images" case so a routed image
+  // doesn't silently produce an empty .md. Shared by the main Import
+  // button and the dedicated Import-images button.
+  function notifyVisionRefusals(
+    result: { visionRefusals: number; usedDedicatedVisionLlm: boolean; attemptedVisionModel: string },
+    totalImages: number,
+  ) {
+    if (result.visionRefusals <= 0) return
+    const where = result.usedDedicatedVisionLlm
+      ? t("sources.visionRefusedDedicated", {
+          defaultValue:
+            "The vision model configured in Settings → Multimodal ({{model}}) doesn't appear to support image input.",
+          model: result.attemptedVisionModel,
+        })
+      : t("sources.visionRefusedMainLlm", {
+          defaultValue:
+            "The current chat LLM ({{model}}) is text-only — it can't process images.",
+          model: result.attemptedVisionModel,
+        })
+    const fix = t("sources.visionRefusedFix", {
+      defaultValue:
+        "Open Settings → Multimodal and configure a vision-capable model (Gemini 2.5 Flash / Claude Haiku / GPT-4o), then re-ingest the images.",
+    })
+    window.alert(`${where}\n\n${fix}\n\n(${result.visionRefusals}/${totalImages} images affected)`)
+  }
+
   async function handleImport() {
     if (!project) return
 
@@ -132,7 +158,7 @@ export function SourcesView() {
         },
         {
           name: "Images",
-          extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff", "avif", "heic"],
+          extensions: [...IMAGE_SOURCE_EXTENSIONS],
         },
         {
           name: "Media",
@@ -146,8 +172,26 @@ export function SourcesView() {
 
     setImporting(true)
     const paths = Array.isArray(selected) ? selected : [selected]
+    // Images can't go through the text-ingest pipeline (their extensions
+    // aren't in INGESTABLE_SOURCE_EXTENSIONS). Route them to the vision
+    // path instead of silently dropping them — picking an image from the
+    // main Import button now "just works" the same as the dedicated
+    // Import-images button or chat drag-drop.
+    const imagePaths = paths.filter(isImageSourcePath)
+    const docPaths = paths.filter((p) => !isImageSourcePath(p))
     try {
-      await importSourceFiles(project, paths, llmConfig)
+      if (docPaths.length > 0) {
+        await importSourceFiles(project, docPaths, llmConfig)
+      }
+      if (imagePaths.length > 0) {
+        const result = await addImagesToRawWithContext(
+          project,
+          imagePaths.map((p) => ({ sourcePath: p })),
+          "",
+          llmConfig,
+        )
+        notifyVisionRefusals(result, imagePaths.length)
+      }
       await loadSources()
     } finally {
       setImporting(false)
@@ -189,7 +233,7 @@ export function SourcesView() {
       filters: [
         {
           name: "Images",
-          extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg"],
+          extensions: [...IMAGE_SOURCE_EXTENSIONS],
         },
       ],
     })
@@ -203,26 +247,7 @@ export function SourcesView() {
         "",
         llmConfig,
       )
-      if (result.visionRefusals > 0) {
-        const where = result.usedDedicatedVisionLlm
-          ? t("sources.visionRefusedDedicated", {
-              defaultValue:
-                "The vision model configured in Settings → Multimodal ({{model}}) doesn't appear to support image input.",
-              model: result.attemptedVisionModel,
-            })
-          : t("sources.visionRefusedMainLlm", {
-              defaultValue:
-                "The current chat LLM ({{model}}) is text-only — it can't process images.",
-              model: result.attemptedVisionModel,
-            })
-        const fix = t("sources.visionRefusedFix", {
-          defaultValue:
-            "Open Settings → Multimodal and configure a vision-capable model (Gemini 2.5 Flash / Claude Haiku / GPT-4o), then re-ingest the images.",
-        })
-        window.alert(
-          `${where}\n\n${fix}\n\n(${result.visionRefusals}/${paths.length} images affected)`,
-        )
-      }
+      notifyVisionRefusals(result, paths.length)
       await loadSources()
     } catch (err) {
       console.error("Failed to import images:", err)

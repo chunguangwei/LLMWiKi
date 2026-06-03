@@ -328,6 +328,10 @@ async function autoIngestImpl(
     status: "running",
     detail: "Reading source...",
     filesWritten: [],
+    // Carry the source path so an interrupted long-source run (webview
+    // reload mid-ingest) can offer a one-click resume from the activity
+    // panel — re-enqueueing this path picks up the checkpoint.
+    sourcePath: sp,
   })
 
   const [sourceContent, schema, purpose, index, overview] = await Promise.all([
