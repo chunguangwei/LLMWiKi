@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.39",
+    date: "2026-06-03",
+    highlights: {
+      en: [
+        "Fixed EPUB text extraction mangling non-English books. The extractor walked the chapter HTML byte-by-byte and cast each byte to a character, which turned every multi-byte character (Chinese, Japanese, Korean, Cyrillic, accented Latin) into Latin-1 garbage — and roughly tripled the text length, so a Chinese ebook ballooned into hundreds of junk chunks that the model couldn't make sense of (and that could stall ingest near 0%). EPUB text is now read as proper UTF-8: a Chinese book imports as real, readable text at its true length. (ASCII-only EPUBs were unaffected; re-import any non-English EPUB to get clean content.)",
+      ],
+      zh: [
+        "修复 EPUB 文本抽取把非英文书弄成乱码的问题。抽取器逐字节遍历章节 HTML、把每个字节直接当成一个字符，于是所有多字节字符（中文、日文、韩文、西里尔、带重音的拉丁字母）都被毁成 Latin-1 乱码——而且文本长度大约翻了三倍，一本中文电子书因此膨胀成几百块垃圾内容，模型根本读不懂（还可能让导入卡在 0% 附近）。现在 EPUB 文本按正确的 UTF-8 读取：中文书会以真实、可读的文本、真实的长度导入。（纯英文 EPUB 不受影响；非英文 EPUB 请重新导入一次以获得干净内容。）",
+      ],
+    },
+  },
+  {
     version: "0.4.38",
     date: "2026-06-03",
     highlights: {

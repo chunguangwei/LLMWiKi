@@ -876,47 +876,77 @@ fn xhtml_to_plain_text(html: &str) -> String {
 
     // Phase 2: walk byte-by-byte, emitting text + newlines on block tags
     const BLOCK_TAGS: &[&str] = &[
-        "p", "br", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "ul",
-        "ol", "tr", "td", "th", "blockquote", "hr", "section", "article",
-        "header", "footer", "nav", "figure", "figcaption", "pre",
+        "p",
+        "br",
+        "div",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "li",
+        "ul",
+        "ol",
+        "tr",
+        "td",
+        "th",
+        "blockquote",
+        "hr",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "nav",
+        "figure",
+        "figcaption",
+        "pre",
     ];
-    let bytes = cleaned.as_bytes();
+    // Iterate by char (NOT by byte): a byte-indexed `bytes[i] as char`
+    // walk casts the continuation bytes of any multi-byte UTF-8 char
+    // (CJK, Cyrillic, accented Latin, …) into Latin-1 mojibake, which for
+    // a Chinese ebook turns the whole text into garbage AND roughly
+    // triples its length. char iteration keeps Unicode intact.
     let mut out = String::with_capacity(cleaned.len());
-    let mut i = 0;
     let mut last_was_space = false;
-    while i < bytes.len() {
-        if bytes[i] == b'<' {
-            // Find tag end
-            let rest = &bytes[i..];
-            let end = match rest.iter().position(|&b| b == b'>') {
-                Some(e) => e,
-                None => break,
-            };
-            // Tag name (without leading "/", lowercased, stop at space or />)
-            let inner = &cleaned[i + 1..i + end];
-            let name_end = inner
-                .find(|c: char| c.is_whitespace() || c == '/')
-                .unwrap_or(inner.len());
-            let raw_name = inner[..name_end].trim_start_matches('/');
-            let name_lower = raw_name.to_ascii_lowercase();
-            if BLOCK_TAGS.contains(&name_lower.as_str()) && !out.ends_with('\n') && !out.is_empty() {
+    let mut chars = cleaned.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '<' {
+            // Consume up to the matching '>', collecting the tag's inner text.
+            let mut inner = String::new();
+            let mut closed = false;
+            for tc in chars.by_ref() {
+                if tc == '>' {
+                    closed = true;
+                    break;
+                }
+                inner.push(tc);
+            }
+            if !closed {
+                break; // unterminated tag — drop the trailing junk
+            }
+            // Tag name: drop a leading "/", lowercase, stop at space or "/".
+            let raw = inner.trim_start();
+            let raw = raw.strip_prefix('/').unwrap_or(raw);
+            let name_end = raw
+                .find(|ch: char| ch.is_whitespace() || ch == '/')
+                .unwrap_or(raw.len());
+            let name_lower = raw[..name_end].to_ascii_lowercase();
+            if BLOCK_TAGS.contains(&name_lower.as_str()) && !out.ends_with('\n') && !out.is_empty()
+            {
                 out.push('\n');
                 last_was_space = true;
             }
-            i += end + 1;
             continue;
         }
-        let c = bytes[i] as char;
         if c.is_whitespace() {
             if !last_was_space && !out.is_empty() && !out.ends_with('\n') {
                 out.push(' ');
                 last_was_space = true;
             }
-            i += 1;
         } else {
             out.push(c);
             last_was_space = false;
-            i += 1;
         }
     }
 
@@ -961,47 +991,52 @@ fn strip_html_blocks(html: &str, tags: &[&str]) -> String {
 /// Not exhaustive — covers everything the ingest LLM actually cares about.
 fn decode_html_entities(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'&' {
-            if let Some(end) = s[i..].find(';') {
-                let entity = &s[i + 1..i + end];
-                let decoded = match entity {
-                    "amp" => Some("&".to_string()),
-                    "lt" => Some("<".to_string()),
-                    "gt" => Some(">".to_string()),
-                    "quot" => Some("\"".to_string()),
-                    "apos" => Some("'".to_string()),
-                    "nbsp" => Some(" ".to_string()),
-                    "mdash" => Some("—".to_string()),
-                    "ndash" => Some("–".to_string()),
-                    "hellip" => Some("…".to_string()),
-                    "lsquo" => Some("‘".to_string()),
-                    "rsquo" => Some("’".to_string()),
-                    "ldquo" => Some("“".to_string()),
-                    "rdquo" => Some("”".to_string()),
-                    e if e.starts_with("#x") || e.starts_with("#X") => {
-                        u32::from_str_radix(&e[2..], 16)
-                            .ok()
-                            .and_then(char::from_u32)
-                            .map(|c| c.to_string())
-                    }
-                    e if e.starts_with('#') => {
-                        e[1..].parse::<u32>().ok().and_then(char::from_u32).map(|c| c.to_string())
-                    }
-                    _ => None,
-                };
-                if let Some(text) = decoded {
-                    out.push_str(&text);
-                    i += end + 1;
-                    continue;
-                }
+    // Slice-walk on '&'/';' (both ASCII, so byte offsets from `find` are
+    // always char boundaries) rather than `bytes[i] as char`, which would
+    // mangle every multi-byte UTF-8 char between entities.
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let after = &rest[amp..]; // starts with '&'
+        if let Some(end) = after.find(';') {
+            let entity = &after[1..end];
+            let decoded = match entity {
+                "amp" => Some("&".to_string()),
+                "lt" => Some("<".to_string()),
+                "gt" => Some(">".to_string()),
+                "quot" => Some("\"".to_string()),
+                "apos" => Some("'".to_string()),
+                "nbsp" => Some(" ".to_string()),
+                "mdash" => Some("—".to_string()),
+                "ndash" => Some("–".to_string()),
+                "hellip" => Some("…".to_string()),
+                "lsquo" => Some("‘".to_string()),
+                "rsquo" => Some("’".to_string()),
+                "ldquo" => Some("“".to_string()),
+                "rdquo" => Some("”".to_string()),
+                e if e.starts_with("#x") || e.starts_with("#X") => u32::from_str_radix(&e[2..], 16)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .map(|c| c.to_string()),
+                e if e.starts_with('#') => e[1..]
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(char::from_u32)
+                    .map(|c| c.to_string()),
+                _ => None,
+            };
+            if let Some(text) = decoded {
+                out.push_str(&text);
+                rest = &after[end + 1..];
+                continue;
             }
         }
-        out.push(bytes[i] as char);
-        i += 1;
+        // Bare '&' or an unrecognized entity: emit the '&' and resume scanning
+        // right after it (the entity text, if any, is copied on the next pass).
+        out.push('&');
+        rest = &after[1..];
     }
+    out.push_str(rest);
     out
 }
 
@@ -1717,6 +1752,49 @@ pub async fn get_file_md5(path: String) -> Result<String, String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    // Regression: epub text extraction must preserve multi-byte UTF-8.
+    // The old byte-indexed `bytes[i] as char` walk turned CJK/accented
+    // text into Latin-1 mojibake (and ~tripled its length), which is why
+    // a Chinese ebook "couldn't be parsed into content".
+    #[test]
+    fn xhtml_to_plain_text_preserves_cjk() {
+        let html = "<p>资治通鉴</p><p>司马光 著</p>";
+        let out = xhtml_to_plain_text(html);
+        assert!(out.contains("资治通鉴"), "CJK mangled: {out:?}");
+        assert!(out.contains("司马光 著"), "CJK mangled: {out:?}");
+        // No stray Latin-1 control/letters from mis-decoded lead bytes.
+        assert!(!out.contains('\u{00e8}') && !out.contains('\u{00bd}'), "mojibake present: {out:?}");
+    }
+
+    #[test]
+    fn xhtml_block_tags_insert_newlines_without_corruption() {
+        // Block tags become newlines; inline tags vanish; text intact.
+        let out = xhtml_to_plain_text("<h1>第一章</h1><div>内容<b>很重要</b>。</div>");
+        assert!(out.contains("第一章"));
+        assert!(out.contains("内容很重要。"));
+        assert!(out.contains('\n'));
+    }
+
+    #[test]
+    fn decode_html_entities_keeps_cjk_and_decodes_named() {
+        // Entities decode; surrounding CJK survives untouched.
+        let out = decode_html_entities("张三&amp;李四 说&ldquo;你好&rdquo;");
+        assert_eq!(out, "张三&李四 说“你好”");
+    }
+
+    #[test]
+    fn decode_html_entities_handles_bare_ampersand() {
+        let out = decode_html_entities("A & 中文 & B");
+        assert_eq!(out, "A & 中文 & B");
+    }
+
+    #[test]
+    fn decode_numeric_entities() {
+        // Decimal + hex numeric refs (a CJK codepoint and an em dash).
+        assert_eq!(decode_html_entities("&#36164;&#x6CBB;"), "资治");
+        assert_eq!(decode_html_entities("a&#8212;b"), "a—b");
+    }
 
     /// Write `bytes` to a fresh tmp path with `.pdf` suffix and return
     /// the path (the OS tmpdir is NOT cleaned up — acceptable for tests).
