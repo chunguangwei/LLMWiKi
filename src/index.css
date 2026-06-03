@@ -151,3 +151,17 @@
 .legend-scroll::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* In-page find (Cmd/Ctrl+F). Highlights are painted via the CSS Custom
+   Highlight API, which colors text Ranges WITHOUT inserting any DOM nodes
+   — so the same code highlights the read-mode markdown and the Milkdown
+   contentEditable without corrupting ProseMirror's document model. Forced
+   dark text keeps matches legible on the amber fill in both themes. */
+::highlight(find-in-page) {
+  background-color: oklch(0.88 0.17 95);
+  color: oklch(0.2 0 0);
+}
+::highlight(find-in-page-current) {
+  background-color: oklch(0.78 0.19 60);
+  color: oklch(0.18 0 0);
+}

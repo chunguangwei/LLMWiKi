@@ -30,10 +30,12 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-06-03",
     highlights: {
       en: [
+        "Find in page (Cmd/Ctrl+F). With a wiki page open, press Cmd/Ctrl+F to search the current page — matches are highlighted in place, Enter / Shift+Enter jump to the next / previous hit (with a live count), and Esc closes the bar. Works in both read and edit mode, including Chinese/CJK text.",
         "Long-document ingest no longer loses progress to a reload. A big source (e.g. a full e-book split into hundreds of chunks) is analyzed chunk-by-chunk with a checkpoint saved after each one. If the app reloads mid-run — most often an accidental Cmd/Ctrl+R — the activity panel now shows a \"Resume\" button that continues from the last saved chunk instead of starting over. Cmd/Ctrl+R also asks for confirmation while any task is still running, so the accidental case stops happening in the first place.",
         "You can now import images straight from the main Import button (and the picker accepts more formats — heic, avif, heif). Previously, picking an image from the main Import dialog silently dropped it; images now route to the vision-extraction path automatically, the same as the dedicated Import-images button. (Heic/avif decode depends on the OS webview — macOS handles heic, Windows currently does not and will show a vision error.)",
       ],
       zh: [
+        "页内查找（Cmd/Ctrl+F）。打开一个 wiki 页面后，按 Cmd/Ctrl+F 即可在当前页查找——命中处会就地高亮，Enter / Shift+Enter 跳到下一处 / 上一处（带实时计数），Esc 关闭。阅读和编辑模式都支持，也支持中文/CJK 文本。",
         "长文档导入不再因为重新加载就丢进度。一个大文件（比如一整本电子书被切成几百块）会逐块分析，每块跑完都会存一个检查点。如果应用在中途重新加载——最常见的是误按 Cmd/Ctrl+R——活动面板现在会显示一个「继续」按钮，从上次存好的那一块接着跑，而不是从头再来。另外，只要还有任务在运行，Cmd/Ctrl+R 会先弹确认，从源头上避免误触。",
         "现在可以直接用主「导入」按钮导入图片（picker 也支持了更多格式——heic、avif、heif）。此前从主导入对话框选图片会被静默丢弃；现在图片会自动走 vision 抽取路径，和专门的「导入图片」按钮一样。（heic/avif 能否解码取决于系统 webview——macOS 支持 heic，Windows 目前不支持，会提示 vision 错误。）",
       ],

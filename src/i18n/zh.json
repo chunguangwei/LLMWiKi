@@ -770,6 +770,12 @@
     "selectFile": "选择文件以预览",
     "notAvailable": "该文件类型暂不支持预览"
   },
+  "find": {
+    "placeholder": "在本页查找",
+    "previous": "上一处（Shift+Enter）",
+    "next": "下一处（Enter）",
+    "close": "关闭（Esc）"
+  },
   "frontmatter": {
     "changeType": "修改页面类型 —— 会同步更新左侧分组",
     "typeUnset": "设置类型…"

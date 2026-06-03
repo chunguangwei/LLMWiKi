@@ -770,6 +770,12 @@
     "selectFile": "Select a file to preview",
     "notAvailable": "Preview not available for this file type"
   },
+  "find": {
+    "placeholder": "Find in page",
+    "previous": "Previous match (Shift+Enter)",
+    "next": "Next match (Enter)",
+    "close": "Close (Esc)"
+  },
   "frontmatter": {
     "changeType": "Change page type — updates the left sidebar group",
     "typeUnset": "Set type…"

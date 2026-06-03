@@ -9,6 +9,7 @@ import { recategorizeIndexEntry } from "@/lib/index-recategorize"
 import { WIKI_TYPE_OPTIONS } from "@/lib/wiki-type-options"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
+import { FindInPage } from "@/components/editor/find-in-page"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 
 type TFn = (key: string, opts?: { lng?: string }) => string
@@ -63,6 +64,9 @@ export function PreviewPanel() {
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
   const { t } = useTranslation()
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Scope for the in-page find (Cmd/Ctrl+F) — the scroll container that
+  // holds the rendered page (read-mode markdown or the Milkdown editor).
+  const contentRef = useRef<HTMLDivElement>(null)
   // Snapshot of what was most recently loaded from disk. Milkdown re-emits
   // `markdownUpdated` on initial parse (before the user types anything),
   // which used to trigger an auto-save that could write back a placeholder
@@ -171,7 +175,8 @@ export function PreviewPanel() {
     fileName !== "log.md"
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
+      <FindInPage containerRef={contentRef} resetKey={selectedFile} />
       <div className="flex items-center justify-between border-b px-3 py-1.5">
         <span className="truncate text-xs text-muted-foreground" title={selectedFile}>
           {fileName}
@@ -183,7 +188,7 @@ export function PreviewPanel() {
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
-      <div className="flex-1 min-w-0 overflow-auto">
+      <div ref={contentRef} className="flex-1 min-w-0 overflow-auto">
         {category === "markdown" ? (
           <WikiEditor
             key={selectedFile}
