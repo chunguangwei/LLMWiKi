@@ -53,6 +53,15 @@ const WIKI_TYPE_ICON_KEYS: Record<string, keyof typeof FILE_TYPE_ICONS> = {
   overview: "overview",
 }
 
+/** Compact "time remaining" label, e.g. "~2h 3m", "~5m", "<1m". */
+export function formatEta(ms: number): string {
+  const totalMin = Math.round(ms / 60000)
+  if (totalMin < 1) return "<1m"
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  return h > 0 ? `~${h}h ${m}m` : `~${m}m`
+}
+
 function getFileTypeInfo(path: string): { icon: typeof FileText; type: string } {
   const inferred = inferWikiTypeFromPath(path)
   if (inferred) {
@@ -362,9 +371,17 @@ export function ActivityPanel() {
           )}
 
           {/* Queue tasks */}
-          {queueTasks.filter((t) => t.status === "processing").map((task) => (
-            <QueueRow key={task.id} task={task} onRetry={handleIngestRetry} onCancel={handleIngestCancel} />
-          ))}
+          {queueTasks.filter((t) => t.status === "processing").map((task) => {
+            // Surface the matching running activity item's chunk progress
+            // on the prominent processing row (matched by filename, same
+            // as the cancel-button wiring below).
+            const progress = items.find(
+              (i) => i.status === "running" && i.progress && getFileName(task.sourcePath) === i.title,
+            )?.progress
+            return (
+              <QueueRow key={task.id} task={task} progress={progress} onRetry={handleIngestRetry} onCancel={handleIngestCancel} />
+            )
+          })}
           {queueTasks.filter((t) => t.status === "pending").map((task) => (
             <QueueRow key={task.id} task={task} onRetry={handleIngestRetry} onCancel={handleIngestCancel} />
           ))}
@@ -438,7 +455,13 @@ export function ActivityPanel() {
   )
 }
 
-function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id: string) => void; onCancel: (id: string) => void }) {
+function QueueRow({ task, onRetry, onCancel, progress }: {
+  task: IngestTask
+  onRetry: (id: string) => void
+  onCancel: (id: string) => void
+  progress?: ActivityItem["progress"]
+}) {
+  const { t } = useTranslation()
   const fileName = getFileName(task.sourcePath)
 
   return (
@@ -456,6 +479,25 @@ function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id:
           )}
           {task.status === "failed" && task.error && (
             <div className="text-[10px] text-destructive mt-0.5 truncate">{task.error}</div>
+          )}
+          {task.status === "processing" && progress && progress.total > 0 && (
+            <div className="mt-1">
+              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground tabular-nums">
+                <span>
+                  {progress.current}/{progress.total} ·{" "}
+                  {Math.floor((progress.current / progress.total) * 100)}%
+                </span>
+                {progress.etaMs !== undefined && (
+                  <span>{formatEta(progress.etaMs)} {t("activity.left", { defaultValue: "left" })}</span>
+                )}
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                />
+              </div>
+            </div>
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -554,6 +596,25 @@ function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCance
         <div className="min-w-0 flex-1">
           <div className="font-medium">{item.title}</div>
           <div className="text-muted-foreground mt-0.5">{item.detail}</div>
+          {item.status === "running" && item.progress && item.progress.total > 0 && (
+            <div className="mt-1.5">
+              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground tabular-nums">
+                <span>
+                  {item.progress.current}/{item.progress.total} ·{" "}
+                  {Math.floor((item.progress.current / item.progress.total) * 100)}%
+                </span>
+                {item.progress.etaMs !== undefined && (
+                  <span>{formatEta(item.progress.etaMs)} {t("activity.left", { defaultValue: "left" })}</span>
+                )}
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${(item.progress.current / item.progress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
         {item.status === "running" && onCancel && (
           <button

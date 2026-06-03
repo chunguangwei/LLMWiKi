@@ -30,9 +30,11 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-06-03",
     highlights: {
       en: [
+        "Long-document ingest now shows a progress bar. A big source analyzed in hundreds of chunks used to show only a spinner — with the per-chunk text freezing for 10–30s during each LLM call, it looked stuck. The activity row (and the queue row) now show a determinate bar with \"192/937 · 20%\" and a rough time-remaining estimate, so you can see it advancing and gauge how long is left.",
         "Fixed the ingest \"Resume\" button feeling like it did nothing. Resuming a long-source ingest runs as a fresh task, so the old errored row used to just sit there unchanged — making it look dead and tempting a second click, which queued a duplicate run. The clicked row now clears immediately as feedback, and if the same source is already resuming it won't queue a duplicate. (The resume itself was working — it does continue from the last saved chunk, not from the start — but there was no sign the click registered.)",
       ],
       zh: [
+        "长文档导入现在会显示进度条。被切成几百块分析的大文件，以前只有一个转圈——每块的 LLM 调用要 10～30 秒，期间那行块号一直不动，看着像卡死了。现在活动行（和队列行）会显示一个确定进度条，带「192/937 · 20%」和一个大致的剩余时间估算，能看到它在推进、也能判断还要多久。",
         "修复导入「继续」按钮像是点了没反应的问题。续跑长文档导入会以一个新任务运行，所以原来那条报错行不会有任何变化——看起来像死了，让人忍不住再点一下，结果排了一个重复任务。现在点「继续」后那条行会立刻消失作为反馈；如果同一个文件已经在续跑，则不会再排重复任务。（续跑本身是正常工作的——确实从上次存好的那一块接着跑，而不是从头开始——只是之前没有任何迹象表明点击生效了。）",
       ],
     },

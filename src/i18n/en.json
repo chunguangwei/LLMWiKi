@@ -785,6 +785,7 @@
     "done": "Done: {{title}}",
     "clearCompleted": "Clear completed",
     "resume": "Resume",
+    "left": "left",
     "resumeTitle": "Resume this ingest — continues from the last saved checkpoint",
     "reloadWhileRunningConfirm": "A task is still running. Reloading will interrupt it (you can resume from the activity panel afterward). Reload anyway?"
   },

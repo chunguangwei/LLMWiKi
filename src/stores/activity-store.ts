@@ -17,12 +17,21 @@ export interface ActivityItem {
    * the interruption in the first place. Absent for lint/query items.
    */
   sourcePath?: string
+  /**
+   * Determinate progress for a long, multi-step run (e.g. a big source
+   * analyzed in hundreds of chunks). When present, the activity row draws
+   * a progress bar + percentage instead of just a spinner, so the user can
+   * see it advancing. `etaMs` is a rough estimate from the rate of chunks
+   * completed this session (omitted until there's enough data). Cleared
+   * once the chunked phase finishes.
+   */
+  progress?: { current: number; total: number; etaMs?: number }
 }
 
 interface ActivityState {
   items: ActivityItem[]
   addItem: (item: Omit<ActivityItem, "id" | "createdAt">) => string
-  updateItem: (id: string, updates: Partial<Pick<ActivityItem, "status" | "detail" | "filesWritten">>) => void
+  updateItem: (id: string, updates: Partial<Pick<ActivityItem, "status" | "detail" | "filesWritten" | "progress">>) => void
   removeItem: (id: string) => void
   appendDetail: (id: string, text: string) => void
   clearDone: () => void

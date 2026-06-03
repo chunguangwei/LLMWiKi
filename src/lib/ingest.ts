@@ -588,6 +588,9 @@ async function autoIngestImpl(
     detail: precomputedAnalysis
       ? "Step 1/2: Consolidating long-source analysis..."
       : "Step 1/2: Analyzing source...",
+    // Chunk-by-chunk phase is over — drop the determinate bar so the row
+    // goes back to a plain spinner for the remaining (unmeasured) steps.
+    progress: undefined,
   })
 
   let analysis = precomputedAnalysis
@@ -1832,14 +1835,29 @@ async function analyzeLongSourceInChunks(
   if (completedThrough > 0) {
     activity.updateItem(activityId, {
       detail: `Resuming long source analysis from chunk ${completedThrough + 1}/${chunks.length}...`,
+      progress: { current: completedThrough, total: chunks.length },
     })
   }
+
+  // ETA is estimated from the rate of chunks completed THIS session (not
+  // counting any resumed-from offset, whose time we never observed), and
+  // only once a few chunks are in so a single slow/fast chunk doesn't skew
+  // it wildly.
+  const sessionStartedAt = Date.now()
+  const sessionStartChunk = completedThrough
 
   for (const chunk of chunks) {
     if (chunk.index <= completedThrough) continue
     if (signal?.aborted) throw new Error("Ingest cancelled")
+    const doneThisSession = chunk.index - 1 - sessionStartChunk
+    const remaining = chunks.length - (chunk.index - 1)
+    const etaMs =
+      doneThisSession >= 3
+        ? Math.round(((Date.now() - sessionStartedAt) / doneThisSession) * remaining)
+        : undefined
     activity.updateItem(activityId, {
       detail: `Analyzing long source chunk ${chunk.index}/${chunk.total}...`,
+      progress: { current: chunk.index - 1, total: chunk.total, etaMs },
     })
 
     let raw = ""
