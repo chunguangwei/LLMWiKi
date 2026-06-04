@@ -1476,6 +1476,277 @@ const LONG_SOURCE_CHUNK_MAX = 60_000
 const LONG_SOURCE_DIGEST_MAX = 15_000
 const LONG_SOURCE_CHUNK_ANALYSIS_MAX = 40_000
 
+// ── Self-healing per-chunk analysis ───────────────────────────────
+// Chunk sizing is budgeted in CHARACTERS, but providers enforce their
+// context window in TOKENS. For CJK text 1 char ≈ 1–2 tokens (vs ~0.25
+// for English), so a char-budgeted chunk that's fine for English can blow
+// past a smaller model's token window — the user hits
+// "context window exceeds limit". Two defenses, applied to EVERY long
+// source (epub, pdf, docx, txt, pasted notes — anything routed through the
+// chunked path), not just one file:
+//   1. CJK-aware initial sizing (see cjkRatio) shrinks chunks up-front for
+//      CJK-heavy text so most requests fit on the first try.
+//   2. Runtime self-healing (analyzeChunkResilient): if a request still
+//      overflows, bisect THIS chunk and retry the halves — recursively,
+//      down to a floor — instead of failing the whole ingest. Transient
+//      provider overload (HTTP 529 / 429) is retried with backoff.
+// Completed chunks are checkpointed, so none of this re-does prior work.
+const CHUNK_OVERLOAD_MAX_RETRIES = 5
+const CHUNK_OVERFLOW_MIN_CHARS = 1_500
+const CHUNK_OVERFLOW_MIN_INDEX_CAP = 6_000
+
+/**
+ * Fraction of `text` that is CJK (ideographs, kana, hangul, fullwidth /
+ * CJK punctuation) — the characters that cost disproportionately more
+ * tokens than Latin text. Sampled on very large inputs to stay O(1)-ish.
+ */
+export function cjkRatio(text: string): number {
+  if (!text) return 0
+  const step = text.length > 200_000 ? Math.floor(text.length / 200_000) : 1
+  let cjk = 0
+  let total = 0
+  for (let i = 0; i < text.length; i += step) {
+    const c = text.charCodeAt(i)
+    total++
+    if (
+      (c >= 0x3000 && c <= 0x9fff) || // CJK punctuation, kana, ideographs (+ ext A)
+      (c >= 0xac00 && c <= 0xd7af) || // Hangul syllables
+      (c >= 0xf900 && c <= 0xfaff) || // CJK compatibility ideographs
+      (c >= 0xff00 && c <= 0xffef) // Fullwidth / halfwidth forms
+    ) {
+      cjk++
+    }
+  }
+  return total > 0 ? cjk / total : 0
+}
+
+/** Promise-based sleep that rejects promptly if the ingest is cancelled. */
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error("Ingest cancelled"))
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new Error("Ingest cancelled"))
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
+  })
+}
+
+/** The provider rejected the request because the prompt exceeds the
+ *  model's context window. Recoverable by sending less text. */
+export function isContextOverflowError(err: unknown): boolean {
+  const m = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    m.includes("context window exceeds") ||
+    m.includes("context_length_exceeded") ||
+    m.includes("context length") ||
+    m.includes("maximum context") ||
+    m.includes("too many tokens") ||
+    m.includes("reduce the length") ||
+    m.includes("prompt is too long") ||
+    m.includes("超出") && m.includes("上下文") ||
+    m.includes("上下文") && m.includes("超")
+  )
+}
+
+/** Transient provider-side overload / rate limit. Recoverable by waiting. */
+export function isOverloadError(err: unknown): boolean {
+  const m = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    m.includes("529") ||
+    m.includes("overloaded") ||
+    m.includes("rate limit") ||
+    m.includes("rate_limit") ||
+    m.includes(" 429") ||
+    m.includes("http 429") ||
+    m.includes("负载") ||
+    m.includes("过载") ||
+    m.includes("请稍后重试")
+  )
+}
+
+/** Split text near its midpoint, preferring a paragraph or sentence
+ *  boundary so a bisected chunk doesn't cut mid-sentence. */
+export function splitTextInHalf(text: string): [string, string] {
+  const mid = Math.floor(text.length / 2)
+  // Prefer a paragraph break in the middle third.
+  let cut = text.lastIndexOf("\n", mid)
+  if (cut < text.length * 0.25) {
+    // No usable break before mid — take the next sentence end after mid.
+    const fwd = text.slice(mid).search(/[。．！？!?\n]/)
+    cut = fwd >= 0 ? mid + fwd + 1 : mid
+  } else {
+    cut += 1
+  }
+  if (cut <= 0 || cut >= text.length) cut = mid
+  return [text.slice(0, cut), text.slice(cut)]
+}
+
+/**
+ * Run ONE chunk-analysis LLM call, returning the raw model text. Retries
+ * transient overload (HTTP 529 / 429) with exponential backoff; surfaces
+ * everything else (including context-overflow) to the caller so it can
+ * decide whether to bisect. `onNote` updates the activity detail line so
+ * the user sees "retrying after overload…" rather than a frozen bar.
+ */
+async function runChunkAnalysisCall(
+  llmConfig: LlmConfig,
+  systemPrompt: string,
+  userPrompt: string,
+  signal: AbortSignal | undefined,
+  onNote: (note: string) => void,
+): Promise<string> {
+  let attempt = 0
+  for (;;) {
+    if (signal?.aborted) throw new Error("Ingest cancelled")
+    let raw = ""
+    let streamErr: Error | null = null
+    await streamChat(
+      llmConfig,
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      {
+        onToken: (token) => { raw += token },
+        onDone: () => {},
+        onError: (err) => { streamErr = err },
+      },
+      signal,
+      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+    )
+    if (signal?.aborted) throw new Error("Ingest cancelled")
+    if (!streamErr) return raw
+    // streamErr is assigned only inside the onError callback above; TS's
+    // control-flow analysis can't see that, so re-read it via a local.
+    const err: Error = streamErr
+    if (isOverloadError(err) && attempt < CHUNK_OVERLOAD_MAX_RETRIES) {
+      attempt++
+      const waitMs = Math.min(30_000, 1_000 * 2 ** attempt)
+      onNote(`provider overloaded — retry ${attempt}/${CHUNK_OVERLOAD_MAX_RETRIES} in ${Math.round(waitMs / 1000)}s`)
+      await sleepWithAbort(waitMs, signal)
+      continue
+    }
+    throw err
+  }
+}
+
+/**
+ * Analyze one piece of source text into { analysis, digest }, self-healing
+ * on context-overflow by bisecting and recursing. The running digest is
+ * threaded through any sub-pieces so cross-chunk context is preserved. The
+ * floor (CHUNK_OVERFLOW_MIN_CHARS + CHUNK_OVERFLOW_MIN_INDEX_CAP) stops an
+ * infinite shrink: if even a minimal request overflows, the model's window
+ * is simply too small and we surface a clear error.
+ */
+async function analyzeChunkResilient(
+  llmConfig: LlmConfig,
+  purpose: string,
+  schema: string,
+  index: string,
+  sourceContent: string,
+  sourceIdentity: string,
+  folderContext: string | undefined,
+  chunk: SourceChunk,
+  mainText: string,
+  overlapBefore: string,
+  incomingDigest: string,
+  indexCap: number,
+  signal: AbortSignal | undefined,
+  onNote: (note: string) => void,
+): Promise<{ analysis: string; digest: string }> {
+  const systemPrompt = buildChunkAnalysisSystemPrompt(purpose, schema, index, sourceContent, indexCap)
+  const userPrompt = buildChunkAnalysisUserPrompt(
+    sourceIdentity,
+    folderContext,
+    { ...chunk, main: mainText, overlapBefore },
+    trimLongText(incomingDigest, LONG_SOURCE_DIGEST_MAX),
+  )
+  try {
+    const raw = await runChunkAnalysisCall(llmConfig, systemPrompt, userPrompt, signal, onNote)
+    const analysis = extractMarkedSection(raw, "Chunk Analysis") || raw.trim()
+    const nextDigest = extractMarkedSection(raw, "Updated Global Digest")
+    return {
+      analysis,
+      digest: trimLongText(
+        nextDigest || [incomingDigest, analysis].filter(Boolean).join("\n\n"),
+        LONG_SOURCE_DIGEST_MAX,
+      ),
+    }
+  } catch (err) {
+    const canShrink = mainText.length > CHUNK_OVERFLOW_MIN_CHARS || indexCap > CHUNK_OVERFLOW_MIN_INDEX_CAP
+    if (!isContextOverflowError(err) || !canShrink) throw err
+    // Drop the index hard first (cheap), then bisect the payload.
+    const nextIndexCap = Math.max(CHUNK_OVERFLOW_MIN_INDEX_CAP, Math.floor(indexCap / 2))
+    if (mainText.length <= CHUNK_OVERFLOW_MIN_CHARS) {
+      onNote("chunk over context limit — trimming wiki index and retrying")
+      return analyzeChunkResilient(
+        llmConfig, purpose, schema, index, sourceContent, sourceIdentity,
+        folderContext, chunk, mainText, overlapBefore, incomingDigest, nextIndexCap, signal, onNote,
+      )
+    }
+    const [first, second] = splitTextInHalf(mainText)
+    onNote(`chunk over context limit — splitting in half and retrying (${first.length}+${second.length} chars)`)
+    let digest = incomingDigest
+    const parts: string[] = []
+    // Overlap only seeds the FIRST sub-piece; the second's context comes
+    // from the digest the first produced.
+    let prevOverlap = overlapBefore
+    for (const piece of [first, second]) {
+      if (signal?.aborted) throw new Error("Ingest cancelled")
+      const r = await analyzeChunkResilient(
+        llmConfig, purpose, schema, index, sourceContent, sourceIdentity,
+        folderContext, chunk, piece, prevOverlap, digest, nextIndexCap, signal, onNote,
+      )
+      parts.push(r.analysis)
+      digest = r.digest
+      prevOverlap = ""
+    }
+    return { analysis: parts.join("\n\n"), digest }
+  }
+}
+
+/**
+ * Load a prior checkpoint for REUSE even when the chunk-sizing formula has
+ * changed since it was written. Completed per-chunk analyses are valuable
+ * (each cost an LLM call); we only need the source CONTENT to be identical
+ * (same hash + length + identity). The caller adopts the checkpoint's
+ * stored targetChars/overlapChars so the re-split lines up with the stored
+ * analyses — that's what lets a resume skip work the new formula would
+ * otherwise have re-sliced and re-run from scratch.
+ */
+async function loadReusableLongSourceCheckpoint(
+  checkpointPath: string,
+  sourceIdentity: string,
+  sourceHash: string,
+  sourceLength: number,
+): Promise<LongSourceCheckpoint | null> {
+  try {
+    const parsed = JSON.parse(await readFile(checkpointPath)) as LongSourceCheckpoint
+    if (
+      parsed.version === 1 &&
+      parsed.sourceIdentity === sourceIdentity &&
+      parsed.sourceHash === sourceHash &&
+      parsed.sourceLength === sourceLength &&
+      typeof parsed.targetChars === "number" &&
+      typeof parsed.overlapChars === "number" &&
+      typeof parsed.sourceBudget === "number" &&
+      Array.isArray(parsed.analyses) &&
+      parsed.completedThrough >= 0 &&
+      parsed.analyses.length === parsed.completedThrough
+    ) {
+      return parsed
+    }
+  } catch {
+    // Missing / unparseable — start fresh.
+  }
+  return null
+}
+
 interface SourceChunk {
   id: string
   index: number
@@ -1740,6 +2011,10 @@ function buildChunkAnalysisSystemPrompt(
   schema: string,
   index: string,
   sourceContent: string,
+  // The wiki index is the one prompt section we can shrink when a request
+  // overflows the model's context window (the chunk text is the payload we
+  // must keep). Self-healing retries pass a progressively smaller cap.
+  indexCap = 40_000,
 ): string {
   return [
     "You are analyzing a long source document for a personal wiki.",
@@ -1765,7 +2040,7 @@ function buildChunkAnalysisSystemPrompt(
     "Stable project context follows. It changes rarely and should be treated as background:",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
     schema ? `## Wiki Schema\n${schema}` : "",
-    index ? `## Current Wiki Index\n${trimLongText(index, 40_000)}` : "",
+    index ? `## Current Wiki Index\n${trimLongText(index, indexCap)}` : "",
   ].filter(Boolean).join("\n")
 }
 
@@ -1807,27 +2082,56 @@ async function analyzeLongSourceInChunks(
   activityId: string,
   signal?: AbortSignal,
 ): Promise<LongSourcePlan> {
-  const targetChars = clampNumber(Math.floor(sourceBudget * 0.55), LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
-  const overlapChars = clampNumber(Math.floor(targetChars * 0.08), 800, 3_000)
+  const sourceHash = hashTextHex(sourceContent)
+  const checkpointPath = longSourceCheckpointPath(projectPath, sourceSummarySlug, sourceHash)
+
+  // Reuse a prior checkpoint's chunk plan when the SOURCE is unchanged,
+  // even if the sizing formula evolved since — that keeps already-analyzed
+  // chunks aligned so a resume skips them instead of re-slicing and
+  // re-running the whole book from scratch. Only when there's no prior work
+  // do we size fresh, and CJK-heavy text gets smaller chunks up-front
+  // (1 CJK char ≈ 1–2 tokens, so a char-budget calibrated for English
+  // would otherwise overflow a smaller model's token window).
+  const priorCheckpoint = await loadReusableLongSourceCheckpoint(
+    checkpointPath, sourceIdentity, sourceHash, sourceContent.length,
+  )
+  // Only inherit a prior chunk plan when it actually carries completed work
+  // worth preserving. A checkpoint stuck at 0 completed chunks (e.g. an old
+  // run that failed on chunk 1 before self-healing existed) has nothing to
+  // reuse — prefer fresh CJK-aware sizing over inheriting its oversized
+  // chunks, so the re-run needs fewer runtime bisections.
+  const reusable = priorCheckpoint && priorCheckpoint.completedThrough > 0 ? priorCheckpoint : null
+  const cjk = cjkRatio(sourceContent)
+  const freshTarget = clampNumber(
+    Math.floor(sourceBudget * 0.55 * (1 - 0.5 * cjk)),
+    LONG_SOURCE_CHUNK_MIN,
+    LONG_SOURCE_CHUNK_MAX,
+  )
+  const targetChars = reusable?.targetChars ?? freshTarget
+  const overlapChars = reusable?.overlapChars ?? clampNumber(Math.floor(targetChars * 0.08), 800, 3_000)
+  const effectiveSourceBudget = reusable?.sourceBudget ?? sourceBudget
   const chunks = splitSourceIntoSemanticChunks(sourceContent, targetChars, overlapChars)
   if (chunks.length <= 1) {
     return { chunked: false, analysis: "", sourceContext: sourceContent }
   }
 
   const activity = useActivityStore.getState()
-  const systemPrompt = buildChunkAnalysisSystemPrompt(purpose, schema, index, sourceContent)
-  const sourceHash = hashTextHex(sourceContent)
-  const checkpointPath = longSourceCheckpointPath(projectPath, sourceSummarySlug, sourceHash)
   const checkpointParams = {
     sourceIdentity,
     sourceHash,
     sourceLength: sourceContent.length,
-    sourceBudget,
+    sourceBudget: effectiveSourceBudget,
     targetChars,
     overlapChars,
     chunkTotal: chunks.length,
   }
-  const checkpoint = await loadLongSourceCheckpoint(checkpointPath, checkpointParams)
+  // Adopt the reusable checkpoint only if the adopted sizing reproduces the
+  // same chunk plan (it should, by construction) — otherwise fall back to a
+  // strict load, which returns null and starts fresh.
+  const checkpoint =
+    reusable && isCompatibleLongSourceCheckpoint(reusable, checkpointParams)
+      ? reusable
+      : await loadLongSourceCheckpoint(checkpointPath, checkpointParams)
   let globalDigest = checkpoint?.globalDigest ?? ""
   const analyses: string[] = checkpoint?.analyses ? [...checkpoint.analyses] : []
   let completedThrough = checkpoint?.completedThrough ?? 0
@@ -1860,48 +2164,36 @@ async function analyzeLongSourceInChunks(
       progress: { current: chunk.index - 1, total: chunk.total, etaMs },
     })
 
-    let raw = ""
-    let hadError = false
-    await streamChat(
-      llmConfig,
-      [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: buildChunkAnalysisUserPrompt(
-            sourceIdentity,
-            folderContext,
-            chunk,
-            trimLongText(globalDigest, LONG_SOURCE_DIGEST_MAX),
-          ),
-        },
-      ],
-      {
-        onToken: (token) => { raw += token },
-        onDone: () => {},
-        onError: (err) => {
-          hadError = true
-          activity.updateItem(activityId, { status: "error", detail: `Chunk analysis failed: ${err.message}` })
-        },
-      },
-      signal,
-      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
-    )
+    // Self-healing analysis: bisects on context-overflow, backs off on
+    // provider overload. A note from the retry loop is folded into the
+    // activity detail so the user sees *why* a chunk is taking longer
+    // (overloaded / being split) instead of a silently stalled bar.
+    let result: { analysis: string; digest: string }
+    try {
+      result = await analyzeChunkResilient(
+        llmConfig, purpose, schema, index, sourceContent, sourceIdentity,
+        folderContext, chunk, chunk.main, chunk.overlapBefore,
+        globalDigest, 40_000, signal,
+        (note) => activity.updateItem(activityId, {
+          detail: `Analyzing long source chunk ${chunk.index}/${chunk.total} — ${note}`,
+        }),
+      )
+    } catch (err) {
+      if (signal?.aborted) throw new Error("Ingest cancelled")
+      const msg = err instanceof Error ? err.message : String(err)
+      // The checkpoint with all chunks completed SO FAR is already on disk
+      // (saved after each one), so this failure loses nothing already done —
+      // a later resume picks up from `completedThrough`.
+      activity.updateItem(activityId, { status: "error", detail: `Chunk analysis failed: ${msg}` })
+      throw err instanceof Error ? err : new Error(msg)
+    }
 
-    if (signal?.aborted) throw new Error("Ingest cancelled")
-    if (hadError) throw new Error("Chunk analysis stream failed")
-
-    const chunkAnalysis = extractMarkedSection(raw, "Chunk Analysis") || raw.trim()
-    const nextDigest = extractMarkedSection(raw, "Updated Global Digest")
     analyses.push([
       `## Chunk ${chunk.index}/${chunk.total}${chunk.headingPath ? ` — ${chunk.headingPath}` : ""}`,
-      trimLongText(chunkAnalysis, LONG_SOURCE_CHUNK_ANALYSIS_MAX),
+      trimLongText(result.analysis, LONG_SOURCE_CHUNK_ANALYSIS_MAX),
     ].join("\n"))
 
-    globalDigest = trimLongText(
-      nextDigest || [globalDigest, chunkAnalysis].filter(Boolean).join("\n\n"),
-      LONG_SOURCE_DIGEST_MAX,
-    )
+    globalDigest = result.digest
     completedThrough = chunk.index
     await saveLongSourceCheckpoint(checkpointPath, {
       version: 1,

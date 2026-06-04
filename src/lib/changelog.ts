@@ -26,6 +26,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.41",
+    date: "2026-06-04",
+    highlights: {
+      en: [
+        "Long-document ingest no longer dies on \"context window exceeds limit\". Chunks were budgeted in characters, but providers count tokens — and 1 Chinese character costs far more tokens than 1 English one, so a chunk that's fine in English could blow past a smaller model's window (the error you'd see as HTTP 400 \"context window exceeds limit\"). Two fixes: chunks are now sized smaller up-front for CJK-heavy text, and if a request still overflows, that chunk is automatically split in half and retried — recursively — instead of failing the whole import. This applies to every long source (epub, pdf, docx, txt, pasted notes), not just one file.",
+        "Transient provider overload (HTTP 529 / 429 \"server busy\") during a long ingest is now retried automatically with backoff, instead of failing the chunk. The activity row tells you what it's doing (\"provider overloaded — retry 2/5 in 4s\" / \"splitting in half and retrying\") so a slow chunk no longer looks frozen.",
+        "A failed long ingest keeps everything it already analyzed. Each completed chunk is checkpointed, so resuming continues from where it stopped — and even after this update changed how chunks are sized, prior progress is reused rather than thrown away and re-run from the start.",
+      ],
+      zh: [
+        "长文档导入不再因「上下文超限」直接失败。分块是按字符预算切的，但供应商是按 token 计费的——而 1 个汉字消耗的 token 远多于 1 个英文字母，所以一个在英文下没问题的块，可能撑爆较小模型的窗口（你看到的就是 HTTP 400「context window exceeds limit」）。两处修复：中文占比高的文本现在初始切块就更小；万一某次请求仍然超限，会自动把这一块二分后重试——递归进行——而不是让整本导入失败。这对所有长文档生效（epub、pdf、docx、txt、粘贴的笔记），不只某一个文件。",
+        "长导入期间遇到供应商临时过载（HTTP 529 / 429「服务繁忙」）现在会自动退避重试，而不是让这一块失败。活动行会告诉你它在做什么（「provider overloaded — retry 2/5 in 4s」/「splitting in half and retrying」），慢的块不再看起来像卡死。",
+        "长导入失败时会保留所有已分析的内容。每块完成都会存检查点，续跑会从中断处接着跑——而且即便这次更新改变了切块大小，之前的进度也会被复用，而不是丢弃重来。",
+      ],
+    },
+  },
+  {
     version: "0.4.40",
     date: "2026-06-04",
     highlights: {
