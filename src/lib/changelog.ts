@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.42",
+    date: "2026-06-04",
+    highlights: {
+      en: [
+        "Long-document ingest now self-heals at the GENERATION step too, not just analysis. After a big source was analyzed, the wiki-page generation request bundled the full consolidated analysis plus the source context — which for a long book could still overflow the model's window (the \"Generation failed: context window exceeds limit\" you'd see right after analysis finished). That step now trims and retries automatically if it overflows, and backs off on provider overload (HTTP 529/429), the same way the analysis pass already did. The first attempt is unchanged, so sources that already fit are untouched.",
+      ],
+      zh: [
+        "长文档导入现在在「生成」步骤也会自愈，不只「分析」。大文件分析完之后，生成 wiki 页的请求会把整份合并分析连同源上下文一起发出——对一本长书这仍可能撑爆模型窗口（也就是你在分析刚结束后看到的「Generation failed: context window exceeds limit」）。这一步现在超限会自动裁剪重试、遇到供应商过载（HTTP 529/429）会退避重试，和分析步骤一致。首次尝试保持不变，所以本来就放得下的文件不受影响。",
+      ],
+    },
+  },
+  {
     version: "0.4.41",
     date: "2026-06-04",
     highlights: {

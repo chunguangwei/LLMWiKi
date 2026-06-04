@@ -596,30 +596,34 @@ async function autoIngestImpl(
   let analysis = precomputedAnalysis
 
   if (!analysis) {
-    await streamChat(
-      llmConfig,
-      [
-        { role: "system", content: buildAnalysisPrompt(purpose, index, sourceContext) },
-        { role: "user", content: `Analyze this source document:\n\n**File:** ${sourceIdentity}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${sourceContext}` },
-      ],
-      {
-        onToken: (token) => { analysis += token },
-        onDone: () => {},
-        onError: (err) => {
-          activity.updateItem(activityId, { status: "error", detail: `Analysis failed: ${err.message}` })
+    const { maxCtx } = computeContextBudget(llmConfig.maxContextSize)
+    try {
+      // Self-heal on overflow: the source text is the growable section, so
+      // shrink it (and the index) and retry rather than failing outright.
+      analysis = await streamStageWithShrink(
+        llmConfig,
+        { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+        signal,
+        "analysis",
+        (note) => activity.updateItem(activityId, { detail: `Step 1/2: Analyzing source... — ${note}` }),
+        (factor) => {
+          const src = capByFactor(sourceContext, maxCtx, factor)
+          const idx = capByFactor(index, 40_000, factor)
+          return [
+            { role: "system", content: buildAnalysisPrompt(purpose, idx, src) },
+            { role: "user", content: `Analyze this source document:\n\n**File:** ${sourceIdentity}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${src}` },
+          ]
         },
-      },
-      signal,
-      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
-    )
-  }
-
-  // A silent `return []` here would look like success to the queue
-  // runner and cause the task to be filter()'d out. Throw instead so
-  // processNext's catch-block path (retry / mark failed) engages.
-  const analysisActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
-  if (analysisActivity?.status === "error") {
-    throw new Error(analysisActivity.detail || "Analysis stream failed")
+      )
+    } catch (err) {
+      if (signal?.aborted) throw new Error("Ingest cancelled")
+      const msg = err instanceof Error ? err.message : String(err)
+      activity.updateItem(activityId, { status: "error", detail: `Analysis failed: ${msg}` })
+      // A silent `return []` here would look like success to the queue
+      // runner and cause the task to be filter()'d out. Throw instead so
+      // processNext's catch-block path (retry / mark failed) engages.
+      throw err instanceof Error ? err : new Error(msg)
+    }
   }
 
   // ── Step 2: Generation ────────────────────────────────────────
@@ -628,53 +632,66 @@ async function autoIngestImpl(
 
   let generation = ""
 
-  await streamChat(
-    llmConfig,
-    [
-      { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath) },
-      {
-        role: "user",
-        content: [
-          `Source document to process: **${sourceIdentity}**`,
-          "",
-          "The Stage 1 analysis below is CONTEXT to inform your output. Do NOT echo",
-          "its tables, bullet points, or prose. Your output must be FILE/REVIEW",
-          "blocks as specified in the system prompt — nothing else.",
-          "",
-          "## Stage 1 Analysis (context only — do not repeat)",
-          "",
-          analysis,
-          "",
-          "## Source Context",
-          "",
-          sourceContext,
-          "",
-          "---",
-          "",
-          `Now emit the FILE blocks for the wiki files derived from **${sourceIdentity}**.`,
-          "Your response MUST begin with `---FILE:` as the very first characters.",
-          "No preamble. No analysis prose. Start immediately.",
-        ].join("\n"),
-      },
-    ],
-    {
-      onToken: (token) => { generation += token },
-      onDone: () => {},
-      onError: (err) => {
-        activity.updateItem(activityId, { status: "error", detail: `Generation failed: ${err.message}` })
-      },
-    },
-    signal,
-    {
-      temperature: 0.1,
-      reasoning: { mode: "off" },
-      max_tokens: computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
-    },
-  )
-
-  const generationActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
-  if (generationActivity?.status === "error") {
-    throw new Error(generationActivity.detail || "Generation stream failed")
+  {
+    const { maxCtx } = computeContextBudget(llmConfig.maxContextSize)
+    try {
+      // The Stage-1 analysis and source context are the growable bulk of
+      // this prompt — for a long source the consolidated analysis alone can
+      // be enormous. Cap each to a share of the window and shrink on
+      // overflow (same self-healing the chunk-analysis pass uses), so a big
+      // book generates instead of dying on "context window exceeds limit".
+      generation = await streamStageWithShrink(
+        llmConfig,
+        {
+          temperature: 0.1,
+          reasoning: { mode: "off" },
+          max_tokens: computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
+        },
+        signal,
+        "generation",
+        (note) => activity.updateItem(activityId, { detail: `Step 2/2: Generating wiki pages... — ${note}` }),
+        (factor) => {
+          // analysis + sourceContext are the growable bulk; index is the
+          // only other section that grows with wiki size. Halved each shrink
+          // (their sum at the first shrink is ~half the window).
+          return [
+            {
+              role: "system",
+              content: buildGenerationPrompt(schema, purpose, capByFactor(index, 40_000, factor), sourceIdentity, overview, sourceContext, sourceSummaryPath),
+            },
+            {
+              role: "user",
+              content: [
+                `Source document to process: **${sourceIdentity}**`,
+                "",
+                "The Stage 1 analysis below is CONTEXT to inform your output. Do NOT echo",
+                "its tables, bullet points, or prose. Your output must be FILE/REVIEW",
+                "blocks as specified in the system prompt — nothing else.",
+                "",
+                "## Stage 1 Analysis (context only — do not repeat)",
+                "",
+                capByFactor(analysis, Math.floor(maxCtx * 0.5), factor),
+                "",
+                "## Source Context",
+                "",
+                capByFactor(sourceContext, Math.floor(maxCtx * 0.5), factor),
+                "",
+                "---",
+                "",
+                `Now emit the FILE blocks for the wiki files derived from **${sourceIdentity}**.`,
+                "Your response MUST begin with `---FILE:` as the very first characters.",
+                "No preamble. No analysis prose. Start immediately.",
+              ].join("\n"),
+            },
+          ]
+        },
+      )
+    } catch (err) {
+      if (signal?.aborted) throw new Error("Ingest cancelled")
+      const msg = err instanceof Error ? err.message : String(err)
+      activity.updateItem(activityId, { status: "error", detail: `Generation failed: ${msg}` })
+      throw err instanceof Error ? err : new Error(msg)
+    }
   }
 
   // ── Step 3: Write files ───────────────────────────────────────
@@ -1600,6 +1617,35 @@ async function runChunkAnalysisCall(
   signal: AbortSignal | undefined,
   onNote: (note: string) => void,
 ): Promise<string> {
+  return streamTextWithOverloadRetry(
+    llmConfig,
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+    signal,
+    onNote,
+  )
+}
+
+type ChatMessage = { role: "system" | "user" | "assistant"; content: string }
+type StreamOptions = { temperature?: number; reasoning?: { mode: "off" | "auto" }; max_tokens?: number }
+
+/**
+ * Run one streaming chat call and return its full text, retrying transient
+ * provider overload (HTTP 529 / 429) with exponential backoff. Any other
+ * error (including context-overflow, which the caller may want to recover
+ * by sending less) is surfaced. Shared by every ingest LLM stage so they
+ * all get the same overload resilience.
+ */
+async function streamTextWithOverloadRetry(
+  llmConfig: LlmConfig,
+  messages: ChatMessage[],
+  options: StreamOptions,
+  signal: AbortSignal | undefined,
+  onNote: (note: string) => void,
+): Promise<string> {
   let attempt = 0
   for (;;) {
     if (signal?.aborted) throw new Error("Ingest cancelled")
@@ -1607,17 +1653,14 @@ async function runChunkAnalysisCall(
     let streamErr: Error | null = null
     await streamChat(
       llmConfig,
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
+      messages,
       {
         onToken: (token) => { raw += token },
         onDone: () => {},
         onError: (err) => { streamErr = err },
       },
       signal,
-      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+      options,
     )
     if (signal?.aborted) throw new Error("Ingest cancelled")
     if (!streamErr) return raw
@@ -1632,6 +1675,50 @@ async function runChunkAnalysisCall(
       continue
     }
     throw err
+  }
+}
+
+const STAGE_OVERFLOW_MAX_SHRINKS = 4
+
+/**
+ * Cap `text` to `base * factor` chars, but NEVER on the first attempt
+ * (factor >= 1) — the first try must be byte-for-byte what we'd have sent
+ * before self-healing existed, so sources that already fit are untouched.
+ * Trimming only engages once an overflow has forced a shrink (factor < 1).
+ */
+function capByFactor(text: string, base: number, factor: number): string {
+  if (factor >= 1) return text
+  return trimLongText(text, Math.max(2_000, Math.floor(base * factor)))
+}
+
+/**
+ * Run an ingest LLM stage whose prompt may overflow the model's context
+ * window, shrinking the prompt and retrying until it fits (or a floor is
+ * hit). `buildMessages(factor)` rebuilds the messages with growable
+ * sections scaled by `factor` (1 → 1/2 → 1/4 …); the stage decides which
+ * sections to trim. Overload is handled inside via
+ * streamTextWithOverloadRetry. This is the Step-1/Step-2 analogue of the
+ * chunk-analysis bisection: same defense, different prompt shape.
+ */
+async function streamStageWithShrink(
+  llmConfig: LlmConfig,
+  options: StreamOptions,
+  signal: AbortSignal | undefined,
+  label: string,
+  onNote: (note: string) => void,
+  buildMessages: (factor: number) => ChatMessage[],
+): Promise<string> {
+  for (let shrink = 0; ; shrink++) {
+    const factor = 1 / 2 ** shrink
+    try {
+      return await streamTextWithOverloadRetry(llmConfig, buildMessages(factor), options, signal, onNote)
+    } catch (err) {
+      if (isContextOverflowError(err) && shrink < STAGE_OVERFLOW_MAX_SHRINKS) {
+        onNote(`${label} over context limit — trimming context and retrying (${shrink + 1}/${STAGE_OVERFLOW_MAX_SHRINKS})`)
+        continue
+      }
+      throw err
+    }
   }
 }
 
@@ -2212,7 +2299,12 @@ async function analyzeLongSourceInChunks(
     globalDigest || "(No digest produced.)",
     "",
     "## Per-Chunk Analyses",
-    analyses.join("\n\n"),
+    // Bound to the budget (like sourceContext below). Unbounded, a
+    // hundreds-of-chunks book would make this MB-scale, so the very first
+    // generation attempt would be a doomed giant request before the
+    // shrink-retry could kick in. The digest above carries the cross-chunk
+    // summary; trimming the per-chunk tail is the right thing to drop.
+    trimLongText(analyses.join("\n\n"), Math.max(sourceBudget, LONG_SOURCE_CHUNK_ANALYSIS_MAX)),
   ].join("\n")
 
   const sourceContext = [
