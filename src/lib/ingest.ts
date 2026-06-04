@@ -24,6 +24,7 @@ import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pip
 import type { MultimodalConfig } from "@/stores/wiki-store"
 import { GENERATION_WIKI_TYPES } from "@/lib/wiki-page-types"
 import { computeContextBudget } from "@/lib/context-budget"
+import { estimateTokens, charsPerToken, trimToTokenBudget } from "@/lib/token-estimate"
 import { readSourceWithSidecar } from "@/lib/raw-from-chat"
 
 /**
@@ -553,13 +554,17 @@ async function autoIngestImpl(
   // Oversized sources are analyzed in overlapping semantic chunks with a
   // resumable checkpoint, and the consolidated result is used as both the
   // analysis and the source context for generation.
-  const stableContextLength = schema.length + purpose.length + index.length + overview.length
-  const sourceBudget = computeIngestSourceBudget(llmConfig.maxContextSize, stableContextLength)
+  // Budgets are in TOKENS (see token-estimate.ts): measure the stable
+  // prompt sections and the source by estimated tokens, not raw chars, so
+  // a CJK source is correctly recognized as "over budget" where a char
+  // count would have under-counted it by ~4×.
+  const stableContextTokens = estimateTokens(schema) + estimateTokens(purpose) + estimateTokens(index) + estimateTokens(overview)
+  const sourceBudget = computeIngestSourceBudget(llmConfig.maxContextSize, stableContextTokens)
   let sourceContext = enrichedSourceContent
   let precomputedAnalysis = ""
   let longSourceCheckpointPath: string | undefined
 
-  if (enrichedSourceContent.length > sourceBudget) {
+  if (estimateTokens(enrichedSourceContent) > sourceBudget) {
     const longSourcePlan = await analyzeLongSourceInChunks(
       pp,
       llmConfig,
@@ -608,7 +613,7 @@ async function autoIngestImpl(
         (note) => activity.updateItem(activityId, { detail: `Step 1/2: Analyzing source... — ${note}` }),
         (factor) => {
           const src = capByFactor(sourceContext, maxCtx, factor)
-          const idx = capByFactor(index, 40_000, factor)
+          const idx = capByFactor(index, 8_000, factor)
           return [
             { role: "system", content: buildAnalysisPrompt(purpose, idx, src) },
             { role: "user", content: `Analyze this source document:\n\n**File:** ${sourceIdentity}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${src}` },
@@ -657,7 +662,7 @@ async function autoIngestImpl(
           return [
             {
               role: "system",
-              content: buildGenerationPrompt(schema, purpose, capByFactor(index, 40_000, factor), sourceIdentity, overview, sourceContext, sourceSummaryPath),
+              content: buildGenerationPrompt(schema, purpose, capByFactor(index, 8_000, factor), sourceIdentity, overview, sourceContext, sourceSummaryPath),
             },
             {
               role: "user",
@@ -1430,9 +1435,10 @@ function buildReviewSuggestionPrompt(
   generation: string,
   maxContextSize: number | undefined,
 ): string {
+  // Caps are TOKEN budgets; sections are trimmed with trimToTokenBudget.
   const { maxCtx } = computeContextBudget(maxContextSize)
-  const sectionCap = Math.max(4_000, Math.floor(maxCtx * 0.15))
-  const indexCap = Math.max(3_000, Math.floor(sectionCap * 0.8))
+  const sectionCap = Math.max(2_000, Math.floor(maxCtx * 0.15))
+  const indexCap = Math.max(1_500, Math.floor(sectionCap * 0.8))
   return [
     "You are identifying high-value follow-up research items for a personal wiki.",
     "Do not output chain-of-thought, hidden reasoning, or explanatory preamble.",
@@ -1465,18 +1471,18 @@ function buildReviewSuggestionPrompt(
     "Return REVIEW blocks only. Do not output FILE blocks. Do not wrap the response in markdown fences.",
     "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
-    index ? `## Current Wiki Index\n${trimLongText(index, indexCap)}` : "",
+    index ? `## Current Wiki Index\n${trimToTokenBudget(index, indexCap)}` : "",
     "",
     `## Source\n${sourceIdentity}`,
     "",
     "## Stage 1 Analysis",
-    trimLongText(analysis, sectionCap),
+    trimToTokenBudget(analysis, sectionCap),
     "",
     "## Source Context",
-    trimLongText(sourceContext, sectionCap),
+    trimToTokenBudget(sourceContext, sectionCap),
     "",
     "## Generated Wiki Output",
-    trimLongText(generation, sectionCap),
+    trimToTokenBudget(generation, sectionCap),
   ].filter(Boolean).join("\n")
 }
 
@@ -1486,56 +1492,35 @@ function buildReviewSuggestionPrompt(
 // consolidate. Checkpointed under .llm-wiki/ingest-progress/ so an
 // interrupted long ingest can resume. Sources within budget return
 // { chunked: false } and the normal single-pass flow is unchanged.
-const LONG_SOURCE_MIN_BUDGET = 8_000
+// Budgets in TOKENS.
+const LONG_SOURCE_MIN_BUDGET = 3_000
 const LONG_SOURCE_MAX_SINGLE_PASS_BUDGET = 300_000
+// Chunk size clamps are in CHARACTERS — the splitter works on text. The
+// char target is derived from the token budget via the source's own
+// chars-per-token (see analyzeLongSourceInChunks), so CJK gets smaller
+// char chunks and Latin larger ones for the same token budget.
 const LONG_SOURCE_CHUNK_MIN = 12_000
 const LONG_SOURCE_CHUNK_MAX = 60_000
+// Internal storage caps in CHARACTERS (rolling digest / per-chunk notes).
 const LONG_SOURCE_DIGEST_MAX = 15_000
 const LONG_SOURCE_CHUNK_ANALYSIS_MAX = 40_000
 
 // ── Self-healing per-chunk analysis ───────────────────────────────
-// Chunk sizing is budgeted in CHARACTERS, but providers enforce their
-// context window in TOKENS. For CJK text 1 char ≈ 1–2 tokens (vs ~0.25
-// for English), so a char-budgeted chunk that's fine for English can blow
-// past a smaller model's token window — the user hits
-// "context window exceeds limit". Two defenses, applied to EVERY long
-// source (epub, pdf, docx, txt, pasted notes — anything routed through the
-// chunked path), not just one file:
-//   1. CJK-aware initial sizing (see cjkRatio) shrinks chunks up-front for
-//      CJK-heavy text so most requests fit on the first try.
+// Chunk sizing targets a TOKEN budget (the source's char→token ratio turns
+// it into a char split target — see analyzeLongSourceInChunks), so CJK
+// content gets smaller char chunks up-front. Two defenses, applied to EVERY
+// long source (epub, pdf, docx, txt, pasted notes — anything routed through
+// the chunked path), not just one file:
+//   1. Token-aware initial sizing so most requests fit on the first try.
 //   2. Runtime self-healing (analyzeChunkResilient): if a request still
 //      overflows, bisect THIS chunk and retry the halves — recursively,
 //      down to a floor — instead of failing the whole ingest. Transient
 //      provider overload (HTTP 529 / 429) is retried with backoff.
 // Completed chunks are checkpointed, so none of this re-does prior work.
 const CHUNK_OVERLOAD_MAX_RETRIES = 5
-const CHUNK_OVERFLOW_MIN_CHARS = 1_500
-const CHUNK_OVERFLOW_MIN_INDEX_CAP = 6_000
-
-/**
- * Fraction of `text` that is CJK (ideographs, kana, hangul, fullwidth /
- * CJK punctuation) — the characters that cost disproportionately more
- * tokens than Latin text. Sampled on very large inputs to stay O(1)-ish.
- */
-export function cjkRatio(text: string): number {
-  if (!text) return 0
-  const step = text.length > 200_000 ? Math.floor(text.length / 200_000) : 1
-  let cjk = 0
-  let total = 0
-  for (let i = 0; i < text.length; i += step) {
-    const c = text.charCodeAt(i)
-    total++
-    if (
-      (c >= 0x3000 && c <= 0x9fff) || // CJK punctuation, kana, ideographs (+ ext A)
-      (c >= 0xac00 && c <= 0xd7af) || // Hangul syllables
-      (c >= 0xf900 && c <= 0xfaff) || // CJK compatibility ideographs
-      (c >= 0xff00 && c <= 0xffef) // Fullwidth / halfwidth forms
-    ) {
-      cjk++
-    }
-  }
-  return total > 0 ? cjk / total : 0
-}
+const CHUNK_OVERFLOW_MIN_CHARS = 1_500 // chars (chunk text floor for bisection)
+const CHUNK_OVERFLOW_MIN_INDEX_CAP = 2_000 // tokens (index trim floor)
+const CHUNK_ANALYSIS_INDEX_CAP = 8_000 // tokens (default index cap per chunk call)
 
 /** Promise-based sleep that rejects promptly if the ingest is cancelled. */
 function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
@@ -1681,14 +1666,15 @@ async function streamTextWithOverloadRetry(
 const STAGE_OVERFLOW_MAX_SHRINKS = 4
 
 /**
- * Cap `text` to `base * factor` chars, but NEVER on the first attempt
- * (factor >= 1) — the first try must be byte-for-byte what we'd have sent
- * before self-healing existed, so sources that already fit are untouched.
- * Trimming only engages once an overflow has forced a shrink (factor < 1).
+ * Cap `text` to `baseTokens * factor` TOKENS, but NEVER on the first
+ * attempt (factor >= 1) — the first try must be byte-for-byte what we'd
+ * have sent before self-healing existed, so sources that already fit are
+ * untouched. Trimming only engages once an overflow has forced a shrink
+ * (factor < 1).
  */
-function capByFactor(text: string, base: number, factor: number): string {
+function capByFactor(text: string, baseTokens: number, factor: number): string {
   if (factor >= 1) return text
-  return trimLongText(text, Math.max(2_000, Math.floor(base * factor)))
+  return trimToTokenBudget(text, Math.max(1_000, Math.floor(baseTokens * factor)))
 }
 
 /**
@@ -1871,11 +1857,14 @@ function clampNumber(value: number, min: number, max: number): number {
 
 export function computeIngestSourceBudget(
   maxContextSize: number | undefined,
-  stableContextLength: number,
+  stableContextTokens: number,
 ): number {
+  // All values are TOKENS. Reserve room for the response, the stable
+  // prompt sections (schema/purpose/index/overview), and the fixed
+  // instruction scaffolding, then give the rest to the source.
   const { maxCtx, responseReserve } = computeContextBudget(maxContextSize)
-  const stableReserve = Math.min(Math.floor(maxCtx * 0.25), Math.max(12_000, stableContextLength))
-  const instructionReserve = Math.max(12_000, Math.floor(maxCtx * 0.08))
+  const stableReserve = Math.min(Math.floor(maxCtx * 0.25), Math.max(3_000, stableContextTokens))
+  const instructionReserve = Math.max(3_000, Math.floor(maxCtx * 0.08))
   const available = maxCtx - responseReserve - stableReserve - instructionReserve
   const upper = Math.min(LONG_SOURCE_MAX_SINGLE_PASS_BUDGET, Math.max(LONG_SOURCE_MIN_BUDGET, Math.floor(maxCtx * 0.6)))
   return clampNumber(Math.floor(available), LONG_SOURCE_MIN_BUDGET, upper)
@@ -2100,8 +2089,8 @@ function buildChunkAnalysisSystemPrompt(
   sourceContent: string,
   // The wiki index is the one prompt section we can shrink when a request
   // overflows the model's context window (the chunk text is the payload we
-  // must keep). Self-healing retries pass a progressively smaller cap.
-  indexCap = 40_000,
+  // must keep). Token budget; self-healing retries pass a smaller cap.
+  indexCap = 8_000,
 ): string {
   return [
     "You are analyzing a long source document for a personal wiki.",
@@ -2127,7 +2116,7 @@ function buildChunkAnalysisSystemPrompt(
     "Stable project context follows. It changes rarely and should be treated as background:",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
     schema ? `## Wiki Schema\n${schema}` : "",
-    index ? `## Current Wiki Index\n${trimLongText(index, indexCap)}` : "",
+    index ? `## Current Wiki Index\n${trimToTokenBudget(index, indexCap)}` : "",
   ].filter(Boolean).join("\n")
 }
 
@@ -2176,21 +2165,23 @@ async function analyzeLongSourceInChunks(
   // even if the sizing formula evolved since — that keeps already-analyzed
   // chunks aligned so a resume skips them instead of re-slicing and
   // re-running the whole book from scratch. Only when there's no prior work
-  // do we size fresh, and CJK-heavy text gets smaller chunks up-front
-  // (1 CJK char ≈ 1–2 tokens, so a char-budget calibrated for English
-  // would otherwise overflow a smaller model's token window).
+  // do we size fresh: the chunk's TOKEN target is converted to a CHARACTER
+  // split target using the source's own chars-per-token, so CJK text (≈1
+  // char/token) gets a smaller char chunk than Latin (≈4 chars/token) for
+  // the same token budget — which is exactly what keeps a smaller model's
+  // token window from overflowing.
   const priorCheckpoint = await loadReusableLongSourceCheckpoint(
     checkpointPath, sourceIdentity, sourceHash, sourceContent.length,
   )
   // Only inherit a prior chunk plan when it actually carries completed work
   // worth preserving. A checkpoint stuck at 0 completed chunks (e.g. an old
   // run that failed on chunk 1 before self-healing existed) has nothing to
-  // reuse — prefer fresh CJK-aware sizing over inheriting its oversized
-  // chunks, so the re-run needs fewer runtime bisections.
+  // reuse — prefer fresh sizing over inheriting its oversized chunks, so the
+  // re-run needs fewer runtime bisections.
   const reusable = priorCheckpoint && priorCheckpoint.completedThrough > 0 ? priorCheckpoint : null
-  const cjk = cjkRatio(sourceContent)
+  const targetTokens = Math.floor(sourceBudget * 0.55)
   const freshTarget = clampNumber(
-    Math.floor(sourceBudget * 0.55 * (1 - 0.5 * cjk)),
+    Math.floor(targetTokens * charsPerToken(sourceContent)),
     LONG_SOURCE_CHUNK_MIN,
     LONG_SOURCE_CHUNK_MAX,
   )
@@ -2260,7 +2251,7 @@ async function analyzeLongSourceInChunks(
       result = await analyzeChunkResilient(
         llmConfig, purpose, schema, index, sourceContent, sourceIdentity,
         folderContext, chunk, chunk.main, chunk.overlapBefore,
-        globalDigest, 40_000, signal,
+        globalDigest, CHUNK_ANALYSIS_INDEX_CAP, signal,
         (note) => activity.updateItem(activityId, {
           detail: `Analyzing long source chunk ${chunk.index}/${chunk.total} — ${note}`,
         }),
@@ -2304,7 +2295,7 @@ async function analyzeLongSourceInChunks(
     // generation attempt would be a doomed giant request before the
     // shrink-retry could kick in. The digest above carries the cross-chunk
     // summary; trimming the per-chunk tail is the right thing to drop.
-    trimLongText(analyses.join("\n\n"), Math.max(sourceBudget, LONG_SOURCE_CHUNK_ANALYSIS_MAX)),
+    trimToTokenBudget(analyses.join("\n\n"), Math.max(sourceBudget, 10_000)),
   ].join("\n")
 
   const sourceContext = [
@@ -2316,7 +2307,7 @@ async function analyzeLongSourceInChunks(
     globalDigest || "(No digest produced.)",
     "",
     "## Chunk Analysis Notes",
-    trimLongText(analyses.join("\n\n"), Math.max(sourceBudget, LONG_SOURCE_CHUNK_ANALYSIS_MAX)),
+    trimToTokenBudget(analyses.join("\n\n"), Math.max(sourceBudget, 10_000)),
   ].join("\n")
 
   return { chunked: true, analysis, sourceContext, checkpointPath }

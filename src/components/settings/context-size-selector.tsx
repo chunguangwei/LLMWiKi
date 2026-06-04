@@ -11,10 +11,10 @@ const CONTEXT_PRESETS = [
   { value: 1000000, label: "1M" },
 ]
 
-function formatSize(chars: number): string {
-  if (chars >= 1000000) return `${(chars / 1000000).toFixed(1)}M characters`
-  if (chars >= 1000) return `${Math.round(chars / 1000)}K characters`
-  return `${chars} characters`
+function formatSize(tokens: number): string {
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M tokens`
+  if (tokens >= 1000) return `${Math.round(tokens / 1000)}K tokens`
+  return `${tokens} tokens`
 }
 
 export function ContextSizeSelector({
@@ -36,7 +36,7 @@ export function ContextSizeSelector({
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm font-medium">{formatSize(value)}</span>
         <span className="text-xs text-muted-foreground">
-          ~{Math.floor((value * 0.6) / 1000)}K chars for wiki content
+          ~{Math.floor((value * 0.6) / 1000)}K tokens for wiki content
         </span>
       </div>
       <input

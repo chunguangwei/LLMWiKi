@@ -18,6 +18,7 @@ import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
 import { getOutputLanguage, buildLanguageReminder } from "@/lib/output-language"
 import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
+import { estimateTokens, trimToTokenBudget } from "@/lib/token-estimate"
 import {
   addFilesToRawWithContext,
   addImagesToRawWithContext,
@@ -795,13 +796,16 @@ export function ChatPanel() {
         const topSearchResults = searchResults.slice(0, 10)
 
         // ── Trim index by relevance if over budget ─────────────
+        // Budgets are TOKENS (see token-estimate.ts) — measure with
+        // estimateTokens, not raw char length, so a CJK index isn't
+        // wrongly judged to "fit" when it actually exceeds the window.
         let index = rawIndex
-        if (rawIndex.length > INDEX_BUDGET) {
+        if (estimateTokens(rawIndex) > INDEX_BUDGET) {
           const { tokenizeQuery } = await import("@/lib/search")
           const tokens = tokenizeQuery(text)
           const lines = rawIndex.split("\n")
           const keptLines: string[] = []
-          let keptSize = 0
+          let keptTokens = 0
 
           for (const line of lines) {
             const isHeader = line.startsWith("##")
@@ -809,9 +813,10 @@ export function ChatPanel() {
             const isRelevant = tokens.some((t) => lower.includes(t))
 
             if (isHeader || isRelevant) {
-              if (keptSize + line.length + 1 <= INDEX_BUDGET) {
+              const lineTokens = estimateTokens(line) + 1
+              if (keptTokens + lineTokens <= INDEX_BUDGET) {
                 keptLines.push(line)
-                keptSize += line.length + 1
+                keptTokens += lineTokens
               }
             }
           }
@@ -844,22 +849,26 @@ export function ChatPanel() {
         graphExpansions.sort((a, b) => b.relevance - a.relevance)
 
         // ── Phase 3 & 4: Page budget control ───────────────────
-        let usedChars = 0
+        // Budgets/measurements are in TOKENS so the packed prompt actually
+        // fits the model's window regardless of script (a char count would
+        // over-pack CJK pages by ~4×).
+        let usedTokens = 0
         type PageEntry = { title: string; path: string; content: string; priority: number }
         const relevantPages: PageEntry[] = []
         const addedPaths = new Set<string>()
 
         const tryAddPage = async (title: string, filePath: string, priority: number): Promise<boolean> => {
-          if (usedChars >= PAGE_BUDGET) return false
+          if (usedTokens >= PAGE_BUDGET) return false
           try {
             const raw = await readFile(filePath)
             const relativePath = getRelativePath(filePath, pp)
             if (addedPaths.has(relativePath)) return false
-            const truncated = raw.length > MAX_PAGE_SIZE
-              ? raw.slice(0, MAX_PAGE_SIZE) + "\n\n[...truncated...]"
+            const truncated = estimateTokens(raw) > MAX_PAGE_SIZE
+              ? trimToTokenBudget(raw, MAX_PAGE_SIZE)
               : raw
-            if (usedChars + truncated.length > PAGE_BUDGET) return false
-            usedChars += truncated.length
+            const pageTokens = estimateTokens(truncated)
+            if (usedTokens + pageTokens > PAGE_BUDGET) return false
+            usedTokens += pageTokens
             addedPaths.add(relativePath)
             relevantPages.push({ title, path: relativePath, content: truncated, priority })
             return true

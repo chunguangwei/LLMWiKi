@@ -14,31 +14,27 @@ import { describe, it, expect } from "vitest"
 import { computeContextBudget } from "./context-budget"
 
 describe("computeContextBudget", () => {
-  it("falls back to 204,800 chars when input is undefined / 0 / NaN", () => {
+  it("falls back to 204,800 tokens when input is undefined / 0 / NaN", () => {
     expect(computeContextBudget(undefined).maxCtx).toBe(204_800)
     expect(computeContextBudget(0).maxCtx).toBe(204_800)
     expect(computeContextBudget(NaN).maxCtx).toBe(204_800)
   })
 
-  it("8K-class small model: per-page cap clamps to pageBudget so one page can fully use the budget", () => {
+  it("8K-class small model: per-page cap is the 1,500-token floor (above the 30% rule)", () => {
     const b = computeContextBudget(8_192)
-    // pageBudget = 4,096 (50%); per-page floor of 5,000 would exceed
-    // that, so per-page MUST clamp down to pageBudget itself.
-    // Otherwise tryAddPage would slice to 5K, then reject the slice
-    // for being > 4K total budget — net result: page never makes it.
+    // pageBudget = 4,096 (50%); 30% = 1,228 < 1,500 floor → maxPageSize =
+    // 1,500 (and 1,500 < pageBudget so it isn't clamped to pageBudget).
     expect(b.pageBudget).toBe(4_096)
-    expect(b.maxPageSize).toBe(4_096)
+    expect(b.maxPageSize).toBe(1_500)
     expect(b.responseReserve).toBe(1_228)
     expect(b.indexBudget).toBe(409)
   })
 
-  it("32K mid-tier: floor of 5,000 chars/page is the binding cap, not the 30% rule", () => {
+  it("32K mid-tier: 30% rule binds (4,800 tokens), above the 1,500-token floor", () => {
     const b = computeContextBudget(32_000)
-    // pageBudget = 16,000; 30% = 4,800 < 5,000 floor → maxPageSize = 5,000.
-    // Pin this so a regression that drops the floor would surface as
-    // a tiny per-page truncation on small-context configs.
+    // pageBudget = 16,000; 30% = 4,800 > 1,500 floor → maxPageSize = 4,800.
     expect(b.pageBudget).toBe(16_000)
-    expect(b.maxPageSize).toBe(5_000)
+    expect(b.maxPageSize).toBe(4_800)
   })
 
   it("128K config: 30% rule kicks in, per-page = 19,200", () => {

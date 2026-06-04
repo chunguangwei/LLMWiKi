@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest"
 import {
-  cjkRatio,
   splitTextInHalf,
   isContextOverflowError,
   isOverloadError,
@@ -9,38 +8,8 @@ import {
 // Self-healing long-source helpers. Pure functions only — the bisection
 // orchestration that consumes them lives in analyzeChunkResilient and is
 // exercised end-to-end by the real-LLM suite. These guard the decisions
-// that gate it: how CJK-heavy a source is, where to cut, and which
-// provider errors are recoverable.
-
-describe("cjkRatio", () => {
-  it("is ~0 for pure ASCII and ~1 for pure Chinese", () => {
-    expect(cjkRatio("The quick brown fox.")).toBeLessThan(0.05)
-    expect(cjkRatio("司马光资治通鉴柏杨白话版")).toBeGreaterThan(0.95)
-  })
-
-  it("counts kana and hangul as CJK", () => {
-    expect(cjkRatio("ひらがなカタカナ")).toBeGreaterThan(0.9)
-    expect(cjkRatio("한국어텍스트")).toBeGreaterThan(0.9)
-  })
-
-  it("sits in between for mixed text", () => {
-    const r = cjkRatio("Genghis 成吉思汗 conquered 蒙古 in 1206")
-    expect(r).toBeGreaterThan(0.1)
-    expect(r).toBeLessThan(0.6)
-  })
-
-  it("returns 0 for empty input", () => {
-    expect(cjkRatio("")).toBe(0)
-  })
-
-  it("drives the CJK sizing scale below 1 for Chinese and ~1 for English", () => {
-    // Mirrors the (1 - 0.5 * cjk) multiplier used for initial chunk sizing:
-    // Chinese books get materially smaller chunks, English ones don't.
-    const scale = (t: string) => 1 - 0.5 * cjkRatio(t)
-    expect(scale("司马光资治通鉴柏杨白话版")).toBeLessThan(0.55)
-    expect(scale("The quick brown fox jumped.")).toBeGreaterThan(0.95)
-  })
-})
+// that gate it: where to cut a chunk, and which provider errors are
+// recoverable. (Script-aware sizing now lives in token-estimate.ts.)
 
 describe("splitTextInHalf", () => {
   it("reconstructs the original exactly (no chars dropped or duplicated)", () => {

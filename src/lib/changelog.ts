@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.43",
+    date: "2026-06-04",
+    highlights: {
+      en: [
+        "Context-window budgeting is now token-based instead of character-based — a much better fit for how models actually count. The same number of characters is far more tokens in Chinese/Japanese/Korean than in English, so the old char-based sizing simultaneously overflowed CJK sources (the errors you hit) and wasted half the window on English ones. Ingest chunking, ingest generation, and chat context-packing now estimate tokens per script and budget against the model's real token window. The \"Context window\" setting is now labeled in tokens (its preset values were already each model's token window, so existing setups are now interpreted correctly). The self-healing retry remains as a backstop for the estimate's residual error and unknown providers.",
+      ],
+      zh: [
+        "上下文窗口预算从「按字符」改成「按 token」——这更贴合模型真实的计数方式。同样的字符数，中文/日文/韩文折算出的 token 远多于英文，所以旧的按字符估算会同时「撑爆中文源」（你遇到的报错）和「在英文上浪费一半窗口」。现在导入分块、导入生成、聊天上下文打包都会按文字脚本估算 token，并对照模型真实的 token 窗口来分配预算。设置里的「上下文窗口」现已标注为 token（其预设值本来就是各模型的 token 窗口，所以你现有的配置现在会被正确解读）。自愈重试仍作为估算残差和未知供应商的兜底。",
+      ],
+    },
+  },
+  {
     version: "0.4.42",
     date: "2026-06-04",
     highlights: {

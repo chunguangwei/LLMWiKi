@@ -40,8 +40,9 @@ describe("computeIngestReviewMaxTokens", () => {
 
 describe("computeIngestSourceBudget", () => {
   it("never drops below the long-source minimum and respects the single-pass ceiling", () => {
+    // Units are TOKENS now; min budget is 3,000 tokens, ceiling 300,000.
     const tiny = computeIngestSourceBudget(8_000, 1_000)
-    expect(tiny).toBeGreaterThanOrEqual(8_000)
+    expect(tiny).toBeGreaterThanOrEqual(3_000)
     const huge = computeIngestSourceBudget(2_000_000, 1_000)
     expect(huge).toBeLessThanOrEqual(300_000)
   })
