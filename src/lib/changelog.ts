@@ -26,6 +26,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.40",
+    date: "2026-06-04",
+    highlights: {
+      en: [
+        "Cmd/Ctrl+F now adapts to context. With a wiki page open it still searches the current page (find-in-page); with no page open — on the graph, lint, sources, review or search views — it jumps straight to global search and focuses the box, so you can locate a wiki page by name with one keystroke from anywhere.",
+        "The ingest \"Resume\" button no longer looks unresponsive. Clicking it now hides the button immediately and shows a brief \"Resuming…\" spinner; once the source re-enters the queue the errored row is replaced by a running row with a progress bar — so there's nothing left to click twice. (If the resume turns out to be a no-op, the button comes back.)",
+      ],
+      zh: [
+        "Cmd/Ctrl+F 现在会看场景。打开 wiki 页面时仍是查找当前页（页内查找）；没有打开页面时——在图谱、校对、来源、审阅或搜索视图——会直接跳到全局搜索并聚焦输入框，让你在任意位置一键按名字定位 wiki 页。",
+        "导入「继续」按钮不再像点了没反应。点击后按钮会立刻消失并短暂显示「继续中…」转圈；文件重新进入队列后，报错行会被替换成带进度条的运行中行——也就没有可以重复点的按钮了。（若续跑其实是空操作，按钮会再出现。）",
+      ],
+    },
+  },
+  {
     version: "0.4.39",
     date: "2026-06-03",
     highlights: {

@@ -88,6 +88,29 @@ function App() {
     return () => window.removeEventListener("keydown", handler)
   }, [])
 
+  // Cmd/Ctrl+F — smart find. When a wiki page is open, find-in-page
+  // (preview-panel) intercepts the keystroke FIRST in the capture phase
+  // and stops propagation, so this bubble-phase handler never runs. When
+  // there's no page to search over (graph/lint/sources/review/search
+  // views, or the wiki view with nothing selected), find-in-page isn't
+  // mounted, so the keystroke bubbles up to here and we jump to the global
+  // search instead — the natural "locate a wiki page by name" entry point.
+  // `requestSearchFocus()` re-focuses the input even when the search view
+  // is already showing (where the input's autoFocus wouldn't re-fire).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const isMeta = e.metaKey || e.ctrlKey
+      if (isMeta && (e.key === "f" || e.key === "F") && !e.altKey && !e.shiftKey) {
+        e.preventDefault()
+        const store = useWikiStore.getState()
+        store.setActiveView("search")
+        store.requestSearchFocus()
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [])
+
   // Dev-only helper for visually testing the update-banner UX.
   // Open dev tools and run:
   //   __llmwiki_testUpdateBanner()

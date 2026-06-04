@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react"
+import { useState, useCallback, useMemo, useEffect, useRef } from "react"
 import { Search, FileText, ImageIcon, X, ArrowUpRight } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile } from "@/commands/fs"
@@ -31,6 +31,8 @@ export function SearchView() {
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setPendingScrollImageSrc = useWikiStore((s) => s.setPendingScrollImageSrc)
+  const searchFocusRequest = useWikiStore((s) => s.searchFocusRequest)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<SearchResult[]>([])
@@ -114,6 +116,17 @@ export function SearchView() {
   const supportingImages = imageHits.filter((h) => !h.altMatchesQuery)
   const visibleImages = showSupportingImages ? imageHits : matchingImages
 
+  // Focus + select the search box whenever the global Cmd/Ctrl+F handler
+  // bumps `searchFocusRequest`. Skip the initial mount (value 0) — the
+  // input's own `autoFocus` already covers the first render, and selecting
+  // an empty field then is a no-op anyway. On repeat presses (view already
+  // mounted) this is the only thing that re-focuses it.
+  useEffect(() => {
+    if (searchFocusRequest === 0) return
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [searchFocusRequest])
+
   async function handleOpen(path: string) {
     try {
       const content = await readFile(path)
@@ -188,6 +201,7 @@ export function SearchView() {
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
+            ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}

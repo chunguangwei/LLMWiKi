@@ -167,7 +167,7 @@ export function ActivityPanel() {
   // click from spawning a duplicate "pending re-run" behind the one that's
   // already processing. If the same source is already queued/processing we
   // skip the enqueue entirely and just clear the stale error row.
-  const handleActivityResume = useCallback((itemId: string, sourcePath: string) => {
+  const handleActivityResume = useCallback(async (itemId: string, sourcePath: string) => {
     if (!project) return
     const activity = useActivityStore.getState()
     const fileName = getFileName(sourcePath)
@@ -178,14 +178,15 @@ export function ActivityPanel() {
       activity.removeItem(itemId)
       return
     }
-    void enqueueSourceIngest(project, [sourcePath], useWikiStore.getState().llmConfig)
-      .then((ids) => {
-        // Only drop the error row if we actually queued something. An empty
-        // result means nothing ran (no usable LLM / not ingestable) — keep
-        // the row so the failure stays visible.
-        if (ids.length > 0) activity.removeItem(itemId)
-      })
-      .catch((err) => console.error("[activity-panel] resume ingest failed:", err))
+    try {
+      const ids = await enqueueSourceIngest(project, [sourcePath], useWikiStore.getState().llmConfig)
+      // Only drop the error row if we actually queued something. An empty
+      // result means nothing ran (no usable LLM / not ingestable) — keep
+      // the row so the failure stays visible.
+      if (ids.length > 0) activity.removeItem(itemId)
+    } catch (err) {
+      console.error("[activity-panel] resume ingest failed:", err)
+    }
   }, [project])
 
   const handleCancelAll = useCallback(() => {
@@ -567,14 +568,22 @@ function FileSyncRow({ task, onRetry, onIgnore }: { task: FileChangeTask; onRetr
   )
 }
 
-function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCancel?: () => void; onResume?: (itemId: string, sourcePath: string) => void }) {
+function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCancel?: () => void; onResume?: (itemId: string, sourcePath: string) => void | Promise<void> }) {
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const project = useWikiStore((s) => s.project)
   const { t } = useTranslation()
+  // Disables the Resume button the instant it's clicked. Resuming routes
+  // the source back into the queue (async), and on success this row is
+  // removed and replaced by a fresh "running" item with a progress bar.
+  // Without this latch the button keeps sitting there during the brief
+  // enqueue gap, so an impatient user clicks it again (or wonders if it
+  // did anything) — exactly the "继续 looked unresponsive" confusion. Once
+  // resuming, we hide the button entirely so there's nothing left to click.
+  const [resuming, setResuming] = useState(false)
   // Offer "Resume" only for errored ingest items that still know their
   // source path. Re-ingest is idempotent (cache + checkpoint), so this
   // covers both the "interrupted by reload" case and any mid-run failure.
-  const canResume = item.status === "error" && !!item.sourcePath && !!onResume
+  const canResume = item.status === "error" && !!item.sourcePath && !!onResume && !resuming
 
   function handleFileClick(filePath: string) {
     if (!project) return
@@ -627,13 +636,28 @@ function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCance
         )}
         {canResume && (
           <button
-            onClick={() => onResume!(item.id, item.sourcePath!)}
+            onClick={() => {
+              setResuming(true)
+              // If the resume is a no-op or fails (e.g. no usable LLM), the
+              // row stays mounted — un-latch so the button comes back rather
+              // than vanishing permanently. On success the row unmounts and
+              // this setState is harmlessly dropped.
+              Promise.resolve(onResume!(item.id, item.sourcePath!))
+                .catch(() => {})
+                .finally(() => setResuming(false))
+            }}
             className="shrink-0 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
             title={t("activity.resumeTitle")}
           >
             <RotateCcw className="h-3 w-3" />
             {t("activity.resume")}
           </button>
+        )}
+        {item.status === "error" && resuming && (
+          <span className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {t("activity.resuming", { defaultValue: "Resuming…" })}
+          </span>
         )}
       </div>
 

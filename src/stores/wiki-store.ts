@@ -273,6 +273,15 @@ interface WikiState {
   pendingScrollImageSrc: string | null
   chatExpanded: boolean
   activeView: "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "settings"
+  /**
+   * One-shot "focus the global search input" signal. Bumped by the
+   * Cmd/Ctrl+F handler when no wiki page is open (so find-in-page can't
+   * claim the keystroke) — SearchView watches this counter and focuses +
+   * selects its input on each change, so the shortcut works even when the
+   * search view is already mounted (where `autoFocus` alone wouldn't
+   * re-fire).
+   */
+  searchFocusRequest: number
   llmConfig: LlmConfig
   /** Per-provider-preset stored overrides (API key, model, endpoint, …). */
   providerConfigs: ProviderConfigs
@@ -397,6 +406,7 @@ interface WikiState {
   setPendingScrollImageSrc: (src: string | null) => void
   setChatExpanded: (expanded: boolean) => void
   setActiveView: (view: WikiState["activeView"]) => void
+  requestSearchFocus: () => void
   setLlmConfig: (config: LlmConfig) => void
   setProviderConfigs: (configs: ProviderConfigs) => void
   setActivePresetId: (id: string | null) => void
@@ -427,6 +437,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   pendingScrollImageSrc: null,
   chatExpanded: false,
   activeView: "wiki",
+  searchFocusRequest: 0,
   llmConfig: {
     provider: "openai",
     apiKey: "",
@@ -449,6 +460,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),
   setChatExpanded: (chatExpanded) => set({ chatExpanded }),
   setActiveView: (activeView) => set({ activeView }),
+  requestSearchFocus: () => set((state) => ({ searchFocusRequest: state.searchFocusRequest + 1 })),
   searchApiConfig: {
     provider: "none",
     apiKey: "",
