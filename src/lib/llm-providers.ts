@@ -115,13 +115,18 @@ const JSON_CONTENT_TYPE = "application/json"
  * `src-tauri/Cargo.toml` lets reqwest forward Origin without
  * stripping it. End-to-end our value wins.
  */
-function localLlmOriginHeader(): Record<string, string> {
+export function localLlmOriginHeader(): Record<string, string> {
   return { Origin: "http://localhost" }
 }
 
 function parseOpenAiLine(line: string): string | null {
-  if (!line.startsWith("data: ")) return null
-  const data = line.slice(6).trim()
+  // Accept both `data: {...}` (standard SSE, space after colon) and
+  // `data:{...}` (some third-party gateways, e.g. Kimi Coding Plan, omit
+  // the space). Slice past the bare "data:" prefix and trim so either
+  // spacing parses identically; without this every event was silently
+  // discarded and the stream produced empty content.
+  if (!line.startsWith("data:")) return null
+  const data = line.slice(5).trim()
   if (data === "[DONE]") return null
   try {
     const parsed = JSON.parse(data) as {
@@ -133,20 +138,46 @@ function parseOpenAiLine(line: string): string | null {
   }
 }
 
-function parseAnthropicLine(line: string): string | null {
-  if (!line.startsWith("data: ")) return null
-  const data = line.slice(6).trim()
+export function parseAnthropicLine(line: string): string | null {
+  // Same relaxed `data:` prefix handling as parseOpenAiLine — third-party
+  // Anthropic-compatible gateways (Kimi/Moonshot) sometimes drop the space.
+  if (!line.startsWith("data:")) return null
+  const data = line.slice(5).trim()
+  if (data === "[DONE]") return null
   try {
-    const parsed = JSON.parse(data) as {
-      type: string
-      delta?: { type: string; text?: string }
-    }
+    const parsed = JSON.parse(data) as Record<string, unknown>
+
+    // Standard Anthropic streaming: content_block_delta with text_delta.
+    // Also accept a bare `text` field with no `type` inside delta — some
+    // gateways emit `delta: { text: "..." }` without the `text_delta` tag.
+    const delta = parsed.delta as Record<string, unknown> | undefined
     if (
       parsed.type === "content_block_delta" &&
-      parsed.delta?.type === "text_delta"
+      (delta?.type === "text_delta" || typeof delta?.text === "string")
     ) {
-      return parsed.delta.text ?? null
+      return (delta.text as string) ?? null
     }
+
+    // Some third-party Anthropic-compatible gateways (e.g. Kimi/Moonshot)
+    // emit the complete assistant message as a single SSE event instead
+    // of incremental content_block_delta chunks. Concatenate every text
+    // block and skip non-text blocks (tool_use, etc.) so multi-block
+    // single-shot messages don't lose their tail.
+    if (parsed.type === "message" && Array.isArray(parsed.content)) {
+      const text = (parsed.content as Array<Record<string, unknown>>)
+        .map((block) => (typeof block.text === "string" ? block.text : ""))
+        .join("")
+      return text.length > 0 ? text : null
+    }
+
+    // Fallback: misconfigured proxies occasionally return OpenAI-shaped
+    // chunks on an Anthropic wire. Extract delta.content when present.
+    const choices = parsed.choices as Array<Record<string, unknown>> | undefined
+    if (choices && choices[0]) {
+      const choiceDelta = choices[0].delta as Record<string, unknown> | undefined
+      if (typeof choiceDelta?.content === "string") return choiceDelta.content
+    }
+
     return null
   } catch {
     return null
@@ -154,8 +185,9 @@ function parseAnthropicLine(line: string): string | null {
 }
 
 export function parseGoogleLine(line: string): string | null {
-  if (!line.startsWith("data: ")) return null
-  const data = line.slice(6).trim()
+  // Accept `data:{...}` without the trailing space too (see parseOpenAiLine).
+  if (!line.startsWith("data:")) return null
+  const data = line.slice(5).trim()
   try {
     const parsed = JSON.parse(data) as {
       candidates: Array<{
@@ -366,6 +398,37 @@ function buildOpenAiCompatibleBody(
     return body
   }
 
+  if (config.provider === "ollama") {
+    // Ollama's OpenAI-compatible /v1/chat/completions maps reasoning
+    // control onto `reasoning_effort` ("high"|"medium"|"low"|"none";
+    // "none" disables thinking). This is the only lever that stops a
+    // thinking-capable model — or a non-thinking one Ollama wraps with a
+    // thinking template — from spending its entire token budget on
+    // chain-of-thought and ending the stream with an empty `content`,
+    // which surfaces to the user as the "produced N chars of reasoning,
+    // but no actual response content" diagnostic. Until this, callers'
+    // `reasoning: { mode: "off" }` (every structured ingest call) was
+    // silently dropped on the Ollama path. Non-thinking models (gemma,
+    // llama) ignore the field harmlessly. "max" has no Ollama analogue,
+    // so it maps to the strongest supported level, "high". We prefer this
+    // Ollama-native control over the Qwen `chat_template_kwargs` hack
+    // below — a qwen3 model served through Ollama (e.g. "qwen3:8b") should
+    // use `reasoning_effort: none`, not the template kwarg. See
+    // docs.ollama.com/api/openai-compatibility.
+    if (reasoning.mode === "off") {
+      body.reasoning_effort = "none"
+    } else if (
+      reasoning.mode === "low" ||
+      reasoning.mode === "medium" ||
+      reasoning.mode === "high"
+    ) {
+      body.reasoning_effort = reasoning.mode
+    } else if (reasoning.mode === "max") {
+      body.reasoning_effort = "high"
+    }
+    return body
+  }
+
   if (reasoning.mode === "off" && isQwenThinkingModel(config.model)) {
     body.chat_template_kwargs = { enable_thinking: false }
   }
@@ -385,11 +448,10 @@ function buildOpenAiCompatibleBody(
  * block, and uses a different shape than OpenAI for images
  * (`source.media_type` + `source.data` instead of a `data:` URL).
  *
- * For system messages, Anthropic accepts the top-level `system`
- * field as a string OR as a content-block array. We always
- * stringify system content here because every existing system-
- * prompt call site sends a string and the round-trip through
- * blocks is lossy.
+ * System messages are flattened separately into the top-level
+ * `system` field. Anthropic accepts that field as either a string or a
+ * text-block array; we use the block array form there so the system
+ * prompt can opt into prompt caching.
  */
 function toAnthropicContent(content: string | ContentBlock[]): unknown {
   if (typeof content === "string") return content
@@ -410,7 +472,7 @@ function toAnthropicContent(content: string | ContentBlock[]): unknown {
 }
 
 /**
- * Anthropic's top-level `system` field is a string, not blocks.
+ * Anthropic's top-level `system` field accepts a string or text blocks.
  * If a caller puts images inside a system message we drop them —
  * Anthropic doesn't accept system-level images today, and silently
  * losing them is the lesser evil compared to the request 400ing
@@ -423,6 +485,24 @@ function flattenAnthropicSystem(content: string | ContentBlock[]): string {
     .join("")
 }
 
+/**
+ * Wrap the flattened system text into Anthropic's text-block form with a
+ * `cache_control: { type: "ephemeral" }` marker so the provider can cache
+ * the (large, stable) system prompt across requests. Returns undefined
+ * for an empty system prompt so we omit the field entirely rather than
+ * sending an empty cache breakpoint.
+ */
+function buildAnthropicSystem(systemText: string): unknown[] | undefined {
+  if (!systemText) return undefined
+  return [
+    {
+      type: "text",
+      text: systemText,
+      cache_control: { type: "ephemeral" },
+    },
+  ]
+}
+
 function buildAnthropicBody(
   messages: ChatMessage[],
   overrides?: RequestOverrides,
@@ -431,9 +511,10 @@ function buildAnthropicBody(
   const conversationMessages = messages
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role, content: toAnthropicContent(m.content) }))
-  const system =
-    systemMessages.map((m) => flattenAnthropicSystem(m.content)).join("\n") ||
-    undefined
+  const systemText = systemMessages
+    .map((m) => flattenAnthropicSystem(m.content))
+    .join("\n")
+  const system = buildAnthropicSystem(systemText)
 
   // Anthropic Messages uses top_p / top_k (Python-style snake_case), a
   // mandatory `max_tokens`, and `stop_sequences` instead of `stop`.
@@ -503,7 +584,16 @@ export function requiresBearerAuth(url: string): boolean {
     normalized.startsWith("https://coding.dashscope.aliyuncs.com/apps/anthropic") ||
     // Xiaomi MiMo Token Plan Anthropic gateway authenticates with
     // Authorization Bearer, matching its OpenAI-compatible gateway.
-    /(^https:\/\/|^)token-plan-cn\.xiaomimimo\.com\/anthropic(?:\/|$)/i.test(normalized)
+    /(^https:\/\/|^)token-plan-cn\.xiaomimimo\.com\/anthropic(?:\/|$)/i.test(normalized) ||
+    // Kimi Coding Plan — uses Authorization: Bearer, not x-api-key.
+    // The coding endpoint (api.kimi.com/coding) is separate from the
+    // Moonshot open platform (api.moonshot.ai) and expects Bearer auth
+    // on both its OpenAI- and Anthropic-compatible wires.
+    normalized.startsWith("https://api.kimi.com/coding") ||
+    // Moonshot open platform Anthropic-compatible wires (global + CN)
+    // also authenticate with Bearer tokens, matching their OpenAI wire.
+    normalized.startsWith("https://api.moonshot.ai/anthropic") ||
+    normalized.startsWith("https://api.moonshot.cn/anthropic")
   )
 }
 
@@ -530,12 +620,16 @@ export function buildAnthropicUrl(base: string): string {
 function buildAnthropicHeaders(apiKey: string, url: string): Record<string, string> {
   const base: Record<string, string> = {
     "Content-Type": JSON_CONTENT_TYPE,
+    // Always send the API version, including on Bearer-auth wires (Kimi,
+    // Moonshot, MiniMax, …) — some gateways reject Anthropic requests that
+    // omit it. The x-api-key path additionally needs the direct-browser
+    // access opt-in below.
+    "anthropic-version": "2023-06-01",
   }
   if (requiresBearerAuth(url)) {
     base.Authorization = `Bearer ${apiKey}`
   } else {
     base["x-api-key"] = apiKey
-    base["anthropic-version"] = "2023-06-01"
     base["anthropic-dangerous-direct-browser-access"] = "true"
   }
   return base

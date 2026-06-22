@@ -106,8 +106,32 @@ describe("Anthropic buildBody — vision content", () => {
     const body = getProviderConfig(cfg).buildBody([
       sys,
       { role: "user", content: "ok" },
-    ]) as { system?: string; messages: unknown[] }
-    expect(body.system).toBe("be terse")
+    ]) as { system?: unknown; messages: unknown[] }
+    expect(body.system).toEqual([
+      {
+        type: "text",
+        text: "be terse",
+        cache_control: { type: "ephemeral" },
+      },
+    ])
+  })
+
+  it("emits Anthropic system prompts as cacheable text blocks", () => {
+    const cfg = mkConfig({ provider: "anthropic", model: "claude-3-5-sonnet-latest" })
+    const body = getProviderConfig(cfg).buildBody([
+      { role: "system", content: "You are helpful." },
+      { role: "system", content: "Prefer concise answers." },
+      { role: "user", content: "Hi" },
+    ]) as { system?: unknown; messages: unknown[] }
+
+    expect(body.system).toEqual([
+      {
+        type: "text",
+        text: "You are helpful.\nPrefer concise answers.",
+        cache_control: { type: "ephemeral" },
+      },
+    ])
+    expect(body.messages).toEqual([{ role: "user", content: "Hi" }])
   })
 })
 
@@ -363,6 +387,62 @@ describe("reasoning controls", () => {
     expect(provider.url).toBe("https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages")
     expect(provider.headers.Authorization).toBe("Bearer sk-mimo")
     expect(provider.headers["x-api-key"]).toBeUndefined()
+    expect(provider.headers["anthropic-version"]).toBe("2023-06-01")
+  })
+
+  it("uses Bearer auth for Kimi Coding Plan Anthropic wire", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      apiKey: "sk-kimi-test",
+      model: "kimi-for-coding",
+      customEndpoint: "https://api.kimi.com/coding/",
+      apiMode: "anthropic_messages",
+    })
+    const provider = getProviderConfig(cfg)
+
+    expect(provider.url).toBe("https://api.kimi.com/coding/v1/messages")
+    expect(provider.headers.Authorization).toBe("Bearer sk-kimi-test")
+    expect(provider.headers["x-api-key"]).toBeUndefined()
+    expect(provider.headers["anthropic-version"]).toBe("2023-06-01")
+  })
+
+  it("uses Bearer auth for Moonshot Anthropic wire", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      apiKey: "sk-moonshot",
+      model: "kimi-k2.6",
+      customEndpoint: "https://api.moonshot.ai/anthropic",
+      apiMode: "anthropic_messages",
+    })
+    const provider = getProviderConfig(cfg)
+
+    expect(provider.url).toBe("https://api.moonshot.ai/anthropic/v1/messages")
+    expect(provider.headers.Authorization).toBe("Bearer sk-moonshot")
+    expect(provider.headers["x-api-key"]).toBeUndefined()
+    expect(provider.headers["anthropic-version"]).toBe("2023-06-01")
+  })
+
+  it("uses cacheable system blocks for custom Anthropic-wire providers", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      apiKey: "sk-custom",
+      model: "custom-claude",
+      customEndpoint: "https://example.com/anthropic",
+      apiMode: "anthropic_messages",
+    })
+    const body = getProviderConfig(cfg).buildBody([
+      { role: "system", content: "Project-wide instruction." },
+      { role: "user", content: "Hi" },
+    ]) as { system?: unknown; messages: unknown[] }
+
+    expect(body.system).toEqual([
+      {
+        type: "text",
+        text: "Project-wide instruction.",
+        cache_control: { type: "ephemeral" },
+      },
+    ])
+    expect(body.messages).toEqual([{ role: "user", content: "Hi" }])
   })
 
   it("disables Qwen3 thinking on OpenAI-compatible local endpoints", () => {
@@ -415,5 +495,77 @@ describe("reasoning controls", () => {
     ) as { generationConfig?: Record<string, unknown> }
 
     expect(body.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 0 })
+  })
+
+  it("maps Ollama reasoning off to reasoning_effort none (stops thinking-runaway empty content)", () => {
+    const cfg = mkConfig({
+      provider: "ollama",
+      model: "gemma3:12b",
+      ollamaUrl: "http://localhost:11434",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" }, temperature: 0.1, max_tokens: 4096 },
+    ) as Record<string, unknown>
+
+    expect(body.reasoning_effort).toBe("none")
+  })
+
+  it("uses Ollama-native reasoning control instead of Qwen chat_template_kwargs", () => {
+    const cfg = mkConfig({
+      provider: "ollama",
+      model: "qwen3:8b",
+      ollamaUrl: "http://localhost:11434",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+
+    expect(body.reasoning_effort).toBe("none")
+    expect(body.chat_template_kwargs).toBeUndefined()
+  })
+
+  it("maps Ollama low/medium/high reasoning straight through to reasoning_effort", () => {
+    const cfg = mkConfig({
+      provider: "ollama",
+      model: "qwen3:8b",
+      ollamaUrl: "http://localhost:11434",
+    })
+    for (const mode of ["low", "medium", "high"] as const) {
+      const body = getProviderConfig(cfg).buildBody(
+        [{ role: "user", content: "hi" }],
+        { reasoning: { mode } },
+      ) as Record<string, unknown>
+      expect(body.reasoning_effort).toBe(mode)
+    }
+  })
+
+  it("maps Ollama reasoning max to the strongest supported level high", () => {
+    const cfg = mkConfig({
+      provider: "ollama",
+      model: "qwen3:8b",
+      ollamaUrl: "http://localhost:11434",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "max" } },
+    ) as Record<string, unknown>
+
+    expect(body.reasoning_effort).toBe("high")
+  })
+
+  it("leaves Ollama reasoning_effort unset on auto so the model default applies", () => {
+    const cfg = mkConfig({
+      provider: "ollama",
+      model: "gemma3:12b",
+      ollamaUrl: "http://localhost:11434",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "auto" } },
+    ) as Record<string, unknown>
+
+    expect(body.reasoning_effort).toBeUndefined()
   })
 })

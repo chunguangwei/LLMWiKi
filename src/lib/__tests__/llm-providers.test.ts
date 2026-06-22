@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { buildAnthropicUrl, parseGoogleLine, getProviderConfig } from "../llm-providers"
+import { buildAnthropicUrl, parseGoogleLine, parseAnthropicLine, getProviderConfig } from "../llm-providers"
 import type { LlmConfig as RealLlmConfig } from "@/stores/wiki-store"
 
 // Inline minimal types to avoid store/zustand dependencies in unit tests
@@ -32,7 +32,10 @@ function buildMiniMaxProviderConfig(config: LlmConfig) {
     buildBody: (messages: Array<{ role: string; content: string }>) => {
       const systemMessages = messages.filter((m) => m.role === "system")
       const conversationMessages = messages.filter((m) => m.role !== "system")
-      const system = systemMessages.map((m) => m.content).join("\n") || undefined
+      const systemText = systemMessages.map((m) => m.content).join("\n")
+      const system = systemText
+        ? [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }]
+        : undefined
       return {
         messages: conversationMessages,
         ...(system !== undefined ? { system } : {}),
@@ -96,13 +99,19 @@ describe("MiniMax Provider", () => {
     expect(body.model).toBe("MiniMax-M2.7")
   })
 
-  it("separates system messages from conversation (Anthropic convention)", () => {
+  it("separates system messages from conversation and marks the system prompt cacheable", () => {
     const cfg = buildMiniMaxProviderConfig(makeConfig())
     const body = cfg.buildBody([
       { role: "system", content: "You are helpful" },
       { role: "user", content: "Hello" },
     ]) as Record<string, unknown>
-    expect(body.system).toBe("You are helpful")
+    expect(body.system).toEqual([
+      {
+        type: "text",
+        text: "You are helpful",
+        cache_control: { type: "ephemeral" },
+      },
+    ])
     expect(body.messages).toEqual([{ role: "user", content: "Hello" }])
   })
 })
@@ -164,6 +173,11 @@ describe("parseGoogleLine — Gemini SSE parsing", () => {
     expect(parseGoogleLine(line)).toBe("Hello")
   })
 
+  it("accepts SSE data lines without a space after the colon", () => {
+    const line = 'data:{"candidates":[{"content":{"parts":[{"text":"Hello"}]}}]}'
+    expect(parseGoogleLine(line)).toBe("Hello")
+  })
+
   it("concatenates text across multiple parts in one event", () => {
     // Gemini 2.5/3.x reasoning models sometimes split output across
     // multiple parts in a single streaming chunk. The old parser only
@@ -191,6 +205,56 @@ describe("parseGoogleLine — Gemini SSE parsing", () => {
 
   it("returns null for malformed JSON", () => {
     expect(parseGoogleLine("data: {not json")).toBeNull()
+  })
+})
+
+describe("parseAnthropicLine — Anthropic SSE parsing", () => {
+  it("extracts text from a standard text_delta event (with space)", () => {
+    const line = 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}'
+    expect(parseAnthropicLine(line)).toBe("Hello")
+  })
+
+  it("extracts text when delta.type is omitted (no-space SSE)", () => {
+    // Some third-party Anthropic-compatible gateways (e.g. Kimi Coding Plan)
+    // emit content_block_delta with a bare `text` field and no `type` inside
+    // delta, and sometimes omit the space after `data:`.
+    const line = 'data:{"type":"content_block_delta","index":0,"delta":{"text":"world"}}'
+    expect(parseAnthropicLine(line)).toBe("world")
+  })
+
+  it("extracts text from a complete message event (single-shot SSE)", () => {
+    const line =
+      'data: {"type":"message","id":"msg_01","role":"assistant","content":[{"type":"text","text":"Hello world"}]}'
+    expect(parseAnthropicLine(line)).toBe("Hello world")
+  })
+
+  it("concatenates all text blocks from a complete message event", () => {
+    const line =
+      'data: {"type":"message","id":"msg_01","role":"assistant","content":[{"type":"text","text":"Hello "},{"type":"tool_use","id":"tool_1"},{"type":"text","text":"world"}]}'
+    expect(parseAnthropicLine(line)).toBe("Hello world")
+  })
+
+  it("falls back to OpenAI-shaped delta.content when present", () => {
+    const line = 'data: {"choices":[{"delta":{"content":"fallback"}}]}'
+    expect(parseAnthropicLine(line)).toBe("fallback")
+  })
+
+  it("returns null for non-content-block-delta events without extractable text", () => {
+    const line = 'data: {"type":"message_start","message":{"id":"msg_01"}}'
+    expect(parseAnthropicLine(line)).toBeNull()
+  })
+
+  it("returns null for non-data lines", () => {
+    expect(parseAnthropicLine("event: start")).toBeNull()
+    expect(parseAnthropicLine("")).toBeNull()
+  })
+})
+
+describe("parseOpenAiLine — OpenAI-compatible SSE parsing", () => {
+  it("accepts SSE data lines without a space after the colon", () => {
+    const cfg = getProviderConfig(makeConfig({ provider: "openai", model: "gpt-4.1" }) as RealLlmConfig)
+    const line = 'data:{"choices":[{"delta":{"content":"Hello"}}]}'
+    expect(cfg.parseStream(line)).toBe("Hello")
   })
 })
 
