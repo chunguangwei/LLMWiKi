@@ -23,7 +23,12 @@ const { saveReviewItems, saveLintItems, saveChatHistory, saveActivityItems } = v
 
 vi.mock("./persist", () => ({ saveReviewItems, saveLintItems, saveChatHistory, saveActivityItems }))
 
-import { setupAutoSave, flushAndSuspendAutoSave, resumeAutoSave } from "./auto-save"
+import {
+  setupAutoSave,
+  flushAndSuspendAutoSave,
+  resumeAutoSave,
+  runWithSuspendedAutoSave,
+} from "./auto-save"
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
@@ -93,6 +98,39 @@ describe("auto-save project-switch guard", () => {
     vi.runAllTimers()
 
     expect(saveReviewItems).toHaveBeenCalledWith("/proj/B", [review("b1")])
+  })
+
+  it("runs the failure cleanup before resuming auto-save", async () => {
+    setProjectPath("/proj/A")
+    useReviewStore.setState({ items: [review("a1")] })
+
+    await expect(runWithSuspendedAutoSave(
+      async () => {
+        throw new Error("open failed")
+      },
+      () => {
+        // This store mutation must still be suppressed. If the helper resumed
+        // auto-save before running cleanup, it would schedule an empty write
+        // using the old project path captured before setProjectPath(null).
+        useReviewStore.setState({ items: [] })
+        setProjectPath(null)
+      },
+    )).rejects.toThrow("open failed")
+
+    saveReviewItems.mockClear()
+    saveLintItems.mockClear()
+    saveChatHistory.mockClear()
+
+    // A post-failure store change should not write empty data to the half-opened
+    // project because the cleanup cleared the active project before resume.
+    useReviewStore.setState({ items: [] })
+    useLintStore.setState({ items: [] })
+    useChatStore.setState({ conversations: [], messages: [] })
+    vi.runAllTimers()
+
+    expect(saveReviewItems).not.toHaveBeenCalled()
+    expect(saveLintItems).not.toHaveBeenCalled()
+    expect(saveChatHistory).not.toHaveBeenCalled()
   })
 
   it("skips chat flush while streaming", async () => {

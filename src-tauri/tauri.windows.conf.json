@@ -1,4 +1,13 @@
 {
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "hiddenTitle": false,
+        "titleBarStyle": "Visible"
+      }
+    ]
+  },
   "bundle": {
     "resources": ["pdfium/pdfium.dll"]
   }

@@ -21,6 +21,22 @@ const MEDIA_EXTS: &[&str] = &[
 ];
 const LEGACY_DOC_EXTS: &[&str] = &["doc", "xls", "ppt", "pages", "numbers", "key"];
 
+/// Security/integrity guard for the write-side fs commands. A relative path
+/// would be resolved against the process's current working directory — which
+/// the user never chose — so a stray relative path could create files anywhere
+/// under the launch dir instead of inside the project. Reject them up front so
+/// the caller fails loudly rather than silently scattering files.
+fn require_absolute_path(operation: &str, path: &str) -> Result<(), String> {
+    if Path::new(path).is_absolute() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{operation} requires an absolute path; got relative path '{}'",
+            path
+        ))
+    }
+}
+
 #[tauri::command]
 pub async fn read_file(path: String) -> Result<String, String> {
     // `spawn_blocking` is REQUIRED, not a perf nicety. The body does
@@ -1159,6 +1175,7 @@ fn extract_odf_text(archive: &mut zip::ZipArchive<fs::File>) -> Result<String, S
 pub async fn write_file(path: String, contents: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file", || {
+            require_absolute_path("write_file", &path)?;
             let p = Path::new(&path);
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
@@ -1179,6 +1196,7 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
 pub async fn write_file_atomic(path: String, contents: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file_atomic", || {
+            require_absolute_path("write_file_atomic", &path)?;
             let p = Path::new(&path);
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
@@ -1611,6 +1629,7 @@ fn collect_related_pages(
 pub async fn create_directory(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("create_directory", || {
+            require_absolute_path("create_directory", &path)?;
             fs::create_dir_all(&path)
                 .map_err(|e| format!("Failed to create directory '{}': {}", path, e))
         })
@@ -1752,6 +1771,30 @@ pub async fn get_file_md5(path: String) -> Result<String, String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    // Security regression: the write-side fs commands must reject relative
+    // paths before doing any filesystem work, so a stray relative path can't
+    // resolve against the process cwd and scatter files outside the project.
+    #[test]
+    fn reject_relative_write_paths_before_touching_cwd() {
+        assert!(require_absolute_path("write_file", "wiki/sources/stray.md").is_err());
+        assert!(require_absolute_path("write_file", "./wiki/sources/stray.md").is_err());
+    }
+
+    #[test]
+    fn allow_absolute_write_paths() {
+        assert!(require_absolute_path("write_file", "/tmp/project/wiki/sources/page.md").is_ok());
+        #[cfg(windows)]
+        {
+            assert!(require_absolute_path("write_file", "C:/project/wiki/sources/page.md").is_ok());
+            assert!(
+                require_absolute_path("write_file", r"C:\project\wiki\sources\page.md").is_ok()
+            );
+            assert!(
+                require_absolute_path("write_file", r"\\server\share\wiki\sources\page.md").is_ok()
+            );
+        }
+    }
 
     // Regression: epub text extraction must preserve multi-byte UTF-8.
     // The old byte-indexed `bytes[i] as char` walk turned CJK/accented

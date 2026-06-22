@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import type { FileNode, WikiProject } from "@/types/wiki"
 import { ensureProjectId, upsertProjectInfo } from "@/lib/project-identity"
+import { isAbsolutePath } from "@/lib/path-utils"
 
 /** Raw shape returned by the Rust commands — id is attached client-side. */
 interface RawProject {
@@ -13,10 +14,12 @@ export async function readFile(path: string): Promise<string> {
 }
 
 export async function writeFile(path: string, contents: string): Promise<void> {
+  assertAbsoluteFsPath("writeFile", path)
   return invoke<void>("write_file", { path, contents })
 }
 
 export async function writeFileAtomic(path: string, contents: string): Promise<void> {
+  assertAbsoluteFsPath("writeFileAtomic", path)
   return invoke<void>("write_file_atomic", { path, contents })
 }
 
@@ -65,6 +68,7 @@ export async function findRelatedWikiPages(
 }
 
 export async function createDirectory(path: string): Promise<void> {
+  assertAbsoluteFsPath("createDirectory", path)
   return invoke<void>("create_directory", { path })
 }
 
@@ -82,6 +86,18 @@ export async function getFileSize(path: string): Promise<number> {
 
 export async function getFileMd5(path: string): Promise<string> {
   return invoke<string>("get_file_md5", { path })
+}
+
+/**
+ * Reject relative paths on the write-side fs commands before they cross into
+ * Rust. Mirrors the `require_absolute_path` guard on the Rust side: a relative
+ * path would resolve against the process cwd, scattering files outside the
+ * project, so fail fast in JS too.
+ */
+function assertAbsoluteFsPath(operation: string, path: string): void {
+  if (!isAbsolutePath(path)) {
+    throw new Error(`${operation} requires an absolute path: ${path}`)
+  }
 }
 
 /** Mirror of `commands::fs::FileBase64` (Rust side). */

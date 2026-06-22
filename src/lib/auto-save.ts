@@ -62,6 +62,35 @@ export function resumeAutoSave(): void {
   suspended = false
 }
 
+/**
+ * Run a project-switch/open operation while auto-save is suspended. If the
+ * operation fails, onFailure runs before auto-save resumes so callers can clear
+ * any half-loaded project path before store changes are allowed to persist.
+ *
+ * Built on flushAndSuspendAutoSave() + resumeAutoSave(): the flush persists the
+ * outgoing project's real state, then the finally guarantees resume even if the
+ * open throws partway through (so a failed open can never leave auto-save armed
+ * but permanently suspended).
+ */
+export async function runWithSuspendedAutoSave<T>(
+  action: () => Promise<T>,
+  onFailure?: () => void,
+): Promise<T> {
+  await flushAndSuspendAutoSave()
+  try {
+    return await action()
+  } catch (err) {
+    try {
+      onFailure?.()
+    } catch (cleanupErr) {
+      console.warn("Failed to clean up after suspended auto-save operation:", cleanupErr)
+    }
+    throw err
+  } finally {
+    resumeAutoSave()
+  }
+}
+
 export function setupAutoSave(): void {
   // Auto-save review items (debounced 1s)
   useReviewStore.subscribe((state) => {
