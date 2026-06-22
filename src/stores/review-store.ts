@@ -32,6 +32,27 @@ interface ReviewState {
 
 let counter = 0
 
+function reviewCounterFromId(id: string): number | null {
+  const match = /^review-(\d+)$/.exec(id)
+  if (!match) return null
+  const n = Number(match[1])
+  return Number.isSafeInteger(n) && n > 0 ? n : null
+}
+
+function advanceCounterForItems(items: ReviewItem[]): void {
+  let max = counter
+  for (const item of items) {
+    const n = reviewCounterFromId(item.id)
+    if (n !== null && n > max) max = n
+  }
+  counter = max
+}
+
+function nextReviewId(existingItems: ReviewItem[]): string {
+  advanceCounterForItems(existingItems)
+  return `review-${++counter}`
+}
+
 export const useReviewStore = create<ReviewState>((set) => ({
   items: [],
 
@@ -41,7 +62,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
         ...state.items,
         {
           ...item,
-          id: `review-${++counter}`,
+          id: nextReviewId(state.items),
           resolved: false,
           createdAt: Date.now(),
         },
@@ -84,7 +105,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
         } else {
           const newItem = {
             ...incoming,
-            id: `review-${++counter}`,
+            id: nextReviewId(result),
             resolved: false,
             createdAt: Date.now(),
           }
@@ -96,7 +117,10 @@ export const useReviewStore = create<ReviewState>((set) => ({
       return { items: result }
     }),
 
-  setItems: (items) => set({ items }),
+  setItems: (items) => {
+    advanceCounterForItems(items)
+    set({ items })
+  },
 
   resolveItem: (id, action) =>
     set((state) => ({

@@ -17,6 +17,9 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { hasConfiguredSearchProvider } from "@/lib/web-search"
+import { makeQueryFileName } from "@/lib/wiki-filename"
+import { createReviewPageDrafts } from "@/lib/review-create-page"
+import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -76,30 +79,30 @@ export function ReviewView() {
         const encoded = action.slice(5)
         const content = decodeURIComponent(atob(encoded))
 
-        // Strip hidden comments
-        const cleanContent = content
-          .replace(/<!--\s*save-worthy:.*?-->/g, "")
-          .replace(/<!--\s*sources:.*?-->/g, "")
-          .trimEnd()
-
-        // Generate filename
-        const firstLine = cleanContent.split("\n").find((l) => l.trim() && !l.startsWith("<!--"))?.replace(/^#+\s*/, "").trim() ?? "Saved Query"
-        const title = firstLine.slice(0, 60)
-        const slug = title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 50)
-        const date = new Date().toISOString().slice(0, 10)
-        const fileName = `${slug}-${date}.md`
+        // Strip hidden comments / thinking blocks and derive the title from the
+        // first VISIBLE line — shared with the chat "Save to Wiki" button so a
+        // Q&A saved from either entry point gets the same title/slug.
+        const cleanContent = cleanAssistantContentForWikiSave(content)
+        const title = titleFromCleanAssistantContent(cleanContent)
+        // Unicode-aware slug + HHMMSS timestamp suffix so same-day / CJK saves
+        // stay distinct (see src/lib/wiki-filename.ts).
+        const { date, fileName } = makeQueryFileName(title)
         const filePath = `${pp}/wiki/queries/${fileName}`
 
         const frontmatter = `---\ntype: query\ntitle: "${title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\n---\n\n`
-        await writeFile(filePath, frontmatter + cleanContent)
+        const pageContent = frontmatter + cleanContent
+        await writeFile(filePath, pageContent)
 
         // Update index
         const indexPath = `${pp}/wiki/index.md`
         let indexContent = ""
         try { indexContent = await readFile(indexPath) } catch { indexContent = "# Wiki Index\n" }
-        const entry = `- [[queries/${slug}-${date}|${title}]]`
+        const linkTarget = fileName.replace(/\.md$/, "")
+        const entry = `- [[queries/${linkTarget}|${title}]]`
         if (indexContent.includes("## Queries")) {
-          indexContent = indexContent.replace(/(## Queries\n)/, `$1${entry}\n`)
+          // Use a replacer FN so $-sequences in the entry (e.g. a `$1` that
+          // slipped into a title) are inserted literally, not interpreted.
+          indexContent = indexContent.replace(/(## Queries\n)/, (match) => `${match}${entry}\n`)
         } else {
           indexContent = indexContent.trimEnd() + "\n\n## Queries\n" + entry + "\n"
         }
@@ -114,6 +117,11 @@ export function ReviewView() {
         // Refresh tree
         const tree = await listDirectory(pp)
         setFileTree(tree)
+        // Open the freshly created page in the preview pane and invalidate
+        // cached graphs/views so the new page shows up immediately.
+        useWikiStore.getState().setSelectedFile(filePath)
+        useWikiStore.getState().setFileContent(pageContent)
+        useWikiStore.getState().bumpDataVersion()
 
         resolveItem(id, "Saved to Wiki")
       } catch (err) {
@@ -186,30 +194,45 @@ export function ReviewView() {
         : action
       if (item) {
         try {
-          const title = item.title.replace(/^(Create|Save|Add)[:\s]*/i, "").trim() || "Untitled"
-          const slug = title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 50)
-          const date = new Date().toISOString().slice(0, 10)
+          // A single missing-page review can name several missing pages
+          // ("缺少 X、Y 页面" / "missing pages A and B"). createReviewPageDrafts
+          // splits those into one draft per page (with its detected page type +
+          // target dir); non-missing-page reviews yield exactly one draft.
+          const drafts = createReviewPageDrafts(item, realAction)
+          const created: Array<{
+            title: string
+            dir: string
+            fileName: string
+            filePath: string
+            pageContent: string
+            pageType: string
+            date: string
+          }> = []
 
-          // Determine page type from review type or action text
-          const pageType = detectPageType(realAction, item.type)
-          const dir = pageType === "query" ? "queries" : pageType === "entity" ? "entities" : pageType === "concept" ? "concepts" : "queries"
-          const fileName = `${slug}-${date}.md`
-          const filePath = `${pp}/wiki/${dir}/${fileName}`
+          for (const draft of drafts) {
+            const { date, fileName } = makeQueryFileName(draft.title)
+            const filePath = `${pp}/wiki/${draft.dir}/${fileName}`
+            const frontmatter = `---\ntype: ${draft.pageType}\ntitle: "${draft.title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\nrelated: []\n---\n\n`
+            const body = `# ${draft.title}\n\n${item.description}\n`
+            const pageContent = frontmatter + body
+            await writeFile(filePath, pageContent)
+            created.push({ title: draft.title, dir: draft.dir, fileName, filePath, pageContent, pageType: draft.pageType, date })
+          }
 
-          const frontmatter = `---\ntype: ${pageType}\ntitle: "${title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\nrelated: []\n---\n\n`
-          const body = `# ${title}\n\n${item.description}\n`
-          await writeFile(filePath, frontmatter + body)
-
-          // Update index
+          // Update index — one wikilink per created page.
           const indexPath = `${pp}/wiki/index.md`
           let indexContent = ""
           try { indexContent = await readFile(indexPath) } catch { indexContent = "# Wiki Index\n" }
-          const sectionHeader = `## ${dir.charAt(0).toUpperCase() + dir.slice(1)}`
-          const entry = `- [[${dir}/${slug}-${date}|${title}]]`
-          if (indexContent.includes(sectionHeader)) {
-            indexContent = indexContent.replace(new RegExp(`(${sectionHeader}\n)`), `$1${entry}\n`)
-          } else {
-            indexContent = indexContent.trimEnd() + `\n\n${sectionHeader}\n${entry}\n`
+          for (const createdPage of created) {
+            const sectionHeader = `## ${createdPage.dir.charAt(0).toUpperCase() + createdPage.dir.slice(1)}`
+            const linkTarget = createdPage.fileName.replace(/\.md$/, "")
+            const entry = `- [[${createdPage.dir}/${linkTarget}|${createdPage.title}]]`
+            if (indexContent.includes(sectionHeader)) {
+              // Replacer FN so $-sequences in the entry are inserted literally.
+              indexContent = indexContent.replace(new RegExp(`(${sectionHeader}\n)`), (match) => `${match}${entry}\n`)
+            } else {
+              indexContent = indexContent.trimEnd() + `\n\n${sectionHeader}\n${entry}\n`
+            }
           }
           await writeFile(indexPath, indexContent)
 
@@ -217,14 +240,25 @@ export function ReviewView() {
           const logPath = `${pp}/wiki/log.md`
           let logContent = ""
           try { logContent = await readFile(logPath) } catch { logContent = "# Wiki Log\n" }
-          await writeFile(logPath, logContent.trimEnd() + `\n- ${date}: Created ${pageType} page \`${fileName}\` from review\n`)
+          const createdNames = created.map((p) => `\`${p.fileName}\``).join(", ")
+          const logDate = created[0]?.date ?? makeQueryFileName("review").date
+          await writeFile(logPath, logContent.trimEnd() + `\n- ${logDate}: Created ${created.length} page${created.length === 1 ? "" : "s"} from review: ${createdNames}\n`)
 
-          // Refresh
+          // Refresh + open the first created page in the preview pane.
+          // (Our wiki-store exposes setSelectedFile/setFileContent rather than
+          // upstream's openFileInPreview helper.)
           const tree = await listDirectory(pp)
           setFileTree(tree)
+          const first = created[0]
+          if (first) {
+            useWikiStore.getState().setSelectedFile(first.filePath)
+            useWikiStore.getState().setFileContent(first.pageContent)
+          }
           useWikiStore.getState().bumpDataVersion()
 
-          resolveItem(id, `Created: wiki/${dir}/${fileName}`)
+          resolveItem(id, created.length === 1
+            ? `Created: wiki/${created[0].dir}/${created[0].fileName}`
+            : `Created ${created.length} pages`)
         } catch (err) {
           console.error("Failed to create page from review:", err)
           resolveItem(id, "Create failed")
@@ -436,18 +470,4 @@ function actionIsDismissal(action: string): boolean {
 function actionLooksLikeCreate(action: string): boolean {
   // Anything that isn't a dismissal should create a page
   return !actionIsDismissal(action)
-}
-
-/** Infer wiki page type from action text and review item type */
-function detectPageType(action: string, reviewType: string): string {
-  const lower = action.toLowerCase()
-  if (lower.includes("entity") || lower.includes("实体")) return "entity"
-  if (lower.includes("concept") || lower.includes("概念")) return "concept"
-  if (lower.includes("comparison") || lower.includes("compare") || lower.includes("比较")) return "comparison"
-  if (lower.includes("synthesis") || lower.includes("综合")) return "synthesis"
-  if (reviewType === "missing-page") return "concept"
-  if (reviewType === "contradiction") return "query"
-  if (reviewType === "suggestion") return "query"
-  // Default: research/investigate/create → query
-  return "query"
 }

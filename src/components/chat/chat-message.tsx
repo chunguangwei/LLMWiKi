@@ -26,6 +26,7 @@ import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
+import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
 import { parseFileBlocks, isSafeIngestPath } from "@/lib/ingest"
 import { applyPageEdit } from "@/lib/apply-page-edit"
 import { diffLines, diffStats, isUnchanged } from "@/lib/text-diff"
@@ -288,17 +289,15 @@ function SaveToWikiButton({
       // See `src/lib/wiki-filename.ts` — the slug is Unicode-aware
       // (so CJK titles don't collapse to empty) and the HHMMSS
       // timestamp suffix guarantees same-day saves stay distinct.
-      const firstLine = content.split("\n")[0].replace(/^#+\s*/, "").trim()
-      const title = firstLine.slice(0, 60) || "Saved Query"
+      // Strip hidden sources/save-worthy comments + thinking blocks, then take
+      // the first VISIBLE line as the title. Shared with review-view's `save:`
+      // path so a Q&A saved from either entry point gets the same title/slug.
+      // (Previously we took content.split("\n")[0], which could be a hidden
+      // comment or blank line and produced a misleading title.)
+      const stripped = cleanAssistantContentForWikiSave(content)
+      const title = titleFromCleanAssistantContent(stripped)
       const { date, fileName } = makeQueryFileName(title)
       const filePath = `${pp}/wiki/queries/${fileName}`
-
-      // Strip hidden sources comment and thinking blocks from content
-      const stripped = content
-        .replace(/<!--\s*sources:.*?-->/g, "")
-        .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
-        .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "")
-        .trimEnd()
 
       // Wikify pass — a small LLM call that rewrites conversational
       // chat tone ("Based on the article...", "Here's a summary...",

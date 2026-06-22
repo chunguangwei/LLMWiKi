@@ -41,8 +41,11 @@ export function makeQuerySlug(title: string): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .toLowerCase()
-    .slice(0, 50)
-  return slug.length > 0 ? slug : "query"
+  // Truncate by Unicode code point, not UTF-16 unit — String.slice() can
+  // split a surrogate pair (e.g. an emoji or rare CJK char) and leave a
+  // lone half, yielding an invalid filename fragment.
+  const truncated = Array.from(slug).slice(0, 50).join("")
+  return truncated.length > 0 ? truncated : "query"
 }
 
 /** Produce the full wiki filename. Accepts an injected `now` for

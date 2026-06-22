@@ -403,6 +403,13 @@ function App() {
   }, [])
 
   async function handleProjectOpened(proj: WikiProject) {
+    // Flush the OUTGOING project's review/lint/chat state to disk and suspend
+    // auto-save before reset empties the stores — otherwise the debounced
+    // writers would persist empty arrays back over the old project's pending
+    // review / deep-research items.
+    const { flushAndSuspendAutoSave, resumeAutoSave } = await import("@/lib/auto-save")
+    await flushAndSuspendAutoSave()
+
     // Clear all per-project state BEFORE loading new project data
     // to prevent cross-project contamination. MUST be awaited so the
     // ingest queue / graph cache are actually cleared before the new
@@ -547,6 +554,9 @@ function App() {
     } catch {
       // ignore, start fresh
     }
+    // New project's persisted state is loaded — re-arm auto-save so further
+    // edits persist to THIS project.
+    resumeAutoSave()
   }
 
   async function handleSelectRecent(proj: WikiProject) {
@@ -585,6 +595,12 @@ function App() {
       const currentConfig = useWikiStore.getState().scheduledImportConfig
       saveScheduledImportConfig(currentProject.path, currentConfig).catch(() => {})
     }
+
+    // Flush outgoing project's review/lint/chat to disk and suspend auto-save
+    // before reset empties the stores. resumeAutoSave() runs when the next
+    // project opens via handleProjectOpened.
+    const { flushAndSuspendAutoSave } = await import("@/lib/auto-save")
+    await flushAndSuspendAutoSave()
 
     // Clear all per-project state BEFORE flipping back to the welcome screen
     // so old data cannot leak in via any async render pass.

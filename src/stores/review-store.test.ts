@@ -12,6 +12,17 @@ function makeInput(overrides: Partial<Omit<ReviewItem, "id" | "resolved" | "crea
   }
 }
 
+function reviewIdNumber(id: string): number {
+  const match = /^review-(\d+)$/.exec(id)
+  if (!match) throw new Error(`Unexpected review id: ${id}`)
+  return Number(match[1])
+}
+
+function lastItem(items: ReviewItem[]): ReviewItem {
+  if (items.length === 0) throw new Error("Expected at least one review item")
+  return items[items.length - 1]
+}
+
 // Reset the store between tests — Zustand stores are module-level singletons.
 beforeEach(() => {
   useReviewStore.setState({ items: [] })
@@ -33,6 +44,157 @@ describe("review-store addItem", () => {
     store.addItem(makeInput({ title: "Same" }))
     store.addItem(makeInput({ title: "Same" }))
     expect(useReviewStore.getState().items).toHaveLength(2)
+  })
+
+  it("continues ids after persisted review items are restored", () => {
+    useReviewStore.getState().addItem(makeInput({ title: "Probe" }))
+    const current = reviewIdNumber(lastItem(useReviewStore.getState().items).id)
+    const oldA = current + 40
+    const oldB = current + 41
+
+    useReviewStore.getState().setItems([
+      {
+        ...makeInput({ title: "Old A" }),
+        id: `review-${oldA}`,
+        resolved: false,
+        createdAt: 1,
+      },
+      {
+        ...makeInput({ title: "Old B" }),
+        id: `review-${oldB}`,
+        resolved: false,
+        createdAt: 2,
+      },
+    ])
+
+    useReviewStore.getState().addItem(makeInput({ title: "New" }))
+
+    const ids = useReviewStore.getState().items.map((item) => item.id)
+    expect(ids).toEqual([`review-${oldA}`, `review-${oldB}`, `review-${oldB + 1}`])
+  })
+
+  it("does not move the counter backwards after restoring lower persisted ids", () => {
+    useReviewStore.getState().addItem(makeInput({ title: "Probe" }))
+    const current = reviewIdNumber(lastItem(useReviewStore.getState().items).id)
+    const high = current + 40
+    const low = current + 5
+
+    useReviewStore.getState().setItems([
+      {
+        ...makeInput({ title: "High" }),
+        id: `review-${high}`,
+        resolved: false,
+        createdAt: 1,
+      },
+    ])
+    useReviewStore.getState().addItem(makeInput({ title: "After high" }))
+    expect(lastItem(useReviewStore.getState().items).id).toBe(`review-${high + 1}`)
+
+    useReviewStore.getState().setItems([
+      {
+        ...makeInput({ title: "Low" }),
+        id: `review-${low}`,
+        resolved: false,
+        createdAt: 2,
+      },
+    ])
+    useReviewStore.getState().addItem(makeInput({ title: "After low" }))
+    expect(lastItem(useReviewStore.getState().items).id).toBe(`review-${high + 2}`)
+  })
+
+  it("continues restored ids for bulk addItems", () => {
+    useReviewStore.getState().addItem(makeInput({ title: "Probe" }))
+    const current = reviewIdNumber(lastItem(useReviewStore.getState().items).id)
+    const restored = current + 40
+
+    useReviewStore.getState().setItems([
+      {
+        ...makeInput({ title: "Old" }),
+        id: `review-${restored}`,
+        resolved: false,
+        createdAt: 1,
+      },
+    ])
+
+    useReviewStore.getState().addItems([makeInput({ title: "Bulk new" })])
+
+    expect(lastItem(useReviewStore.getState().items).id).toBe(`review-${restored + 1}`)
+  })
+
+  it("advances past restored resolved items", () => {
+    useReviewStore.getState().addItem(makeInput({ title: "Probe" }))
+    const current = reviewIdNumber(lastItem(useReviewStore.getState().items).id)
+    const restored = current + 40
+
+    useReviewStore.getState().setItems([
+      {
+        ...makeInput({ title: "Resolved old" }),
+        id: `review-${restored}`,
+        resolved: true,
+        resolvedAction: "done",
+        createdAt: 1,
+      },
+    ])
+
+    useReviewStore.getState().addItem(makeInput({ title: "After resolved" }))
+
+    expect(lastItem(useReviewStore.getState().items).id).toBe(`review-${restored + 1}`)
+  })
+
+  it("ignores non-generated ids while restoring the numeric maximum", () => {
+    useReviewStore.getState().addItem(makeInput({ title: "Probe" }))
+    const current = reviewIdNumber(lastItem(useReviewStore.getState().items).id)
+    const restored = current + 40
+
+    useReviewStore.getState().setItems([
+      {
+        ...makeInput({ title: "Legacy" }),
+        id: "legacy-review-id",
+        resolved: false,
+        createdAt: 1,
+      },
+      {
+        ...makeInput({ title: "Generated" }),
+        id: `review-${restored}`,
+        resolved: false,
+        createdAt: 2,
+      },
+    ])
+
+    useReviewStore.getState().addItem(makeInput({ title: "After legacy" }))
+
+    expect(lastItem(useReviewStore.getState().items).id).toBe(`review-${restored + 1}`)
+  })
+
+  it("continues ids even if items were restored through raw setState", () => {
+    useReviewStore.getState().addItem(makeInput({ title: "Probe" }))
+    const current = reviewIdNumber(lastItem(useReviewStore.getState().items).id)
+    const restored = current + 40
+
+    useReviewStore.setState({
+      items: [
+        {
+          ...makeInput({ title: "Raw restored" }),
+          id: `review-${restored}`,
+          resolved: false,
+          createdAt: 1,
+        },
+      ],
+    })
+
+    useReviewStore.getState().addItem(makeInput({ title: "After raw restore" }))
+
+    expect(lastItem(useReviewStore.getState().items).id).toBe(`review-${restored + 1}`)
+  })
+
+  it("does not reset the counter when setItems restores an empty list", () => {
+    useReviewStore.getState().addItem(makeInput({ title: "Probe" }))
+    const current = reviewIdNumber(lastItem(useReviewStore.getState().items).id)
+
+    useReviewStore.getState().setItems([])
+    useReviewStore.getState().addItem(makeInput({ title: "After empty restore" }))
+
+    expect(lastItem(useReviewStore.getState().items).id).toBe(`review-${current + 1}`)
   })
 })
 

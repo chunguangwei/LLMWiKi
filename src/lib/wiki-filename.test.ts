@@ -20,6 +20,7 @@ describe("makeQuerySlug", () => {
     // Previously these collapsed to "" → filename collisions.
     expect(makeQuerySlug("旋转位置编码")).toBe("旋转位置编码")
     expect(makeQuerySlug("日本茶道")).toBe("日本茶道")
+    expect(makeQuerySlug("政策版本差异提示")).toBe("政策版本差异提示")
   })
 
   it("handles mixed CJK + ASCII cleanly", () => {
@@ -57,6 +58,13 @@ describe("makeQuerySlug", () => {
     expect(makeQuerySlug(long)).toHaveLength(50)
   })
 
+  it("truncates by Unicode code point rather than leaving a lone surrogate", () => {
+    const astral = "𠀀".repeat(60)
+    const slug = makeQuerySlug(astral)
+    expect(Array.from(slug)).toHaveLength(50)
+    expect(() => encodeURIComponent(slug)).not.toThrow()
+  })
+
   it("preserves case-insensitive equivalence for wikilink matching", () => {
     // The codebase treats wikilinks case-insensitively (see lint.ts
     // line 48 comment). Slugs are always lowercase, so two titles
@@ -92,6 +100,12 @@ describe("makeQueryFileName", () => {
     expect(a.fileName.startsWith("旋转位置编码-2026-04-23-")).toBe(true)
     expect(b.fileName.startsWith("旋转位置编码-2026-04-23-")).toBe(true)
     expect(c.fileName.startsWith("旋转位置编码-2026-04-23-")).toBe(true)
+  })
+
+  it("keeps review-created Chinese query pages editable and linkable", () => {
+    const { fileName, slug } = makeQueryFileName("政策版本差异提示", NOW)
+    expect(slug).toBe("政策版本差异提示")
+    expect(fileName).toBe("政策版本差异提示-2026-04-23-143052.md")
   })
 
   it("emoji-only title falls back to 'query' but still produces distinct filenames per save", () => {
