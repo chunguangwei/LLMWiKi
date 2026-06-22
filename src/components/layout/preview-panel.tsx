@@ -195,6 +195,7 @@ export function PreviewPanel() {
             content={fileContent}
             onSave={handleSave}
             onChangeType={isTypeableWikiPage ? handleChangeType : undefined}
+            filePath={selectedFile}
           />
         ) : (
           <FilePreview

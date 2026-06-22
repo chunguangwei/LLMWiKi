@@ -60,6 +60,9 @@ interface WikiEditorProps {
   onSave: (markdown: string) => void
   /** When set, the frontmatter panel shows an editable page-type selector. */
   onChangeType?: (newType: string) => void
+  /** Absolute path of the file, threaded to WikiReader so relative
+   *  image references resolve against the file's own directory. */
+  filePath?: string
 }
 
 function wrapBareMathBlocks(text: string): string {
@@ -69,7 +72,7 @@ function wrapBareMathBlocks(text: string): string {
   )
 }
 
-export function WikiEditor({ content, onSave, onChangeType }: WikiEditorProps) {
+export function WikiEditor({ content, onSave, onChangeType, filePath }: WikiEditorProps) {
   // Default to read mode (ReactMarkdown render). Edit mode swaps
   // in Milkdown WYSIWYG. We default to read because:
   //   1. Milkdown's commonmark/gfm preset has no wikilink schema,
@@ -117,7 +120,7 @@ export function WikiEditor({ content, onSave, onChangeType }: WikiEditorProps) {
         <div className="px-6 py-6">
           {frontmatter && <RefreshControls frontmatter={frontmatter} />}
           {frontmatter && <FrontmatterPanel data={frontmatter} onChangeType={onChangeType} />}
-          <WikiReader body={body} />
+          <WikiReader body={body} filePath={filePath} />
         </div>
       ) : (
         <MilkdownProvider>
