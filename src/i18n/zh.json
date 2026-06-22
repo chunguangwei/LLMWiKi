@@ -203,7 +203,8 @@
     "title": "搜索",
     "placeholder": "搜索 Wiki 页面...",
     "noResults": "未找到相关结果",
-    "startSearching": "输入关键词搜索 Wiki 页面"
+    "startSearching": "输入关键词搜索 Wiki 页面",
+    "close": "关闭搜索"
   },
   "lint": {
     "title": "Wiki 检查",

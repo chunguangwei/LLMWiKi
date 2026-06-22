@@ -274,6 +274,13 @@ interface WikiState {
   chatExpanded: boolean
   activeView: "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "settings"
   /**
+   * The view we were on immediately before the current one. Lets a view
+   * like global search offer "Esc / close → go back where I came from"
+   * instead of dumping the user on a fixed default. Updated by
+   * `setActiveView` whenever the view actually changes.
+   */
+  previousView: WikiState["activeView"]
+  /**
    * One-shot "focus the global search input" signal. Bumped by the
    * Cmd/Ctrl+F handler when no wiki page is open (so find-in-page can't
    * claim the keystroke) — SearchView watches this counter and focuses +
@@ -437,6 +444,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   pendingScrollImageSrc: null,
   chatExpanded: false,
   activeView: "wiki",
+  previousView: "wiki",
   searchFocusRequest: 0,
   llmConfig: {
     provider: "openai",
@@ -459,7 +467,16 @@ export const useWikiStore = create<WikiState>((set) => ({
   setFileContent: (fileContent) => set({ fileContent }),
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),
   setChatExpanded: (chatExpanded) => set({ chatExpanded }),
-  setActiveView: (activeView) => set({ activeView }),
+  setActiveView: (activeView) =>
+    set((state) =>
+      // Remember where we came from so a view can navigate "back".
+      // Only record a real transition — re-selecting the same view
+      // (e.g. Cmd+F while already in search) must not make previousView
+      // point at itself, which would trap Esc inside search.
+      activeView === state.activeView
+        ? { activeView }
+        : { activeView, previousView: state.activeView },
+    ),
   requestSearchFocus: () => set((state) => ({ searchFocusRequest: state.searchFocusRequest + 1 })),
   searchApiConfig: {
     provider: "none",

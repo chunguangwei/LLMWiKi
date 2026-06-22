@@ -32,6 +32,8 @@ export function SearchView() {
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setPendingScrollImageSrc = useWikiStore((s) => s.setPendingScrollImageSrc)
   const searchFocusRequest = useWikiStore((s) => s.searchFocusRequest)
+  const setActiveView = useWikiStore((s) => s.setActiveView)
+  const previousView = useWikiStore((s) => s.previousView)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const [query, setQuery] = useState("")
@@ -43,6 +45,14 @@ export function SearchView() {
   // the lightbox, and search-view-local state means the modal
   // closes naturally when the user navigates away from search.
   const [lightbox, setLightbox] = useState<ImageHit | null>(null)
+
+  // Leave the global search and return to wherever the user came from
+  // (Cmd/Ctrl+F, or a sidebar click). Never bounce back to "search"
+  // itself — fall back to the wiki view if that's somehow the recorded
+  // origin. Exposed via the header close button and the Esc shortcut.
+  const goBack = useCallback(() => {
+    setActiveView(previousView === "search" ? "wiki" : previousView)
+  }, [setActiveView, previousView])
 
   const doSearch = useCallback(
     async (q: string) => {
@@ -127,6 +137,24 @@ export function SearchView() {
     inputRef.current?.select()
   }, [searchFocusRequest])
 
+  // Esc closes the global search and returns to the previous view. When
+  // the lightbox is open it owns Esc (closes the modal first), so skip
+  // ours then — otherwise a single Esc would close both at once.
+  useEffect(() => {
+    if (lightbox) return
+    const onKey = (e: KeyboardEvent) => {
+      // Skip while an IME is composing — Esc then cancels the
+      // composition, not the search. (Native event: check the W3C
+      // `isComposing` flag and the legacy 229 keyCode directly.)
+      if (e.key === "Escape" && !e.isComposing && e.keyCode !== 229) {
+        e.preventDefault()
+        goBack()
+      }
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [lightbox, goBack])
+
   async function handleOpen(path: string) {
     try {
       const content = await readFile(path)
@@ -198,21 +226,41 @@ export function SearchView() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="shrink-0 border-b px-4 py-3">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (isImeComposing(e)) return
-              if (e.key === "Enter") doSearch(query)
-            }}
-            placeholder={t("search.placeholder") + " (Enter to search)"}
-            autoFocus
-            className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (isImeComposing(e)) return
+                if (e.key === "Enter") doSearch(query)
+                // Esc returns to the previous view. Handled here (not only
+                // via the document listener) so it fires reliably while the
+                // input holds focus, and so we can stop the keystroke from
+                // bubbling to other Esc handlers.
+                else if (e.key === "Escape") {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  goBack()
+                }
+              }}
+              placeholder={t("search.placeholder") + " (Enter to search)"}
+              autoFocus
+              className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={goBack}
+            aria-label={t("search.close")}
+            title={t("search.close") + " (Esc)"}
+            className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       </div>
 

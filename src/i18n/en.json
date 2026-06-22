@@ -203,7 +203,8 @@
     "title": "Search",
     "placeholder": "Search wiki pages...",
     "noResults": "No results found",
-    "startSearching": "Type to search wiki pages"
+    "startSearching": "Type to search wiki pages",
+    "close": "Close search"
   },
   "lint": {
     "title": "Wiki Lint",
