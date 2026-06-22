@@ -2,10 +2,13 @@ use arrow_array::{
     ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StringArray, UInt32Array,
 };
 use arrow_schema::{DataType, Field, Schema};
+use chrono::Duration;
 use lancedb::connect;
 use lancedb::query::{ExecutableQuery, QueryBase};
+use lancedb::table::{CompactionOptions, OptimizeAction};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::panic_guard::run_guarded_async;
 
@@ -45,28 +48,79 @@ fn db_path(project_path: &str) -> String {
     format!("{}/.llm-wiki/lancedb", project_path.replace('\\', "/"))
 }
 
+/// Per-project read/write lock guarding the v2 chunk table. Bulk re-index
+/// writes (and the compaction/prune in `vector_optimize_chunks`) take the
+/// write side; reads/counts take the read side. Without this, a search
+/// firing during a rebuild could observe a half-cleared table, and
+/// concurrent writers could race LanceDB version bumps.
+fn vectorstore_v2_lock(project_path: &str) -> Arc<tokio::sync::RwLock<()>> {
+    let key = db_path(project_path);
+    let locks = VECTORSTORE_V2_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut locks = locks.lock().expect("vectorstore lock map poisoned");
+    locks
+        .entry(key)
+        .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(())))
+        .clone()
+}
+
 /// v1 (legacy) table name. One row per page.
 const TABLE_V1: &str = "wiki_vectors";
 /// v2 (current) table name. One row per CHUNK — a page is typically
 /// represented by multiple rows sharing the same `page_id`.
 const TABLE_V2: &str = "wiki_chunks_v2";
+const MAX_PAGE_ID_CHARS: usize = 256;
+static VECTORSTORE_V2_LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>> =
+    OnceLock::new();
 
-/// Validate page_id to prevent filter injection
-fn validate_page_id(page_id: &str) -> Result<(), String> {
-    if page_id.is_empty() || page_id.len() > 256 {
+/// Validate page_id to prevent filter/path injection without rejecting
+/// legitimate Unicode wiki filenames. Page ids are wiki file stems; CJK
+/// letters, spaces, and punctuation such as `·` / `：` / `（` are valid page
+/// names, but quotes and separators are unsafe because we interpolate page_id
+/// into LanceDB filters (`page_id = '...'`) and derive debug chunk ids from it.
+/// Format/invisible characters are rejected so visually identical ids cannot
+/// differ only by soft hyphen, zero-width, bidi, tag, or separator characters.
+fn validate_page_id_common(page_id: &str) -> Result<(), String> {
+    if page_id.is_empty() {
         return Err("Invalid page_id: empty or too long".to_string());
     }
-    // Only allow alphanumeric, hyphens, underscores, dots
-    if !page_id
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
-    {
-        return Err(format!(
-            "Invalid page_id: contains disallowed characters: {}",
-            page_id
-        ));
+
+    let mut char_count = 0usize;
+    for c in page_id.chars() {
+        char_count += 1;
+        if char_count > MAX_PAGE_ID_CHARS {
+            return Err("Invalid page_id: empty or too long".to_string());
+        }
+        if is_disallowed_page_id_char(c) {
+            return Err(format!(
+                "Invalid page_id: contains disallowed character {:?}: {}",
+                c, page_id
+            ));
+        }
     }
     Ok(())
+}
+
+fn is_disallowed_page_id_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '/' | '\\'
+                | '\''
+                | '"'
+                | '\u{00AD}'
+                | '\u{061C}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
+        )
+}
+
+/// Keep the v1 call site explicit while sharing the same page id contract.
+fn validate_page_id(page_id: &str) -> Result<(), String> {
+    validate_page_id_common(page_id)
 }
 
 fn make_schema(dim: i32) -> Arc<Schema> {
@@ -327,19 +381,7 @@ pub async fn vector_count(project_path: String) -> Result<usize, String> {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn validate_page_id_for_v2(page_id: &str) -> Result<(), String> {
-    if page_id.is_empty() || page_id.len() > 256 {
-        return Err("Invalid page_id: empty or too long".to_string());
-    }
-    if !page_id
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
-    {
-        return Err(format!(
-            "Invalid page_id: contains disallowed characters: {}",
-            page_id
-        ));
-    }
-    Ok(())
+    validate_page_id_common(page_id)
 }
 
 fn make_schema_v2(dim: i32) -> Arc<Schema> {
@@ -428,6 +470,8 @@ pub async fn vector_upsert_chunks(
 ) -> Result<(), String> {
     run_guarded_async("vector_upsert_chunks", async move {
         validate_page_id_for_v2(&page_id)?;
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.write().await;
 
         if chunks.is_empty() {
             return Ok(());
@@ -460,12 +504,19 @@ pub async fn vector_upsert_chunks(
                 .await
                 .map_err(|e| format!("Open table error: {e}"))?;
 
-            if let Err(e) = table.delete(&format!("page_id = '{}'", page_id)).await {
-                eprintln!(
-                    "[vectorstore v2] Warning: delete before upsert failed for page '{}': {}",
-                    page_id, e
-                );
-            }
+            // A failed delete must abort the upsert: otherwise the old
+            // rows survive and the page ends up with duplicated/stale
+            // chunks. The safe-rebuild flow relies on this surfacing as an
+            // error so it can leave the existing index untouched.
+            table
+                .delete(&format!("page_id = '{}'", page_id))
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Delete existing chunks before upsert failed for page '{}': {}",
+                        page_id, e
+                    )
+                })?;
 
             table
                 .add(data)
@@ -494,6 +545,9 @@ pub async fn vector_search_chunks(
     top_k: usize,
 ) -> Result<Vec<ChunkSearchResult>, String> {
     run_guarded_async("vector_search_chunks", async move {
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.read().await;
+
         let db = connect(&db_path(&project_path))
             .execute()
             .await
@@ -580,6 +634,8 @@ pub async fn vector_search_chunks(
 pub async fn vector_delete_page(project_path: String, page_id: String) -> Result<(), String> {
     run_guarded_async("vector_delete_page", async move {
         validate_page_id_for_v2(&page_id)?;
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.write().await;
 
         let db = connect(&db_path(&project_path))
             .execute()
@@ -617,6 +673,9 @@ pub async fn vector_delete_page(project_path: String, page_id: String) -> Result
 #[tauri::command]
 pub async fn vector_count_chunks(project_path: String) -> Result<usize, String> {
     run_guarded_async("vector_count_chunks", async move {
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.read().await;
+
         let db = connect(&db_path(&project_path))
             .execute()
             .await
@@ -644,6 +703,97 @@ pub async fn vector_count_chunks(project_path: String) -> Result<usize, String> 
             .map_err(|e| format!("Count error: {e}"))?;
 
         Ok(count)
+    })
+    .await
+}
+
+/// Drop the v2 chunk table entirely. Used by Settings → Embedding
+/// "Re-index all pages" so a rebuild reflects the current wiki tree
+/// exactly and removes chunks for deleted/renamed pages.
+#[tauri::command]
+pub async fn vector_clear_chunks(project_path: String) -> Result<(), String> {
+    run_guarded_async("vector_clear_chunks", async move {
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.write().await;
+
+        let db = connect(&db_path(&project_path))
+            .execute()
+            .await
+            .map_err(|e| format!("DB connect error: {e}"))?;
+
+        let tables = db
+            .table_names()
+            .execute()
+            .await
+            .map_err(|e| format!("List tables error: {e}"))?;
+
+        if !tables.contains(&TABLE_V2.to_string()) {
+            return Ok(());
+        }
+
+        db.drop_table(TABLE_V2, &[])
+            .await
+            .map_err(|e| format!("Drop chunk table error: {e}"))?;
+
+        Ok(())
+    })
+    .await
+}
+
+/// Compact the v2 chunk table and prune old LanceDB versions after bulk
+/// embedding writes. This is intentionally a separate best-effort command so
+/// an already-successful rebuild is not reported as failed if maintenance hits
+/// a platform-specific LanceDB error.
+#[tauri::command]
+pub async fn vector_optimize_chunks(project_path: String) -> Result<(), String> {
+    run_guarded_async("vector_optimize_chunks", async move {
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.write().await;
+
+        let db = connect(&db_path(&project_path))
+            .execute()
+            .await
+            .map_err(|e| format!("DB connect error: {e}"))?;
+
+        let tables = db
+            .table_names()
+            .execute()
+            .await
+            .map_err(|e| format!("List tables error: {e}"))?;
+
+        if !tables.contains(&TABLE_V2.to_string()) {
+            return Ok(());
+        }
+
+        let table = db
+            .open_table(TABLE_V2)
+            .execute()
+            .await
+            .map_err(|e| format!("Open table error: {e}"))?;
+
+        table
+            .optimize(OptimizeAction::Compact {
+                options: CompactionOptions::default(),
+                remap_options: None,
+            })
+            .await
+            .map_err(|e| format!("Compact chunks error: {e}"))?;
+
+        table
+            .optimize(OptimizeAction::Prune {
+                // Keep only versions older than the current table snapshot.
+                // We deliberately leave `delete_unverified` disabled because
+                // users may run multiple app instances against the same
+                // project, and LanceDB documents forced unverified deletion as
+                // unsafe under concurrent cross-process access.
+                older_than: Some(Duration::try_seconds(0).expect("valid duration")),
+                delete_unverified: Some(false),
+                error_if_tagged_old_versions: Some(false),
+            })
+            .await
+            .map_err(|e| format!("Prune old chunk versions error: {e}"))?;
+
+        Ok(())
     })
     .await
 }
@@ -773,6 +923,80 @@ mod tests_v2 {
                 embedding: fake_embedding(i, dim),
             })
             .collect()
+    }
+
+    fn chunk_table_version_count(project_path: &PathBuf) -> usize {
+        let versions_dir = project_path
+            .join(".llm-wiki")
+            .join("lancedb")
+            .join(format!("{TABLE_V2}.lance"))
+            .join("_versions");
+        std::fs::read_dir(versions_dir)
+            .map(|entries| entries.filter_map(Result::ok).count())
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn page_id_validation_allows_unicode_wiki_stems() {
+        let page_id = "反硝化除磷·A2O：DPAO + 50% & x（测试），v1.2";
+        assert!(validate_page_id(page_id).is_ok());
+        assert!(validate_page_id_for_v2(page_id).is_ok());
+    }
+
+    #[test]
+    fn page_id_validation_rejects_filter_and_path_footguns() {
+        for page_id in [
+            "bad'quote",
+            "bad\"quote",
+            "bad/slash",
+            "bad\\slash",
+            "bad\nnewline",
+            "bad\ttab",
+            "bad\0nul",
+            "soft\u{00AD}hyphen",
+            "arabic\u{061C}mark",
+            "zero\u{200B}width",
+            "line\u{2028}sep",
+            "para\u{2029}sep",
+            "bidi\u{202E}override",
+            "\u{FEFF}bom",
+            "annotation\u{FFF9}mark",
+            "tag\u{E0041}char",
+        ] {
+            assert!(
+                validate_page_id(page_id).is_err(),
+                "{page_id:?} should be rejected"
+            );
+            assert!(
+                validate_page_id_for_v2(page_id).is_err(),
+                "{page_id:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn page_id_validation_rejects_empty_and_overlong_ids() {
+        assert!(validate_page_id("").is_err());
+        assert!(validate_page_id_for_v2("").is_err());
+
+        let ascii_boundary = "a".repeat(MAX_PAGE_ID_CHARS);
+        assert!(validate_page_id(&ascii_boundary).is_ok());
+        assert!(validate_page_id_for_v2(&ascii_boundary).is_ok());
+
+        let cjk_boundary = "测".repeat(MAX_PAGE_ID_CHARS);
+        assert!(validate_page_id(&cjk_boundary).is_ok());
+        assert!(validate_page_id_for_v2(&cjk_boundary).is_ok());
+
+        let too_long = "测".repeat(MAX_PAGE_ID_CHARS + 1);
+        assert!(validate_page_id(&too_long).is_err());
+        assert!(validate_page_id_for_v2(&too_long).is_err());
+    }
+
+    #[test]
+    fn page_id_validation_allows_hash_in_debug_chunk_ids() {
+        let page_id = "source#section";
+        assert!(validate_page_id(page_id).is_ok());
+        assert!(validate_page_id_for_v2(page_id).is_ok());
     }
 
     #[tokio::test]
@@ -919,6 +1143,55 @@ mod tests_v2 {
             .unwrap();
 
         assert_eq!(vector_count_chunks(pp).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn v2_clear_chunks_drops_entire_chunk_table_and_is_idempotent() {
+        let p = tmp_project();
+        let pp = p.to_string_lossy().to_string();
+
+        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 3, 16))
+            .await
+            .unwrap();
+        vector_upsert_chunks(pp.clone(), "page-b".into(), make_chunks("page-b", 4, 16))
+            .await
+            .unwrap();
+        assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 7);
+
+        vector_clear_chunks(pp.clone()).await.unwrap();
+        assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 0);
+
+        vector_clear_chunks(pp.clone()).await.unwrap();
+        assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn v2_optimize_chunks_prunes_versions_and_preserves_rows() {
+        let p = tmp_project();
+        let pp = p.to_string_lossy().to_string();
+
+        vector_optimize_chunks(pp.clone()).await.unwrap();
+
+        for i in 0..6 {
+            let page_id = format!("page-{i}");
+            vector_upsert_chunks(pp.clone(), page_id.clone(), make_chunks(&page_id, 2, 16))
+                .await
+                .unwrap();
+        }
+        assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 12);
+        let versions_before = chunk_table_version_count(&p);
+        assert!(
+            versions_before > 1,
+            "expected multiple LanceDB versions before optimize"
+        );
+
+        vector_optimize_chunks(pp.clone()).await.unwrap();
+        let versions_after = chunk_table_version_count(&p);
+        assert!(
+            versions_after < versions_before,
+            "expected optimize to prune old versions ({versions_before} -> {versions_after})"
+        );
+        assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 12);
     }
 
     #[tokio::test]

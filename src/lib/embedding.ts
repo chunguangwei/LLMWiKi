@@ -27,12 +27,47 @@ import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { getHttpFetch, isFetchNetworkError } from "@/lib/tauri-fetch"
 import { chunkMarkdown, type Chunk } from "@/lib/text-chunker"
+import { localLlmOriginHeader } from "@/lib/llm-providers"
+
+/**
+ * Does this embedding endpoint point at a local or private-network host
+ * (localhost / 127.0.0.1 / ::1 / RFC-1918 LAN ranges)? Local servers
+ * (Ollama, LM Studio, llama.cpp, vLLM) check the Origin header against
+ * an allowlist that contains `http://localhost` by default but not the
+ * Tauri origin, so for these we override Origin (see
+ * `localLlmOriginHeader`). Remote SaaS endpoints (api.openai.com,
+ * Gemini, Volcengine) must NOT receive a spoofed Origin — they don't
+ * need it and some reject it.
+ *
+ * NOTE: upstream exports an identical helper from `llm-providers.ts`;
+ * our fork keeps a private copy here so the embedding module stays
+ * self-contained and we don't widen the llm-providers export surface.
+ */
+function isLocalOrPrivateHttpEndpoint(endpoint: string): boolean {
+  try {
+    const url = new URL(endpoint)
+    const host = url.hostname.toLowerCase()
+    if (host === "localhost" || host.endsWith(".localhost")) return true
+    if (host === "127.0.0.1" || host === "::1" || host === "[::1]") return true
+    if (/^10\./.test(host)) return true
+    if (/^192\.168\./.test(host)) return true
+    const m = host.match(/^172\.(\d+)\./)
+    if (m) {
+      const second = Number(m[1])
+      if (second >= 16 && second <= 31) return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
 
 const RESERVED_EMBEDDING_HEADER_NAMES = new Set([
   "authorization",
   "content-type",
   "host",
   "content-length",
+  "origin",
   "x-goog-api-key",
 ])
 const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
@@ -57,9 +92,15 @@ function isSafeExtraHeader(name: string, value: string): boolean {
  * embed.
  */
 let lastEmbeddingError: string | null = null
+const INCREMENTAL_OPTIMIZE_PAGE_THRESHOLD = 20
+const incrementalOptimizeCounts = new Map<string, number>()
 
 export function getLastEmbeddingError(): string | null {
   return lastEmbeddingError
+}
+
+export function resetEmbeddingOptimizeAccountingForTests(): void {
+  incrementalOptimizeCounts.clear()
 }
 
 // ── fetchEmbedding with auto-halve retry ────────────────────────────────
@@ -105,8 +146,14 @@ export async function fetchEmbedding(
   if (!cfg.endpoint) return null
 
   const isGoogleNative = isGoogleEmbeddingConfig(cfg)
-  const endpoint = isGoogleNative ? googleEmbeddingEndpoint(cfg) : cfg.endpoint
-  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  const isDoubaoMultimodal = isDoubaoMultimodalEmbeddingConfig(cfg)
+  const endpoint = isGoogleNative
+    ? googleEmbeddingEndpoint(cfg)
+    : volcengineEmbeddingEndpoint(cfg)
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(isLocalOrPrivateHttpEndpoint(endpoint) ? localLlmOriginHeader() : {}),
+  }
   if (cfg.apiKey) {
     if (isGoogleNative) {
       headers["x-goog-api-key"] = cfg.apiKey
@@ -135,7 +182,9 @@ export async function fetchEmbedding(
         body: JSON.stringify(
           isGoogleNative
             ? googleEmbeddingBody(cfg.model, current, cfg.outputDimensionality)
-            : { model: cfg.model, input: current },
+            : isDoubaoMultimodal
+              ? doubaoMultimodalEmbeddingBody(cfg.model, current)
+              : { model: cfg.model, input: current },
         ),
       })
 
@@ -143,12 +192,18 @@ export async function fetchEmbedding(
         const data = await resp.json()
         const embedding = isGoogleNative
           ? data?.embedding?.values ?? null
-          : data?.data?.[0]?.embedding ?? null
+          : isDoubaoMultimodal
+            ? data?.data?.embedding ?? null
+            : data?.data?.[0]?.embedding ?? null
         if (isNonEmptyNumberArray(embedding)) {
           lastEmbeddingError = null
           return embedding
         }
-        const expectedShape = isGoogleNative ? "embedding.values" : "data[0].embedding"
+        const expectedShape = isGoogleNative
+          ? "embedding.values"
+          : isDoubaoMultimodal
+            ? "data.embedding"
+            : "data[0].embedding"
         lastEmbeddingError = `Embedding response missing ${expectedShape} (got ${JSON.stringify(data).slice(0, 200)})`
         console.warn(`[Embedding] ${lastEmbeddingError}`)
         return null
@@ -215,6 +270,74 @@ function isGoogleEmbeddingConfig(cfg: EmbeddingConfig): boolean {
     || /:embedcontent(\?|$)/i.test(endpoint)
 }
 
+function isVolcengineEmbeddingEndpoint(endpoint: string): boolean {
+  try {
+    const host = new URL(endpoint).hostname.toLowerCase()
+    return host === "volces.com"
+      || host.endsWith(".volces.com")
+      || host.includes("volcengine")
+  } catch {
+    const authority = endpoint
+      .trim()
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+      .split(/[/?#]/, 1)[0]
+      .toLowerCase()
+    return authority === "volces.com"
+      || authority.endsWith(".volces.com")
+      || authority.includes("volcengine")
+  }
+}
+
+function isDoubaoMultimodalEmbeddingConfig(cfg: EmbeddingConfig): boolean {
+  return cfg.model.trim().toLowerCase().includes("doubao-embedding-vision")
+}
+
+function volcengineEmbeddingEndpoint(cfg: EmbeddingConfig): string {
+  const raw = cfg.endpoint.trim()
+  if (!isVolcengineEmbeddingEndpoint(raw)) return raw
+  const targetSuffix = isDoubaoMultimodalEmbeddingConfig(cfg)
+    ? "/embeddings/multimodal"
+    : "/embeddings"
+  return appendEndpointPath(raw, targetSuffix)
+}
+
+function appendEndpointPath(endpoint: string, targetSuffix: string): string {
+  const suffix = targetSuffix.replace(/^\/+/, "")
+  try {
+    const url = new URL(endpoint)
+    const path = url.pathname.replace(/\/+$/, "")
+    const lowerPath = path.toLowerCase()
+    const lowerSuffix = `/${suffix.toLowerCase()}`
+    if (lowerPath.endsWith(lowerSuffix)) {
+      url.pathname = path || "/"
+      return url.toString()
+    }
+    if (lowerPath.endsWith("/embeddings/multimodal") && lowerSuffix === "/embeddings") {
+      url.pathname = path.slice(0, -"/multimodal".length) || "/"
+      return url.toString()
+    }
+    if (lowerPath.endsWith("/embeddings") && lowerSuffix === "/embeddings/multimodal") {
+      url.pathname = `${path}/multimodal`
+      return url.toString()
+    }
+    url.pathname = `${path}/${suffix}`.replace(/\/{2,}/g, "/")
+    return url.toString()
+  } catch {
+    const [base, query = ""] = endpoint.split("?", 2)
+    const trimmed = base.replace(/\/+$/, "")
+    const lower = trimmed.toLowerCase()
+    const lowerSuffix = `/${suffix.toLowerCase()}`
+    const next = lower.endsWith(lowerSuffix)
+      ? trimmed
+      : lower.endsWith("/embeddings/multimodal") && lowerSuffix === "/embeddings"
+        ? trimmed.slice(0, -"/multimodal".length)
+      : lower.endsWith("/embeddings") && lowerSuffix === "/embeddings/multimodal"
+        ? `${trimmed}/multimodal`
+        : `${trimmed}/${suffix}`
+    return query ? `${next}?${query}` : next
+  }
+}
+
 function googleEmbeddingEndpoint(cfg: EmbeddingConfig): string {
   const raw = stripGoogleApiKeyQuery(cfg.endpoint.trim()).replace(/\/+$/, "")
   if (/:batchEmbedContents(\?|$)/i.test(raw)) {
@@ -263,6 +386,14 @@ function googleEmbeddingBody(
     body.output_dimensionality = Math.floor(outputDimensionality)
   }
   return body
+}
+
+function doubaoMultimodalEmbeddingBody(model: string, text: string): Record<string, unknown> {
+  return {
+    model,
+    encoding_format: "float",
+    input: [{ type: "text", text }],
+  }
 }
 
 // ── LanceDB v2 operations (via Rust Tauri commands) ──────────────────────
@@ -325,6 +456,18 @@ async function vectorCountChunks(projectPath: string): Promise<number> {
   })
 }
 
+async function vectorClearChunks(projectPath: string): Promise<void> {
+  await invoke("vector_clear_chunks", {
+    projectPath: normalizePath(projectPath),
+  })
+}
+
+async function vectorOptimizeChunks(projectPath: string): Promise<void> {
+  await invoke("vector_optimize_chunks", {
+    projectPath: normalizePath(projectPath),
+  })
+}
+
 export async function legacyVectorRowCount(projectPath: string): Promise<number> {
   try {
     return await invoke("vector_legacy_row_count", {
@@ -339,6 +482,41 @@ export async function dropLegacyVectorTable(projectPath: string): Promise<void> 
   await invoke("vector_drop_legacy", {
     projectPath: normalizePath(projectPath),
   })
+}
+
+export async function clearChunkVectorTable(projectPath: string): Promise<void> {
+  await vectorClearChunks(projectPath)
+}
+
+async function optimizeChunkVectorTableBestEffort(projectPath: string): Promise<void> {
+  try {
+    await vectorOptimizeChunks(projectPath)
+  } catch (err) {
+    console.warn(
+      `[Embedding] LanceDB chunk optimization failed: ${err instanceof Error ? err.message : err}`,
+    )
+  }
+}
+
+async function dropLegacyVectorTableBestEffort(projectPath: string): Promise<void> {
+  try {
+    await dropLegacyVectorTable(projectPath)
+  } catch (err) {
+    console.warn(
+      `[Embedding] Legacy vector table cleanup failed: ${err instanceof Error ? err.message : err}`,
+    )
+  }
+}
+
+async function noteIncrementalVectorWrite(projectPath: string): Promise<void> {
+  const pp = normalizePath(projectPath)
+  const count = (incrementalOptimizeCounts.get(pp) ?? 0) + 1
+  if (count < INCREMENTAL_OPTIMIZE_PAGE_THRESHOLD) {
+    incrementalOptimizeCounts.set(pp, count)
+    return
+  }
+  incrementalOptimizeCounts.set(pp, 0)
+  await optimizeChunkVectorTableBestEffort(pp)
 }
 
 // ── Chunk enrichment ─────────────────────────────────────────────────────
@@ -361,30 +539,36 @@ function enrichChunkForEmbedding(
   return parts.join("\n\n")
 }
 
-// ── Public API: embedPage / embedAllPages / searchByEmbedding ────────────
+interface PreparedPageEmbedding {
+  pageId: string
+  rows: ChunkUpsertInput[]
+  chunkCount: number
+  failedChunks: number
+}
 
-/**
- * Embed a wiki page: chunk → per-chunk embed → replace the page's
- * vectors in LanceDB in one batch. Every transient failure leaves the
- * existing v2 rows intact (empty upsert is a no-op Rust-side).
- *
- * Called by ingest.ts after writing a page to disk.
- */
-export async function embedPage(
-  projectPath: string,
+type PageEmbeddingPreparation =
+  | { status: "ready"; page: PreparedPageEmbedding }
+  | { status: "empty" }
+  | { status: "failed"; reason: string }
+
+function extractEmbeddingTitle(content: string, fallbackId: string): string {
+  const titleMatch = content.match(/^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m)
+  return titleMatch ? titleMatch[1].trim() : fallbackId
+}
+
+async function preparePageEmbeddingRows(
   pageId: string,
   title: string,
   content: string,
   cfg: EmbeddingConfig,
-): Promise<void> {
-  if (!cfg.enabled || !cfg.model) return
+): Promise<PageEmbeddingPreparation> {
+  if (!cfg.enabled || !cfg.model) return { status: "empty" }
 
-  const t0 = performance.now()
   const chunks = chunkMarkdown(content, {
     targetChars: cfg.maxChunkChars ?? 1000,
     overlapChars: cfg.overlapChunkChars ?? 200,
   })
-  if (chunks.length === 0) return
+  if (chunks.length === 0) return { status: "empty" }
 
   const rows: ChunkUpsertInput[] = []
   let failedChunks = 0
@@ -404,17 +588,60 @@ export async function embedPage(
   }
 
   if (rows.length === 0) {
-    console.log(
-      `[Embedding] Indexed nothing for "${pageId}" — all ${chunks.length} chunks failed. See getLastEmbeddingError().`,
-    )
-    return
+    return {
+      status: "failed",
+      reason: getLastEmbeddingError() || "all chunks failed to embed",
+    }
+  }
+  return {
+    status: "ready",
+    page: {
+      pageId,
+      rows,
+      chunkCount: chunks.length,
+      failedChunks,
+    },
+  }
+}
+
+// ── Public API: embedPage / embedAllPages / searchByEmbedding ────────────
+
+/**
+ * Embed a wiki page: chunk → per-chunk embed → replace the page's
+ * vectors in LanceDB in one batch. Every transient failure leaves the
+ * existing v2 rows intact (empty upsert is a no-op Rust-side).
+ *
+ * Called by ingest.ts after writing a page to disk.
+ */
+export async function embedPage(
+  projectPath: string,
+  pageId: string,
+  title: string,
+  content: string,
+  cfg: EmbeddingConfig,
+  options?: { deferOptimization?: boolean },
+): Promise<boolean> {
+  const t0 = performance.now()
+  const prepared = await preparePageEmbeddingRows(pageId, title, content, cfg)
+
+  if (prepared.status !== "ready") {
+    if (prepared.status === "failed") {
+      console.log(
+        `[Embedding] Indexed nothing for "${pageId}" — no chunks could be embedded. See getLastEmbeddingError().`,
+      )
+    }
+    return false
   }
 
-  await vectorUpsertChunks(projectPath, pageId, rows)
+  await vectorUpsertChunks(projectPath, pageId, prepared.page.rows)
+  if (!options?.deferOptimization) {
+    await noteIncrementalVectorWrite(projectPath)
+  }
   const elapsed = Math.round(performance.now() - t0)
   console.log(
-    `[Embedding] Indexed "${pageId}": ${rows.length}/${chunks.length} chunks (${failedChunks} skipped) in ${elapsed}ms`,
+    `[Embedding] Indexed "${pageId}": ${prepared.page.rows.length}/${prepared.page.chunkCount} chunks (${prepared.page.failedChunks} skipped) in ${elapsed}ms`,
   )
+  return true
 }
 
 /**
@@ -427,8 +654,10 @@ export async function embedAllPages(
   projectPath: string,
   cfg: EmbeddingConfig,
   onProgress?: (done: number, total: number) => void,
+  options?: { clearExisting?: boolean },
 ): Promise<number> {
   if (!cfg.enabled || !cfg.model) return 0
+  lastEmbeddingError = null
 
   const pp = normalizePath(projectPath)
 
@@ -436,6 +665,9 @@ export async function embedAllPages(
   try {
     tree = await listDirectory(`${pp}/wiki`)
   } catch {
+    if (options?.clearExisting) {
+      throw new Error("Could not read wiki tree; existing index was left unchanged.")
+    }
     return 0
   }
 
@@ -454,13 +686,99 @@ export async function embedAllPages(
   }
   walk(tree)
 
+  if (options?.clearExisting) {
+    if (mdFiles.length === 0) {
+      const existingChunks = await vectorCountChunks(pp).catch(() => 0)
+      if (existingChunks > 0) {
+        throw new Error(
+          `Wiki tree returned no content pages, but ${existingChunks} chunks are currently indexed. Existing index was left unchanged.`,
+        )
+      }
+      await clearChunkVectorTable(pp)
+      await dropLegacyVectorTableBestEffort(pp)
+      return 0
+    }
+
+    const preparedPages: PreparedPageEmbedding[] = []
+    const failures: string[] = []
+    let attempted = 0
+    for (const file of mdFiles) {
+      try {
+        const content = await readFile(file.path)
+        const title = extractEmbeddingTitle(content, file.id)
+        const prepared = await preparePageEmbeddingRows(file.id, title, content, cfg)
+        if (prepared.status === "ready") {
+          if (prepared.page.failedChunks > 0) {
+            const reason = getLastEmbeddingError()
+            failures.push(
+              `${file.id}: ${prepared.page.failedChunks} of ${prepared.page.chunkCount} chunks failed to embed${reason ? ` (${reason})` : ""}`,
+            )
+          } else {
+            preparedPages.push(prepared.page)
+          }
+        } else if (prepared.status === "failed") {
+          failures.push(`${file.id}: ${prepared.reason}`)
+        }
+      } catch (err) {
+        failures.push(`${file.id}: ${err instanceof Error ? err.message : String(err)}`)
+      }
+      attempted++
+      if (onProgress) onProgress(attempted, mdFiles.length)
+    }
+
+    if (failures.length > 0) {
+      throw new Error(
+        `${failures.length} of ${mdFiles.length} pages could not be embedded (${failures[0]}). Existing index was left unchanged.`,
+      )
+    }
+
+    if (preparedPages.length === 0) {
+      const existingChunks = await vectorCountChunks(pp).catch(() => 0)
+      if (existingChunks > 0) {
+        throw new Error(
+          `Wiki tree has only empty content pages, but ${existingChunks} chunks are currently indexed. Existing index was left unchanged.`,
+        )
+      }
+    }
+
+    await clearChunkVectorTable(pp)
+
+    let written = 0
+    for (const page of preparedPages) {
+      try {
+        await vectorUpsertChunks(pp, page.pageId, page.rows)
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        throw new Error(
+          `Rebuild write failed after clearing existing chunks (${page.pageId}: ${reason}). The rebuilt index may be incomplete; run re-index again after fixing the error.`,
+        )
+      }
+      written++
+      console.log(
+        `[Embedding] Rebuilt "${page.pageId}": ${page.rows.length}/${page.chunkCount} chunks (${page.failedChunks} skipped)`,
+      )
+    }
+
+    if (written > 0) {
+      await optimizeChunkVectorTableBestEffort(pp)
+    }
+    // Forced rebuild succeeded, so the legacy v1 per-page table is obsolete
+    // even when every readable content page was empty and no v2 rows were
+    // written. Keep this outside the `written > 0` optimization guard.
+    await dropLegacyVectorTableBestEffort(pp)
+
+    return written
+  }
+
   let done = 0
+  let indexed = 0
   for (const file of mdFiles) {
     try {
       const content = await readFile(file.path)
-      const titleMatch = content.match(/^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m)
-      const title = titleMatch ? titleMatch[1].trim() : file.id
-      await embedPage(pp, file.id, title, content, cfg)
+      const title = extractEmbeddingTitle(content, file.id)
+      if (await embedPage(pp, file.id, title, content, cfg, { deferOptimization: true })) {
+        indexed++
+      }
     } catch {
       // skip — individual file failure doesn't halt the batch
     }
@@ -468,7 +786,11 @@ export async function embedAllPages(
     if (onProgress) onProgress(done, mdFiles.length)
   }
 
-  return done
+  if (indexed > 0) {
+    await optimizeChunkVectorTableBestEffort(pp)
+  }
+
+  return indexed
 }
 
 /**

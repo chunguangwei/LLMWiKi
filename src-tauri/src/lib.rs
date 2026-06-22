@@ -185,6 +185,8 @@ pub fn run() {
             commands::vectorstore::vector_search_chunks,
             commands::vectorstore::vector_delete_page,
             commands::vectorstore::vector_count_chunks,
+            commands::vectorstore::vector_clear_chunks,
+            commands::vectorstore::vector_optimize_chunks,
             commands::vectorstore::vector_legacy_row_count,
             commands::vectorstore::vector_drop_legacy,
             commands::claude_cli::claude_cli_detect,

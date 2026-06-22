@@ -52,6 +52,18 @@ function parseLines(chunk: Uint8Array, buffer: string): [string[], string] {
   return [lines, remaining]
 }
 
+/**
+ * The Tauri HTTP plugin tears down a body stream by passing a bare
+ * *string* "Request cancelled" (US spelling "canceled" on some
+ * platforms) to controller.error() — not an Error. Recognize both
+ * spellings, case-insensitively, in both the string and Error shapes so
+ * a backstop-fired abort never leaks the raw string to the user.
+ */
+function isRequestCancelledError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return /^request cancel(?:l)?ed$/i.test(message.trim())
+}
+
 export async function streamChat(
   config: LlmConfig,
   messages: import("./llm-providers").ChatMessage[],
@@ -142,7 +154,7 @@ export async function streamChat(
         onDone()
         return
       }
-      if (err instanceof Error && err.name === "AbortError") {
+      if ((err instanceof Error && err.name === "AbortError") || isRequestCancelledError(err)) {
         // Backstop timeout aborted the request (we tracked this via
         // timeoutFired); treat it as a real timeout rather than a cancel.
         if (timeoutFired) {
@@ -308,7 +320,23 @@ export async function streamChat(
 
     onDone()
   } catch (err) {
-    if (err instanceof Error && (err.name === "AbortError" || (signal?.aborted))) {
+    // The abort can reach us two ways: a real AbortError, or — when the
+    // Tauri HTTP plugin tears down the body stream — a bare *string*
+    // "Request cancelled" passed to controller.error(). The latter is not
+    // an Error, so the old `err instanceof Error` guard let it fall through
+    // to the generic branch and surface verbatim. Recognize both shapes.
+    const isAbort =
+      signal?.aborted ||
+      timeoutFired ||
+      (err instanceof Error && err.name === "AbortError") ||
+      isRequestCancelledError(err)
+    if (isAbort) {
+      // Mirror the pre-fetch catch: distinguish our long-horizon backstop
+      // (an actionable timeout) from a user-initiated cancel (silent).
+      if (timeoutFired) {
+        onError(new Error(`Request timed out after ${Math.round(timeoutMs / 60000)} min. Try a faster model or a smaller context.`))
+        return
+      }
       onDone()
       return
     }

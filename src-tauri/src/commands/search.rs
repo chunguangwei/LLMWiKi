@@ -729,10 +729,11 @@ pub fn extract_image_refs(content: &str) -> Vec<SearchImageRef> {
 
 async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<f32>, String> {
     let is_google = is_google_embedding_config(cfg);
+    let is_doubao_multimodal = is_doubao_multimodal_embedding_config(cfg);
     let endpoint = if is_google {
         google_embedding_endpoint(cfg)
     } else {
-        cfg.endpoint.trim().to_string()
+        volcengine_embedding_endpoint(cfg)
     };
     let mut req = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(
@@ -764,6 +765,8 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
     }
     let body = if is_google {
         google_embedding_body(&cfg.model, text, cfg.output_dimensionality)
+    } else if is_doubao_multimodal {
+        doubao_multimodal_embedding_body(&cfg.model, text)
     } else {
         json!({ "model": cfg.model, "input": text })
     };
@@ -783,9 +786,23 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
             data.to_string().chars().take(200).collect::<String>()
         ));
     }
+    parse_embedding_values(&data, is_google, is_doubao_multimodal)
+}
+
+fn parse_embedding_values(
+    data: &Value,
+    is_google: bool,
+    is_doubao_multimodal: bool,
+) -> Result<Vec<f32>, String> {
     let values = if is_google {
         data.get("embedding")
             .and_then(|v| v.get("values"))
+            .and_then(Value::as_array)
+    } else if is_doubao_multimodal {
+        // Doubao vision embeddings return a SINGLE object under `data`
+        // (`data.embedding`), unlike OpenAI's `data[0].embedding` array.
+        data.get("data")
+            .and_then(|v| v.get("embedding"))
             .and_then(Value::as_array)
     } else {
         data.get("data")
@@ -847,6 +864,106 @@ fn is_reserved_extra_header_name(name: &str) -> bool {
 fn is_google_embedding_config(cfg: &SearchEmbeddingConfig) -> bool {
     let endpoint = cfg.endpoint.to_lowercase();
     endpoint.contains("generativelanguage.googleapis.com") || endpoint.contains(":embedcontent")
+}
+
+/// True only for genuine Volcengine hosts (volces.com / *.volces.com /
+/// anything containing "volcengine"). We deliberately key off the URL
+/// HOST, not the path or query, so a custom gateway that merely proxies
+/// volcengine (`.../proxy/volcengine?upstream=volces.com`) is NOT treated
+/// as Volcengine — its endpoint is passed through verbatim.
+fn is_volcengine_embedding_endpoint(endpoint: &str) -> bool {
+    let host = reqwest::Url::parse(endpoint)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| host.to_lowercase()))
+        .unwrap_or_else(|| {
+            let trimmed = endpoint.trim();
+            trimmed
+                .split_once("://")
+                .map(|(_, rest)| rest)
+                .unwrap_or(trimmed)
+                .split(['/', '?', '#'])
+                .next()
+                .unwrap_or("")
+                .to_lowercase()
+        });
+    host == "volces.com" || host.ends_with(".volces.com") || host.contains("volcengine")
+}
+
+/// Doubao multimodal embedding models use a different request/response
+/// wire shape. Detection is MODEL-driven (not endpoint-driven) so the
+/// vision shape is also used for custom gateways proxying these models.
+fn is_doubao_multimodal_embedding_config(cfg: &SearchEmbeddingConfig) -> bool {
+    cfg.model
+        .trim()
+        .to_lowercase()
+        .contains("doubao-embedding-vision")
+}
+
+/// For Volcengine base endpoints (`.../api/v3`) append the right
+/// embeddings path (`/embeddings` for text, `/embeddings/multimodal` for
+/// doubao vision). Non-Volcengine endpoints are returned verbatim.
+fn volcengine_embedding_endpoint(cfg: &SearchEmbeddingConfig) -> String {
+    let raw = cfg.endpoint.trim();
+    if !is_volcengine_embedding_endpoint(raw) {
+        return raw.to_string();
+    }
+    let suffix = if is_doubao_multimodal_embedding_config(cfg) {
+        "/embeddings/multimodal"
+    } else {
+        "/embeddings"
+    };
+    append_endpoint_path(raw, suffix)
+}
+
+/// Append `target_suffix` to `endpoint`'s path, idempotently. Handles the
+/// text↔multimodal suffix swap (so switching models on a saved endpoint
+/// rewrites the path instead of stacking suffixes) and never duplicates
+/// an already-present suffix. Query strings are preserved.
+fn append_endpoint_path(endpoint: &str, target_suffix: &str) -> String {
+    let suffix = target_suffix.trim_start_matches('/');
+    match reqwest::Url::parse(endpoint) {
+        Ok(mut url) => {
+            let path = url.path().trim_end_matches('/').to_string();
+            let lower_path = path.to_lowercase();
+            let lower_suffix = format!("/{}", suffix.to_lowercase());
+            if lower_path.ends_with(&lower_suffix) {
+                url.set_path(if path.is_empty() { "/" } else { &path });
+                return url.to_string();
+            }
+            if lower_path.ends_with("/embeddings/multimodal") && lower_suffix == "/embeddings" {
+                let base = path.trim_end_matches("/multimodal");
+                url.set_path(if base.is_empty() { "/" } else { base });
+                return url.to_string();
+            }
+            if lower_path.ends_with("/embeddings") && lower_suffix == "/embeddings/multimodal" {
+                url.set_path(&format!("{path}/multimodal"));
+                return url.to_string();
+            }
+            let next = format!("{path}/{suffix}").replace("//", "/");
+            url.set_path(&next);
+            url.to_string()
+        }
+        Err(_) => {
+            let (base, query) = endpoint.split_once('?').unwrap_or((endpoint, ""));
+            let trimmed = base.trim_end_matches('/');
+            let lower = trimmed.to_lowercase();
+            let lower_suffix = format!("/{}", suffix.to_lowercase());
+            let next = if lower.ends_with(&lower_suffix) {
+                trimmed.to_string()
+            } else if lower.ends_with("/embeddings/multimodal") && lower_suffix == "/embeddings" {
+                trimmed.trim_end_matches("/multimodal").to_string()
+            } else if lower.ends_with("/embeddings") && lower_suffix == "/embeddings/multimodal" {
+                format!("{trimmed}/multimodal")
+            } else {
+                format!("{trimmed}/{suffix}")
+            };
+            if query.is_empty() {
+                next
+            } else {
+                format!("{next}?{query}")
+            }
+        }
+    }
 }
 
 fn google_embedding_endpoint(cfg: &SearchEmbeddingConfig) -> String {
@@ -917,6 +1034,14 @@ fn google_embedding_body(model: &str, text: &str, output_dimensionality: Option<
         body["output_dimensionality"] = json!(dim);
     }
     body
+}
+
+fn doubao_multimodal_embedding_body(model: &str, text: &str) -> Value {
+    json!({
+        "model": model,
+        "encoding_format": "float",
+        "input": [{ "type": "text", "text": text }],
+    })
 }
 
 pub fn build_snippet(content: &str, query: &str) -> String {
@@ -1066,6 +1191,125 @@ mod tests {
         let body = google_embedding_body("gemini-embedding-001", "hello", Some(768));
         assert_eq!(body["model"], "models/gemini-embedding-001");
         assert_eq!(body["output_dimensionality"], 768);
+    }
+
+    #[test]
+    fn volcengine_embedding_endpoint_only_appends_for_volcengine_hosts() {
+        let cfg = SearchEmbeddingConfig {
+            enabled: true,
+            endpoint: "https://ark.cn-beijing.volces.com/api/v3".to_string(),
+            api_key: "ARK_KEY".to_string(),
+            model: "doubao-embedding-text-240715".to_string(),
+            output_dimensionality: None,
+            extra_headers: None,
+        };
+        assert_eq!(
+            volcengine_embedding_endpoint(&cfg),
+            "https://ark.cn-beijing.volces.com/api/v3/embeddings"
+        );
+
+        let custom = SearchEmbeddingConfig {
+            endpoint: "https://gateway.example.com/proxy/volcengine?upstream=volces.com"
+                .to_string(),
+            ..cfg.clone()
+        };
+        assert_eq!(
+            volcengine_embedding_endpoint(&custom),
+            "https://gateway.example.com/proxy/volcengine?upstream=volces.com"
+        );
+    }
+
+    #[test]
+    fn doubao_multimodal_endpoint_and_body_use_vision_shape() {
+        let cfg = SearchEmbeddingConfig {
+            enabled: true,
+            endpoint: "https://ark.cn-beijing.volces.com/api/v3/embeddings?trace=1".to_string(),
+            api_key: "ARK_KEY".to_string(),
+            model: "doubao-embedding-vision".to_string(),
+            output_dimensionality: None,
+            extra_headers: None,
+        };
+
+        assert_eq!(
+            volcengine_embedding_endpoint(&cfg),
+            "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal?trace=1"
+        );
+
+        let body = doubao_multimodal_embedding_body("doubao-embedding-vision", "hello");
+        assert_eq!(body["model"], "doubao-embedding-vision");
+        assert_eq!(body["encoding_format"], "float");
+        assert_eq!(body["input"][0]["type"], "text");
+        assert_eq!(body["input"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn volcengine_embedding_endpoint_does_not_duplicate_existing_suffixes() {
+        let cfg = SearchEmbeddingConfig {
+            enabled: true,
+            endpoint: "https://ARK.cn-beijing.volces.com/api/v3/embeddings".to_string(),
+            api_key: "ARK_KEY".to_string(),
+            model: "doubao-embedding-text-240715".to_string(),
+            output_dimensionality: None,
+            extra_headers: None,
+        };
+        assert_eq!(
+            volcengine_embedding_endpoint(&cfg),
+            "https://ark.cn-beijing.volces.com/api/v3/embeddings"
+        );
+
+        let vision = SearchEmbeddingConfig {
+            endpoint: "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal".to_string(),
+            model: "doubao-embedding-vision".to_string(),
+            ..cfg.clone()
+        };
+        assert_eq!(
+            volcengine_embedding_endpoint(&vision),
+            "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal"
+        );
+
+        let text_on_multimodal_endpoint = SearchEmbeddingConfig {
+            model: "doubao-embedding-text-240715".to_string(),
+            ..vision
+        };
+        assert_eq!(
+            volcengine_embedding_endpoint(&text_on_multimodal_endpoint),
+            "https://ark.cn-beijing.volces.com/api/v3/embeddings"
+        );
+    }
+
+    #[test]
+    fn doubao_multimodal_detection_is_model_driven_for_custom_gateways() {
+        let cfg = SearchEmbeddingConfig {
+            enabled: true,
+            endpoint: "https://gateway.example.com/ark/embeddings/multimodal".to_string(),
+            api_key: "KEY".to_string(),
+            model: "doubao-embedding-vision".to_string(),
+            output_dimensionality: None,
+            extra_headers: None,
+        };
+
+        assert!(is_doubao_multimodal_embedding_config(&cfg));
+        assert_eq!(
+            volcengine_embedding_endpoint(&cfg),
+            "https://gateway.example.com/ark/embeddings/multimodal"
+        );
+
+        let body = doubao_multimodal_embedding_body(&cfg.model, "hello");
+        assert_eq!(body["input"][0]["type"], "text");
+        assert_eq!(body["input"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn doubao_multimodal_response_shape_is_distinct_from_openai_shape() {
+        let values =
+            parse_embedding_values(&json!({ "data": { "embedding": [0.1, 0.2] } }), false, true)
+                .expect("vision response should parse");
+        assert_eq!(values, vec![0.1, 0.2]);
+
+        assert!(
+            parse_embedding_values(&json!({ "data": [{ "embedding": [0.1] }] }), false, true,)
+                .is_err()
+        );
     }
 
     #[test]
