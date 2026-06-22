@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import { buildAnalysisPrompt, buildGenerationPrompt } from "./ingest"
+import { buildAnalysisPrompt, buildGenerationPrompt, buildPageMergeSystemPrompt } from "./ingest"
 import { useWikiStore } from "@/stores/wiki-store"
 
 beforeEach(() => {
@@ -39,6 +39,12 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("## Main Arguments & Findings")
     expect(prompt).toContain("## Recommendations")
   })
+
+  it("requires claims to stay attached to their named subject", () => {
+    const prompt = buildAnalysisPrompt("", "", "")
+    expect(prompt).toContain("Which named subject is each claim about")
+    expect(prompt).toContain("Do not transfer claims, limits, or evaluations")
+  })
 })
 
 describe("buildGenerationPrompt language directive", () => {
@@ -70,6 +76,39 @@ describe("buildGenerationPrompt language directive", () => {
     const prompt = buildGenerationPrompt("", "", "", "x.pdf", undefined, "私は日本語の文章を書きます")
     expect(prompt).toContain("MANDATORY OUTPUT LANGUAGE: English")
     expect(prompt).not.toContain("OUTPUT LANGUAGE: Japanese")
+  })
+
+  it("preserves technical proper nouns instead of translating them into the output language", () => {
+    useWikiStore.getState().setOutputLanguage("Chinese")
+    const prompt = buildGenerationPrompt("", "", "", "source.pdf")
+
+    expect(prompt).toContain("proper nouns and technical identifiers take precedence")
+    expect(prompt).toContain("GPT-5")
+    expect(prompt).toContain("Transformer")
+    expect(prompt).toContain("standard original form")
+    expect(prompt).toContain("Do not put raw URLs, citation strings, or full paper titles directly into file paths")
+    expect(prompt).toContain("technical terms with no widely-used localized equivalent")
+    expect(prompt).not.toContain("No exceptions — not even for page names")
+  })
+
+  it("tells generation to preserve subject and source boundaries", () => {
+    const prompt = buildGenerationPrompt("", "", "", "source.pdf")
+
+    expect(prompt).toContain("Preserve subject boundaries")
+    expect(prompt).toContain("Do not merge or generalize a claim about one subject into another subject's page")
+    expect(prompt).toContain("cite which source/frontmatter `sources` entry supports that statement")
+  })
+})
+
+describe("page merge prompt", () => {
+  it("keeps comparisons attribution-exact instead of folding them into the main subject", () => {
+    const prompt = buildPageMergeSystemPrompt()
+    expect(prompt).toContain("Both versions target the same wiki page")
+    expect(prompt).toContain("may mention additional subjects for comparison or context")
+    expect(prompt).toContain("keep those comparisons attribution-exact")
+    expect(prompt).toContain("do not fold them into claims about the main page subject")
+    expect(prompt).toContain("prefer keeping them separate")
+    expect(prompt).not.toContain("describe the same entity")
   })
 })
 

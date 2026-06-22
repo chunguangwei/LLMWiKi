@@ -47,12 +47,20 @@ describe("buildLanguageDirective", () => {
     expect(directive).toContain("MANDATORY OUTPUT LANGUAGE: Chinese")
   })
 
-  it("names the language multiple times for emphasis", () => {
+  it("keeps the target prose language prominent without requiring proper noun translation", () => {
     useWikiStore.getState().setOutputLanguage("Japanese")
     const directive = buildLanguageDirective()
-    // Should include 'Japanese' at least 4× (header + instructions)
     const count = (directive.match(/Japanese/g) || []).length
-    expect(count).toBeGreaterThanOrEqual(4)
+    expect(count).toBeGreaterThanOrEqual(3)
+    expect(directive).toContain("Write surrounding natural-language prose")
+    expect(directive).toContain("prose titles and section headings")
+    expect(directive).toContain("Preserve organization names")
+    expect(directive).toContain("model names")
+    expect(directive).toContain("paper titles")
+    expect(directive).toContain("technical terms that have no widely-used localized equivalent")
+    expect(directive).toContain("does not override the proper-noun and technical-identifier preservation rule")
+    expect(directive).not.toMatch(/transliteration when appropriate/i)
+    expect(directive).not.toContain("overrides all other instructions")
   })
 
   it("follows the explicit setting even when fallback text is in another language", () => {
@@ -74,10 +82,11 @@ describe("buildLanguageDirective", () => {
     expect(directive).toContain("MANDATORY OUTPUT LANGUAGE: Persian (Farsi / فارسی)")
   })
 
-  it("explicitly overrides source content language", () => {
+  it("uses the source as evidence without translating proper nouns", () => {
     useWikiStore.getState().setOutputLanguage("English")
     const directive = buildLanguageDirective()
-    expect(directive).toContain("IRRELEVANT to your output language")
+    expect(directive).toContain("use it as evidence")
+    expect(directive).toContain("proper nouns and technical identifiers")
   })
 })
 
@@ -85,7 +94,9 @@ describe("buildLanguageReminder", () => {
   it("is a concise reminder, not a full directive", () => {
     useWikiStore.getState().setOutputLanguage("Chinese")
     const reminder = buildLanguageReminder()
-    expect(reminder).toMatch(/All output must be in Chinese/)
+    expect(reminder).toMatch(/Write prose in Chinese/)
+    expect(reminder).toContain("preserve names")
+    expect(reminder).not.toContain("Do not use any other language")
     // Reminder should be ONE line, not a multi-line block
     expect(reminder.split("\n").length).toBe(1)
   })

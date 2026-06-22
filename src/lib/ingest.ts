@@ -15,6 +15,8 @@ import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
+import { parseFrontmatter } from "@/lib/frontmatter"
+import { makeQuerySlug } from "@/lib/wiki-filename"
 import type { FileNode } from "@/types/wiki"
 import {
   extractAndSaveSourceImages,
@@ -1068,6 +1070,55 @@ function isListingPath(relativePath: string): boolean {
   )
 }
 
+// 50ec6a3 — keep CJK ingest filenames in the target language. When the target
+// output language is CJK and the LLM gave a page a CJK title but an English/
+// ASCII slug for the filename, rewrite the filename to the readable CJK slug so
+// the on-disk name matches the page's actual language.
+const CJK_OUTPUT_LANGUAGES = new Set(["Chinese", "Traditional Chinese", "Japanese", "Korean"])
+
+function containsCjk(text: string): boolean {
+  return /[㐀-鿿぀-ヿ가-힯]/u.test(text)
+}
+
+function extractGeneratedPageTitle(content: string): string | null {
+  const title = parseFrontmatter(content).frontmatter?.title
+  if (typeof title === "string" && title.trim()) return title.trim()
+  const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim()
+  return heading || null
+}
+
+export function rewriteIngestPathFromTitleForTargetLanguage(
+  relativePath: string,
+  content: string,
+  targetLang: string | undefined,
+): string {
+  if (!targetLang || targetLang === "auto" || !CJK_OUTPUT_LANGUAGES.has(targetLang)) {
+    return relativePath
+  }
+  // Never touch logs, listings (index/overview), or source summaries — those
+  // names are deterministic and load-bearing for downstream linking.
+  if (
+    isLogPath(relativePath) ||
+    isListingPath(relativePath) ||
+    relativePath.startsWith("wiki/sources/")
+  ) {
+    return relativePath
+  }
+  const title = extractGeneratedPageTitle(content)
+  if (!title || !containsCjk(title)) return relativePath
+
+  const slash = relativePath.lastIndexOf("/")
+  const dir = slash >= 0 ? relativePath.slice(0, slash + 1) : ""
+  const fileName = slash >= 0 ? relativePath.slice(slash + 1) : relativePath
+  // Filename already has CJK — the LLM did the right thing; leave it alone.
+  if (containsCjk(fileName)) return relativePath
+
+  const slug = makeQuerySlug(title)
+  if (!containsCjk(slug)) return relativePath
+  const nextPath = `${dir}${slug}.md`
+  return isSafeIngestPath(nextPath) ? nextPath : relativePath
+}
+
 function canonicalizeSourcesField(content: string, sourceIdentity: string): string {
   if (!/^---\n/.test(content)) return content
 
@@ -1259,6 +1310,11 @@ async function writeFileBlocks(
       warnings.push(msg)
       continue
     }
+
+    // 50ec6a3 — when the target language is CJK, keep the on-disk filename in
+    // that language if the page title is CJK but the model emitted an English
+    // slug. No-op for logs/listings/source summaries (guarded inside).
+    relativePath = rewriteIngestPathFromTitleForTargetLanguage(relativePath, content, targetLang)
 
     const fullPath = `${projectPath}/${relativePath}`
     try {
@@ -2365,6 +2421,9 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "- What are the core claims or results?",
     "- What evidence supports them?",
     "- How strong is the evidence?",
+    // 1312525 — make the analysis pin each claim to its named subject so multi-subject
+    // sources don't leak one entity's results onto another downstream in generation.
+    "- Which named subject is each claim about? Do not transfer claims, limits, or evaluations from one entity/model/product/method to another just because they share keywords.",
     "",
     "## Connections to Existing Wiki",
     "- What existing pages does this source relate to?",
@@ -2509,6 +2568,15 @@ export function buildGenerationPrompt(
     "",
     "Other rules:",
     "- Use [[wikilink]] syntax in the BODY for cross-references between pages",
+    "- If you include images, use wiki-root-relative paths such as `media/source-slug/image.png`; never output absolute filesystem paths.",
+    // 1312525 — keep claims attached to the subject they describe so a multi-subject
+    // source doesn't bleed one model/product's benchmark or limitation onto another.
+    "- Preserve subject boundaries: when a source discusses multiple entities/models/products/methods, keep claims, evaluations, limitations, benchmark results, and recommendations attached to the exact subject they describe.",
+    "- Do not merge or generalize a claim about one subject into another subject's page solely because they share terms (for example context window size, benchmark name, dataset, architecture, or feature name).",
+    "- If a page needs to mention another subject for comparison, write it explicitly as a comparison and cite which source/frontmatter `sources` entry supports that statement.",
+    // 69fe431 — derive filenames from the title, but never mangle technical proper nouns;
+    // keep CJK characters for CJK prose titles instead of transliterating to an English slug.
+    "- Derive filenames from the page title in the mandatory output language, but short proper nouns and technical identifiers take precedence: preserve names such as OpenAI, GPT-5, Transformer, CLIP, ImageNet, PyTorch, CUDA, GitHub, arXiv, React, LanceDB, AnyTXT, MinerU, model names, dataset names, tool names, and code identifiers in their standard original form. Do not put raw URLs, citation strings, or full paper titles directly into file paths; convert surrounding descriptive prose to a safe readable title. For Chinese/Japanese/Korean prose titles, keep readable CJK characters in the filename instead of translating the slug to English.",
     "- Use kebab-case filenames",
     "- Follow the analysis recommendations on what to emphasize",
     "- If the analysis found connections to existing pages, add cross-references",
@@ -2573,7 +2641,7 @@ export function buildGenerationPrompt(
     "4. DO NOT output markdown tables, bullet lists, or headings outside of FILE/REVIEW blocks.",
     "5. DO NOT output any trailing commentary after the last `---END FILE---` or `---END REVIEW---`.",
     "6. Between blocks, use only blank lines — no prose.",
-    "7. EVERY FILE block's content (titles, body, descriptions) MUST be in the mandatory output language specified below. No exceptions — not even for page names or section headings.",
+    "7. FILE block prose (body, explanations, descriptions, section text) must use the mandatory output language specified below. Preserve proper nouns, acronyms, model names, dataset names, tool/library names, code identifiers, URLs, file names, citation strings, paper titles, and technical terms with no widely-used localized equivalent in their standard original form, including in page names and section headings.",
     "",
     "If you start with anything other than `---FILE:`, the entire response will be discarded.",
     "",
@@ -2606,26 +2674,7 @@ async function tryReadFile(path: string): Promise<string> {
  */
 function buildPageMerger(llmConfig: LlmConfig): MergeFn {
   return async (existingContent, incomingContent, sourceFileName, signal) => {
-    const systemPrompt = [
-      "You are merging two versions of the same wiki page into one coherent document.",
-      "Both versions describe the same entity / concept; one is already on disk,",
-      "the other was just generated from a different source document.",
-      "",
-      "Output ONE merged version that:",
-      "- Preserves every factual claim from both versions (do not drop content)",
-      "- Eliminates redundancy when both versions state the same fact",
-      "- Reorganizes sections so the structure is logical for the merged topic,",
-      "  not just a concatenation of the two inputs",
-      "- Uses consistent markdown structure (headings, tables, lists, callouts)",
-      "- Keeps `[[wikilink]]` references intact",
-      "",
-      "Output requirements:",
-      "- The FIRST character of your response MUST be `-` (the opening of `---`)",
-      "- Output the COMPLETE file: YAML frontmatter + body",
-      "- No preamble (no \"Here is the merged version:\"), no analysis prose",
-      "- The caller will overwrite `sources`/`tags`/`related`/`updated` with",
-      "  deterministic values — your job is the body and any other fields",
-    ].join("\n")
+    const systemPrompt = buildPageMergeSystemPrompt()
 
     const userMessage = [
       `## Existing version on disk`,
@@ -2674,6 +2723,39 @@ function buildPageMerger(llmConfig: LlmConfig): MergeFn {
     if (streamError) throw streamError
     return result
   }
+}
+
+/**
+ * System prompt for the LLM page-merger. Extracted (1312525) so it can be
+ * unit-tested and so the subject/source-boundary rules below stay in one
+ * place: a merge must never fold one subject's comparison claims into the
+ * main page's subject just because the two versions look similar.
+ */
+export function buildPageMergeSystemPrompt(): string {
+  return [
+    "You are merging two versions of the same wiki page into one coherent document.",
+    "Both versions target the same wiki page; one is already on disk,",
+    "the other was just generated from a different source document.",
+    "Either version may mention additional subjects for comparison or context.",
+    "",
+    "Output ONE merged version that:",
+    "- Preserves every factual claim from both versions (do not drop content)",
+    "- Eliminates redundancy when both versions state the same fact",
+    "- Preserves subject/source boundaries: if either version mentions other entities/models/products/methods for comparison, keep those comparisons attribution-exact and do not fold them into claims about the main page subject",
+    "- When claims conflict or apply to different subjects, keep them separated and say which source version supports each one instead of synthesizing a single generalized conclusion",
+    "- When in doubt whether two similar-looking claims describe the same fact, prefer keeping them separate",
+    "- Reorganizes sections so the structure is logical for the merged topic,",
+    "  not just a concatenation of the two inputs",
+    "- Uses consistent markdown structure (headings, tables, lists, callouts)",
+    "- Keeps `[[wikilink]]` references intact",
+    "",
+    "Output requirements:",
+    "- The FIRST character of your response MUST be `-` (the opening of `---`)",
+    "- Output the COMPLETE file: YAML frontmatter + body",
+    "- No preamble (no \"Here is the merged version:\"), no analysis prose",
+    "- The caller will overwrite `sources`/`tags`/`related`/`updated` with",
+    "  deterministic values — your job is the body and any other fields",
+  ].join("\n")
 }
 
 /**

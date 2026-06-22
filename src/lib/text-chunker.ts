@@ -347,12 +347,14 @@ function tokenizeAtoms(text: string): Atom[] {
     }
 
     // Regular paragraph: accumulate consecutive non-blank, non-special lines.
+    // 4af0e8a — do NOT exclude leading `|` here. A lone pipe-prefixed line that
+    // fell through the table branch above must be consumed as paragraph text;
+    // otherwise `i` never advances and the outer loop spins forever.
     const start = cursor
     const bodyLines: string[] = []
     while (
       i < lines.length &&
       lines[i].trim() !== "" &&
-      !lines[i].startsWith("|") &&
       !/^(`{3,}|~{3,})/.test(lines[i])
     ) {
       bodyLines.push(lines[i])
