@@ -269,6 +269,7 @@
     "language": "语言",
     "languageHint": "界面语言（Wiki 内容语言以原始资料为准）",
     "categories": {
+      "general": "通用",
       "llm": "LLM 模型",
       "embedding": "向量嵌入",
       "multimodal": "视觉 / 图片识别",
@@ -292,6 +293,20 @@
       "about": "关于"
     },
     "sections": {
+      "general": {
+        "title": "通用",
+        "description": "桌面应用的启动和窗口关闭行为。",
+        "autostart": "登录系统后自动启动",
+        "autostartHint": "登录这台电脑后自动启动 LLM Wiki。",
+        "closeBehavior": "关闭窗口时",
+        "closeBehaviorHint": "点击标题栏关闭按钮时使用这个设置。托盘菜单仍可直接退出应用。",
+        "closeAsk": "每次询问",
+        "closeAskHint": "显示确认框。取消会隐藏窗口，并保持后台功能继续运行。",
+        "closeMinimize": "隐藏到托盘",
+        "closeMinimizeHint": "关闭窗口时让 LLM Wiki 留在后台运行。依赖系统托盘支持；部分 Linux 桌面可能不显示托盘图标。",
+        "closeExit": "退出应用",
+        "closeExitHint": "关闭窗口时立即退出 LLM Wiki。"
+      },
       "llm": {
         "title": "LLM 模型",
         "description": "每个厂商一条独立配置。打开开关即切换为当前活跃 provider；其他的会自动关闭。配置改动即时保存,每个厂商的 API Key 独立存储,切换之间不丢失。",

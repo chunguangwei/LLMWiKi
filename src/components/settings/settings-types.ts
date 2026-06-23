@@ -1,5 +1,5 @@
 import type { CustomApiMode } from "./llm-presets"
-import type { AzureModelFamily, MineruModelVersion, ReasoningConfig, SourceWatchConfig } from "@/stores/wiki-store"
+import type { AzureModelFamily, CloseBehavior, MineruModelVersion, ReasoningConfig, SourceWatchConfig } from "@/stores/wiki-store"
 
 /**
  * Shape of the draft state each section reads from and writes into.
@@ -80,6 +80,10 @@ export interface SettingsDraft {
   apiEnabled: boolean
   apiAllowUnauthenticated: boolean
   apiToken: string
+
+  // General app behavior (launch-at-startup + window-close behavior)
+  autostart: boolean
+  closeBehavior: CloseBehavior
 }
 
 export type DraftSetter = <K extends keyof SettingsDraft>(

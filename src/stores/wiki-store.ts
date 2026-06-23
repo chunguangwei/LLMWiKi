@@ -176,6 +176,18 @@ interface ApiConfig {
   token: string
 }
 
+// General desktop-app behavior (ported from upstream 0e292ee).
+// `closeBehavior` drives what the Rust window-close handler does when
+// the title-bar close button is clicked; `autostart` toggles the OS
+// launch-at-login entry. Persisted via generalConfig (project-store.ts)
+// and pushed to Rust on save + startup.
+export type CloseBehavior = "ask" | "minimize" | "exit"
+
+export interface GeneralConfig {
+  autostart: boolean
+  closeBehavior: CloseBehavior
+}
+
 interface SourceWatchConfig {
   enabled: boolean
   autoIngest: boolean
@@ -321,6 +333,7 @@ interface WikiState {
   sourceWatchConfig: SourceWatchConfig
   mineruConfig: MineruConfig
   apiConfig: ApiConfig
+  generalConfig: GeneralConfig
   /**
    * **Labs / experimental** — turn on the 🤖 agent-ingest button on
    * source files. Off by default in v0.4.23 because the pipeline is
@@ -439,6 +452,7 @@ interface WikiState {
   setSourceWatchConfig: (config: SourceWatchConfig) => void
   setMineruConfig: (config: MineruConfig) => void
   setApiConfig: (config: ApiConfig) => void
+  setGeneralConfig: (config: GeneralConfig) => void
   setExperimentalAgentIngest: (enabled: boolean) => void
   setExperimentalAiLintFix: (enabled: boolean) => void
   setExperimentalChatAgent: (enabled: boolean) => void
@@ -555,6 +569,11 @@ export const useWikiStore = create<WikiState>((set) => ({
     token: "",
   },
 
+  generalConfig: {
+    autostart: false,
+    closeBehavior: "ask",
+  },
+
   experimentalAgentIngest: false,
   experimentalAiLintFix: false,
   experimentalChatAgent: false,
@@ -576,6 +595,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
   setMineruConfig: (mineruConfig) => set({ mineruConfig }),
   setApiConfig: (apiConfig) => set({ apiConfig }),
+  setGeneralConfig: (generalConfig) => set({ generalConfig }),
   setExperimentalAgentIngest: (experimentalAgentIngest) =>
     set({ experimentalAgentIngest }),
   setExperimentalAiLintFix: (experimentalAiLintFix) =>

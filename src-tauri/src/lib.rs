@@ -3,9 +3,20 @@ mod clip_server;
 mod commands;
 mod panic_guard;
 mod proxy;
+mod tray;
 mod types;
 
 use panic_guard::run_guarded;
+use std::sync::Mutex;
+use tauri::Manager;
+
+// Close-to-tray behavior, ported from upstream 0e292ee. Holds the
+// user's title-bar-close preference ("ask" | "minimize" | "exit") so
+// the on_window_event handler (which has no access to the frontend
+// store) can decide what to do. Seeded to "ask" in `.setup()` and kept
+// in sync from the frontend via the `set_close_behavior` command +
+// the persisted generalConfig (see src/lib/project-store.ts).
+struct CloseBehaviorState(Mutex<String>);
 
 #[tauri::command]
 fn clip_server_status() -> String {
@@ -48,6 +59,41 @@ fn set_proxy_env(config: proxy::ProxyConfig) -> String {
     summary
 }
 
+/// Update the cached close-to-tray behavior (ported from upstream
+/// 0e292ee). The frontend calls this whenever the user saves
+/// Settings → General and once on startup to hydrate from the
+/// persisted config, so the window-close handler below always sees the
+/// current preference. Rejects unknown values so a malformed IPC call
+/// can't leave the app in an undefined close mode.
+#[tauri::command]
+fn set_close_behavior(
+    value: String,
+    state: tauri::State<'_, CloseBehaviorState>,
+) -> Result<String, String> {
+    let normalized = match value.as_str() {
+        "ask" | "minimize" | "exit" => value,
+        other => return Err(format!("Invalid close behavior: {other}")),
+    };
+    let mut guard = state
+        .0
+        .lock()
+        .map_err(|_| "Close behavior state is unavailable".to_string())?;
+    *guard = normalized.clone();
+    Ok(normalized)
+}
+
+/// Read the current close behavior, defaulting to "ask" if the lock is
+/// poisoned. Used by the on_window_event handler, which runs outside an
+/// async command and so can't take `tauri::State` directly.
+fn close_behavior<R: tauri::Runtime>(window: &tauri::Window<R>) -> String {
+    window
+        .state::<CloseBehaviorState>()
+        .0
+        .lock()
+        .map(|value| value.clone())
+        .unwrap_or_else(|_| "ask".to_string())
+}
+
 // IDENTIFIER LOCK: the bundle identifier in tauri.conf.json
 // (com.llmwiki.app) is load-bearing — it scopes the OS app-data dir
 // (macOS: ~/Library/Application Support/<identifier>/app-state.json)
@@ -81,6 +127,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        // Launch-at-startup, ported from upstream 0e292ee. Registers an
+        // OS-level auto-launch entry (macOS LaunchAgent / Windows
+        // registry Run key / Linux .desktop autostart) toggled from
+        // Settings → General. No autostart args; the app reads its
+        // own persisted config on launch.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None::<Vec<&str>>,
+        ))
         // In-place auto-update + relaunch. The updater fetches the
         // signed latest.json from our GitHub releases (endpoint +
         // pubkey in tauri.conf.json) and replaces the app in place,
@@ -93,7 +148,6 @@ pub fn run() {
         // from Rust, never the webview.
         .plugin(tauri_plugin_http::init())
         .setup(|app| {
-            use tauri::Manager;
             // Start the web-clip server here (not before the builder) so a
             // secondary instance — which the single-instance plugin exits
             // before reaching this setup hook — never tries to bind the
@@ -147,6 +201,16 @@ pub fn run() {
             app.manage(commands::claude_cli::ClaudeCliState::default());
             app.manage(commands::codex_cli::CodexCliState::default());
             app.manage(commands::file_sync::FileSyncState::default());
+            // Tray + close-to-tray state, ported from upstream 0e292ee.
+            // Seed the close behavior to "ask"; the frontend rehydrates
+            // it from the persisted generalConfig on startup. Tray
+            // creation is best-effort: some Linux desktops lack a tray,
+            // so a failure logs and continues rather than aborting
+            // startup.
+            app.manage(CloseBehaviorState(Mutex::new("ask".to_string())));
+            if let Err(err) = tray::create_tray(app.handle()) {
+                eprintln!("[tray] system tray unavailable, continuing without it: {err}");
+            }
             api_server::start_api_server(app.handle().clone());
             Ok(())
         })
@@ -211,34 +275,52 @@ pub fn run() {
             commands::config_backup::config_backup_status,
             commands::config_backup::config_backup_now,
             set_proxy_env,
+            set_close_behavior,
         ])
         .on_window_event(|window, event| {
+            // Close-to-tray, ported from upstream 0e292ee. The fork
+            // previously hard-coded per-OS behavior (macOS: hide;
+            // others: confirm-then-quit). That branching is now driven
+            // by the user's `closeBehavior` preference cached in
+            // CloseBehaviorState, identical across platforms:
+            //   - "exit":     destroy the window and quit the process.
+            //   - "minimize": hide to the tray, keep running.
+            //   - "ask":      confirm; OK quits, Cancel hides to tray.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                #[cfg(target_os = "macos")]
-                {
-                    let _ = window.hide();
-                    api.prevent_close();
-                }
-
-                #[cfg(not(target_os = "macos"))]
-                {
-                    use tauri::Manager;
-                    api.prevent_close();
-                    let win = window.clone();
-                    let app = window.app_handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        use tauri_plugin_dialog::DialogExt;
-                        let confirmed = app
-                            .dialog()
-                            .message("Are you sure you want to quit LLM Wiki?")
-                            .title("Confirm Exit")
-                            .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
-                            .blocking_show();
-
-                        if confirmed {
+                api.prevent_close();
+                let behavior = close_behavior(window);
+                let win = window.clone();
+                let app = window.app_handle().clone();
+                match behavior.as_str() {
+                    "exit" => {
+                        tauri::async_runtime::spawn(async move {
                             let _ = win.destroy();
-                        }
-                    });
+                            app.exit(0);
+                        });
+                    }
+                    "minimize" => {
+                        let _ = window.hide();
+                    }
+                    _ => {
+                        tauri::async_runtime::spawn(async move {
+                            use tauri_plugin_dialog::DialogExt;
+                            let confirmed = app
+                                .dialog()
+                                .message(
+                                    "Quit LLM Wiki? Choose OK to exit. Choose Cancel to hide the window and keep background features running.",
+                                )
+                                .title("LLM Wiki")
+                                .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+                                .blocking_show();
+
+                            if confirmed {
+                                let _ = win.destroy();
+                                app.exit(0);
+                            } else {
+                                let _ = win.hide();
+                            }
+                        });
+                    }
                 }
             }
         })

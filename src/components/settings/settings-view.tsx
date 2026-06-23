@@ -21,9 +21,11 @@ import {
   ShieldCheck,
   FlaskConical,
   FileText,
+  Settings,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
+import { disable as disableAutostart, enable as enableAutostart } from "@tauri-apps/plugin-autostart"
 import i18n from "@/i18n"
 import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -54,8 +56,10 @@ import { StorageLocationSection } from "./sections/storage-location-section"
 import { UserManualSection } from "./sections/user-manual-section"
 import { SchemaUpgradeSection } from "./sections/schema-upgrade-section"
 import { ConfigBackupSection } from "./sections/config-backup-section"
+import { GeneralSection } from "./sections/general-section"
 
 type CategoryId =
+  | "general"
   | "llm"
   | "embedding"
   | "multimodal"
@@ -88,6 +92,7 @@ interface Category {
 }
 
 const CATEGORIES: Category[] = [
+  { id: "general", labelKey: "settings.categories.general", icon: Settings },
   { id: "llm", labelKey: "settings.categories.llm", icon: Bot },
   { id: "embedding", labelKey: "settings.categories.embedding", icon: Binary },
   { id: "multimodal", labelKey: "settings.categories.multimodal", icon: ImageIcon },
@@ -121,6 +126,7 @@ function initialDraft(
   sourceWatch: ReturnType<typeof useWikiStore.getState>["sourceWatchConfig"],
   mineru: ReturnType<typeof useWikiStore.getState>["mineruConfig"],
   apiConfig: ReturnType<typeof useWikiStore.getState>["apiConfig"],
+  generalConfig: ReturnType<typeof useWikiStore.getState>["generalConfig"],
   maxHistoryMessages: number,
   uiLanguage: string,
   projectPath?: string,
@@ -182,6 +188,8 @@ function initialDraft(
     apiEnabled: apiConfig.enabled,
     apiAllowUnauthenticated: apiConfig.allowUnauthenticated,
     apiToken: apiConfig.token,
+    autostart: generalConfig.autostart,
+    closeBehavior: generalConfig.closeBehavior,
     uiLanguage,
     // Fall back to the live zoom store level when no explicit value is
     // passed, so the draft always opens at the user's current zoom.
@@ -210,6 +218,8 @@ export function SettingsView() {
   const setMineruConfig = useWikiStore((s) => s.setMineruConfig)
   const apiConfig = useWikiStore((s) => s.apiConfig)
   const setApiConfig = useWikiStore((s) => s.setApiConfig)
+  const generalConfig = useWikiStore((s) => s.generalConfig)
+  const setGeneralConfig = useWikiStore((s) => s.setGeneralConfig)
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
   const setMaxHistoryMessages = useChatStore((s) => s.setMaxHistoryMessages)
   // Drives the red dot next to the "About" row in the settings
@@ -235,6 +245,7 @@ export function SettingsView() {
       sourceWatchConfig,
       mineruConfig,
       apiConfig,
+      generalConfig,
       maxHistoryMessages,
       i18n.language,
       project?.path,
@@ -280,6 +291,7 @@ export function SettingsView() {
         sourceWatchConfig,
         mineruConfig,
         apiConfig,
+        generalConfig,
         maxHistoryMessages,
         prev.uiLanguage,
         project?.path,
@@ -300,6 +312,7 @@ export function SettingsView() {
     sourceWatchConfig,
     mineruConfig,
     apiConfig,
+    generalConfig,
     maxHistoryMessages,
     project,
   ])
@@ -319,6 +332,7 @@ export function SettingsView() {
       saveSourceWatchConfig,
       saveMineruConfig,
       saveApiConfig,
+      saveGeneralConfig,
       saveZoomLevel,
     } = await import("@/lib/project-store")
 
@@ -452,6 +466,33 @@ export function SettingsView() {
       console.warn("[api] failed to reload API server config cache:", err)
     }
 
+    // ── General: persist + push to store, then apply the two
+    // side-effects that need the OS / Rust side. autostart toggles the
+    // launch-at-login entry via the plugin; close behavior is cached in
+    // Rust's CloseBehaviorState so the window-close handler honors it.
+    // Both are best-effort — a headless / unsupported environment must
+    // never block the rest of the save.
+    const newGeneralConfig = {
+      autostart: draft.autostart,
+      closeBehavior: draft.closeBehavior,
+    }
+    setGeneralConfig(newGeneralConfig)
+    await saveGeneralConfig(newGeneralConfig)
+    try {
+      if (newGeneralConfig.autostart) {
+        await enableAutostart()
+      } else {
+        await disableAutostart()
+      }
+    } catch (err) {
+      console.warn("[general] failed to update autostart:", err)
+    }
+    try {
+      await invoke<string>("set_close_behavior", { value: newGeneralConfig.closeBehavior })
+    } catch (err) {
+      console.warn("[general] failed to update close behavior:", err)
+    }
+
     if (draft.uiLanguage !== i18n.language) {
       await i18n.changeLanguage(draft.uiLanguage)
       await saveLanguage(draft.uiLanguage)
@@ -477,6 +518,7 @@ export function SettingsView() {
     setSourceWatchConfig,
     setMineruConfig,
     setApiConfig,
+    setGeneralConfig,
     scheduledImportConfig,
     setMaxHistoryMessages,
     outputLanguage,
@@ -484,6 +526,8 @@ export function SettingsView() {
 
   const body = useMemo(() => {
     switch (active) {
+      case "general":
+        return <GeneralSection draft={draft} setDraft={setDraft} />
       case "llm":
         // The LLM section manages its own store state (per-provider
         // configs + active preset) and persists directly — it bypasses

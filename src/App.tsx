@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
+import { invoke } from "@tauri-apps/api/core"
+import { disable as disableAutostart, enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart"
 import i18n from "@/i18n"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
@@ -7,7 +9,7 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadExperimentalIngestPreview, loadTheme, loadZoomLevel } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadExperimentalIngestPreview, loadTheme, loadZoomLevel } from "@/lib/project-store"
 import { applyTheme, subscribeToSystemThemeChanges, type Theme } from "@/lib/theme"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
@@ -353,6 +355,30 @@ function App() {
                 : false,
             token: typeof savedApi.token === "string" ? savedApi.token : "",
           })
+        }
+        // General app behavior (tray/startup, ported from upstream
+        // 0e292ee). Hydrate the store so Settings → General reflects
+        // the persisted choice, push the close behavior into Rust's
+        // CloseBehaviorState, then reconcile the OS autostart entry with
+        // the saved preference (the user may have toggled the login item
+        // outside the app). All best-effort: a headless / unsupported
+        // environment must never block startup.
+        const savedGeneral = await loadGeneralConfig()
+        useWikiStore.getState().setGeneralConfig(savedGeneral)
+        try {
+          await invoke<string>("set_close_behavior", { value: savedGeneral.closeBehavior })
+        } catch (err) {
+          console.warn("[general] failed to hydrate close behavior:", err)
+        }
+        try {
+          const currentAutostart = await isAutostartEnabled()
+          if (savedGeneral.autostart && !currentAutostart) {
+            await enableAutostart()
+          } else if (!savedGeneral.autostart && currentAutostart) {
+            await disableAutostart()
+          }
+        } catch (err) {
+          console.warn("[general] failed to sync autostart:", err)
         }
         const savedLang = await loadLanguage()
         if (savedLang) {

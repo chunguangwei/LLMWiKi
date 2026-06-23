@@ -269,6 +269,7 @@
     "language": "Language",
     "languageHint": "Interface language (wiki content follows source material language)",
     "categories": {
+      "general": "General",
       "llm": "LLM Models",
       "embedding": "Embeddings",
       "multimodal": "Vision / Image OCR",
@@ -292,6 +293,20 @@
       "about": "About"
     },
     "sections": {
+      "general": {
+        "title": "General",
+        "description": "Startup and window behavior for the desktop app.",
+        "autostart": "Launch at system startup",
+        "autostartHint": "Starts LLM Wiki automatically after you sign in to this computer.",
+        "closeBehavior": "When closing the window",
+        "closeBehaviorHint": "This setting applies when you click the title-bar close button. The tray menu can still quit the app directly.",
+        "closeAsk": "Ask every time",
+        "closeAskHint": "Show a confirmation. Cancel hides the window and keeps background features running.",
+        "closeMinimize": "Hide to tray",
+        "closeMinimizeHint": "Keep LLM Wiki running in the background when the window closes. Requires system tray support; some Linux desktops may not show tray icons.",
+        "closeExit": "Quit app",
+        "closeExitHint": "Exit LLM Wiki immediately when the window closes."
+      },
       "llm": {
         "title": "LLM Models",
         "description": "One row per vendor. Toggling one on automatically turns off the others. Changes save instantly; each vendor's API key is stored independently so switching doesn't lose data.",
