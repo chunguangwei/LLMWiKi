@@ -7,7 +7,7 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadExperimentalIngestPreview, loadTheme, loadZoomLevel } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadExperimentalIngestPreview, loadTheme, loadZoomLevel } from "@/lib/project-store"
 import { applyTheme, subscribeToSystemThemeChanges, type Theme } from "@/lib/theme"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
@@ -328,6 +328,11 @@ function App() {
         const savedMultimodalConfig = await loadMultimodalConfig()
         if (savedMultimodalConfig) {
           useWikiStore.getState().setMultimodalConfig(savedMultimodalConfig)
+        }
+
+        const savedMineruConfig = await loadMineruConfig()
+        if (savedMineruConfig) {
+          useWikiStore.getState().setMineruConfig(savedMineruConfig)
         }
         const savedProxy = await loadProxyConfig()
         if (savedProxy) {

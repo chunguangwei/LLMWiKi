@@ -2,6 +2,7 @@ import { deleteFile, fileExists, readFile, writeFile, listDirectory, createDirec
 import { streamChat } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
+import { parseWithMineru } from "@/lib/mineru"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
@@ -337,13 +338,63 @@ async function autoIngestImpl(
     sourcePath: sp,
   })
 
-  const [sourceContent, schema, purpose, index, overview] = await Promise.all([
+  // ── MinerU preprocessing for PDF files ──
+  //
+  // Opt-in cloud parser for high-quality PDF extraction (tables,
+  // formulas, complex layouts). Default behavior is unchanged: when
+  // MinerU is disabled or has no token, we fall straight through to the
+  // built-in pdfium extractor below. On a transient MinerU failure for a
+  // non-cancelled run we also fall back to pdfium rather than aborting —
+  // cancellation, by contrast, must propagate so the user's stop wins.
+  //
+  // On success the parsed Markdown is both cached next to the source and
+  // returned via `mineruMarkdown`, which then overrides the built-in
+  // extraction as the source text fed to the LLM.
+  const lowerExt = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() : ""
+  const isPdf = lowerExt === "pdf"
+  const mineruCfg = useWikiStore.getState().mineruConfig
+  let mineruMarkdown: string | null = null
+  if (isPdf && mineruCfg.enabled && mineruCfg.token) {
+    let mineruSucceeded = false
+    try {
+      const cacheDir = sp.substring(0, sp.lastIndexOf("/"))
+      const cachePath = `${cacheDir}/.cache/${fileName}.txt`
+      activity.updateItem(activityId, { detail: "MinerU: parsing PDF..." })
+      console.log(`[ingest:mineru] submitting "${fileName}" to MinerU API`)
+      const markdown = await parseWithMineru(mineruCfg, sp, undefined, (msg) => {
+        activity.updateItem(activityId, { detail: `MinerU: ${msg}` })
+      }, signal)
+      await createDirectory(`${cacheDir}/.cache`)
+      await writeFile(cachePath, markdown)
+      mineruMarkdown = markdown
+      mineruSucceeded = true
+      console.log(`[ingest:mineru] cached MinerU output for "${fileName}" (${markdown.length} chars)`)
+    } catch (err) {
+      // A cancelled run must surface the cancellation, not silently
+      // degrade to pdfium — otherwise the user's stop is ignored.
+      if (signal?.aborted) throw err
+      const msg = trimInlineStatus(err instanceof Error ? err.message : String(err))
+      console.warn(`[ingest:mineru] MinerU parsing failed, falling back to pdfium: ${msg}`)
+      activity.updateItem(activityId, {
+        detail: `MinerU failed, falling back to built-in PDF extraction: ${msg}`,
+      })
+    }
+    if (mineruSucceeded && !signal?.aborted) {
+      activity.updateItem(activityId, { detail: "Reading source..." })
+    }
+  }
+
+  const [rawSourceContent, schema, purpose, index, overview] = await Promise.all([
     readSourceWithSidecar(sp),
     tryReadFile(`${pp}/schema.md`),
     tryReadFile(`${pp}/purpose.md`),
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
+  // When MinerU succeeded, its Markdown is the higher-quality source text;
+  // otherwise we keep the built-in pdfium extraction (with any chat-context
+  // sidecar already prepended by readSourceWithSidecar).
+  const sourceContent = mineruMarkdown ?? rawSourceContent
 
   // ── Cache check: skip re-ingest if source content hasn't changed ──
   //
@@ -1465,6 +1516,12 @@ export function computeIngestReviewMaxTokens(maxContextSize: number | undefined)
 function trimLongText(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text
   return `${text.slice(0, maxChars).trimEnd()}\n\n[...trimmed for prompt budget...]`
+}
+
+/** Clamp a single-line status string (e.g. an error message echoed into the
+ *  activity panel) so a verbose error can't blow out the inline detail. */
+function trimInlineStatus(text: string, maxChars = 240): string {
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars).trimEnd()}...`
 }
 
 function countFileBlocks(text: string): number {
