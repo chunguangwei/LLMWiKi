@@ -613,7 +613,11 @@
           "system": "System",
           "light": "Light",
           "dark": "Dark"
-        }
+        },
+        "zoom": "Interface zoom",
+        "zoomHint": "Scales text and rem-based spacing across the app. Some fixed pixel panels keep their practical size limits.",
+        "zoomIn": "Zoom in",
+        "zoomOut": "Zoom out"
       },
       "labs": {
         "title": "Labs (Experimental)",

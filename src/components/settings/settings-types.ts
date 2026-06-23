@@ -65,6 +65,8 @@ export interface SettingsDraft {
 
   // UI
   uiLanguage: string
+  /** Interface zoom level as a decimal (1 = 100%). Persisted globally. */
+  zoomLevel: number
 
   // Source folder auto watch
   sourceWatchConfig: SourceWatchConfig

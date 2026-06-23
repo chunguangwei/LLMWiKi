@@ -1,9 +1,11 @@
+import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import { Sun, Moon, Monitor } from "lucide-react"
+import { Sun, Moon, Monitor, Plus, Minus } from "lucide-react"
 import i18n from "@/i18n"
 import { Label } from "@/components/ui/label"
 import { saveLanguage, saveTheme } from "@/lib/project-store"
 import { useWikiStore } from "@/stores/wiki-store"
+import { MAX_ZOOM_LEVEL, MIN_ZOOM_LEVEL, ZOOM_STEP, clampZoomLevel, roundZoomLevel } from "@/stores/zoom-store"
 import type { Theme } from "@/lib/theme"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 
@@ -36,6 +38,35 @@ export function InterfaceSection({ draft, setDraft }: Props) {
   const { t } = useTranslation()
   const theme = useWikiStore((s) => s.theme)
   const setTheme = useWikiStore((s) => s.setTheme)
+
+  // Interface zoom lives in the shared draft and is applied + persisted
+  // by the global Save bar (see settings-view handleSave) — unlike the
+  // language / theme pickers above, which take effect one-click without
+  // Save. We mirror the percentage into local input text so the user can
+  // type a value freely (e.g. "125") and only commit it on blur/Enter.
+  const level = draft.zoomLevel
+  const [inputText, setInputText] = useState(String(Math.round(level * 100)))
+
+  // Resync the local input when the draft level changes from outside the
+  // text field (e.g. the +/− buttons, or a project switch).
+  useEffect(() => {
+    setInputText(String(Math.round(level * 100)))
+  }, [level])
+
+  const handleZoom = (next: number) => {
+    setDraft("zoomLevel", clampZoomLevel(roundZoomLevel(next)))
+  }
+
+  const commitInput = () => {
+    const raw = inputText.replace(/[^0-9.]/g, "")
+    const parsed = parseFloat(raw)
+    if (!isNaN(parsed) && parsed > 0) {
+      setDraft("zoomLevel", clampZoomLevel(parsed / 100))
+    } else {
+      // Reject garbage input: snap the field back to the current draft.
+      setInputText(String(Math.round(level * 100)))
+    }
+  }
 
   // One-click language switch: take effect immediately AND persist,
   // without forcing the user to click Save afterwards. The draft
@@ -127,6 +158,49 @@ export function InterfaceSection({ draft, setDraft }: Props) {
             defaultValue:
               "System follows your OS preference and flips live when you toggle it. Light / Dark force the choice regardless of OS.",
           })}
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>{t("settings.sections.interface.zoom")}</Label>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => handleZoom(level - ZOOM_STEP)}
+            disabled={level <= MIN_ZOOM_LEVEL}
+            className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            aria-label={t("settings.sections.interface.zoomOut")}
+          >
+            <Minus className="size-3.5" />
+          </button>
+
+          <div className="relative flex-1 max-w-[70px]">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onBlur={commitInput}
+              onKeyDown={(e) => e.key === "Enter" && commitInput()}
+              className="w-full rounded-md bg-muted pr-3 pl-1 py-1 text-sm font-semibold text-foreground tabular-nums text-center outline-none focus:ring-2 focus:ring-ring focus:ring-inset [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+              %
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => handleZoom(level + ZOOM_STEP)}
+            disabled={level >= MAX_ZOOM_LEVEL}
+            className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            aria-label={t("settings.sections.interface.zoomIn")}
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t("settings.sections.interface.zoomHint")}
         </p>
       </div>
     </div>

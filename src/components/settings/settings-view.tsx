@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
+import { useZoomStore } from "@/stores/zoom-store"
 import { loadSourceWatchConfig, saveLanguage } from "@/lib/project-store"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
@@ -118,6 +119,7 @@ function initialDraft(
   maxHistoryMessages: number,
   uiLanguage: string,
   projectPath?: string,
+  zoomLevel?: number,
 ): SettingsDraft {
   // Show absolute path: if stored path is empty, show default using project path
   // If stored path is relative (legacy), prepend project path
@@ -173,6 +175,9 @@ function initialDraft(
     apiAllowUnauthenticated: apiConfig.allowUnauthenticated,
     apiToken: apiConfig.token,
     uiLanguage,
+    // Fall back to the live zoom store level when no explicit value is
+    // passed, so the draft always opens at the user's current zoom.
+    zoomLevel: zoomLevel ?? useZoomStore.getState().level,
   }
 }
 
@@ -222,6 +227,7 @@ export function SettingsView() {
       maxHistoryMessages,
       i18n.language,
       project?.path,
+      useZoomStore.getState().level,
     ),
   )
 
@@ -265,6 +271,11 @@ export function SettingsView() {
         maxHistoryMessages,
         prev.uiLanguage,
         project?.path,
+        // Preserve the user's pending zoom through any out-of-band store
+        // change, same reasoning as uiLanguage above: handleSave fires
+        // several zustand setters that re-run this effect mid-save, and
+        // re-reading the store here would clobber the in-progress pick.
+        prev.zoomLevel,
       ),
     )
   }, [
@@ -294,6 +305,7 @@ export function SettingsView() {
       saveScheduledImportConfig,
       saveSourceWatchConfig,
       saveApiConfig,
+      saveZoomLevel,
     } = await import("@/lib/project-store")
 
     const newLlm = {
@@ -421,6 +433,13 @@ export function SettingsView() {
       await i18n.changeLanguage(draft.uiLanguage)
       await saveLanguage(draft.uiLanguage)
     }
+
+    // Apply + persist the interface zoom. Pushing the level into the
+    // store triggers App.tsx's subscribe-effect, which re-paints the
+    // document font-size immediately; saveZoomLevel writes it to disk
+    // so the choice survives a restart.
+    useZoomStore.getState().setLevel(draft.zoomLevel)
+    await saveZoomLevel(draft.zoomLevel)
 
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)

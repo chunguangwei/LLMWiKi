@@ -3,6 +3,7 @@ import type { WikiProject } from "@/types/wiki"
 import type { ApiConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { normalizePath } from "@/lib/path-utils"
+import { DEFAULT_ZOOM_LEVEL, clampZoomLevel } from "@/stores/zoom-store"
 
 const STORE_NAME = "app-state.json"
 const RECENT_PROJECTS_KEY = "recentProjects"
@@ -322,6 +323,41 @@ export async function saveTheme(theme: string): Promise<void> {
 export async function loadTheme(): Promise<string | null> {
   const store = await getStore()
   return (await store.get<string>(THEME_KEY)) ?? null
+}
+
+/**
+ * Interface zoom level, stored as a decimal (1 = 100%). Global to the
+ * whole install (one key, no per-project override) just like the theme
+ * preference above. The font-size based zoom in App.tsx / app-layout
+ * reads this on startup and re-applies it whenever the user changes it.
+ *
+ * `normalizeZoomLevel` guards the persisted value: a hand-edited or
+ * legacy store may hold a string, NaN, Infinity, or an out-of-range
+ * number. Finite numbers are clamped to [MIN, MAX]; anything else
+ * falls back to 100% so the UI can never load at an unusable size.
+ */
+const ZOOM_LEVEL_KEY = "zoomLevel"
+
+function normalizeZoomLevel(level: unknown): number {
+  return typeof level === "number" && Number.isFinite(level)
+    ? clampZoomLevel(level)
+    : DEFAULT_ZOOM_LEVEL
+}
+
+/** Test-only surface so unit tests can exercise pure normalizers. */
+export const __projectStoreTest = {
+  normalizeZoomLevel,
+}
+
+export async function saveZoomLevel(level: number): Promise<void> {
+  const store = await getStore()
+  await store.set(ZOOM_LEVEL_KEY, normalizeZoomLevel(level))
+}
+
+export async function loadZoomLevel(): Promise<number> {
+  const store = await getStore()
+  const level = await store.get<number>(ZOOM_LEVEL_KEY)
+  return normalizeZoomLevel(level)
 }
 
 const OUTPUT_LANGUAGE_KEY = "outputLanguage"

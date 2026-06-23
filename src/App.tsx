@@ -7,8 +7,9 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadExperimentalIngestPreview, loadTheme } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadExperimentalIngestPreview, loadTheme, loadZoomLevel } from "@/lib/project-store"
 import { applyTheme, subscribeToSystemThemeChanges, type Theme } from "@/lib/theme"
+import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
@@ -19,12 +20,22 @@ import { IngestPreviewDialog } from "@/components/ingest-preview-dialog"
 import type { WikiProject } from "@/types/wiki"
 import { APP_REPO, APP_RELEASES_URL } from "@/lib/app-repo"
 
+// Apply interface zoom globally by scaling the rem base (root font-size)
+// rather than transform: scale(). Scaling the document keeps layout and
+// pointer coordinates native — transform: scale() shifts every element's
+// hit-box away from its painted position, which broke clicks at non-100%
+// zoom. Fixed-pixel panels (sidebar / research) keep their own px caps.
+function applyDocumentZoom(level: number) {
+  document.documentElement.style.fontSize = `${BASE_FONT_SIZE_PX * level}px`
+}
+
 function App() {
   const project = useWikiStore((s) => s.project)
   const setProject = useWikiStore((s) => s.setProject)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setActiveView = useWikiStore((s) => s.setActiveView)
+  const zoomLevel = useZoomStore((s) => s.level)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -33,6 +44,15 @@ function App() {
     setupAutoSave()
     startClipWatcher()
   }, [])
+
+  // Apply interface zoom globally, including welcome/settings screens.
+  // Re-runs whenever the zoom store level changes (Settings → Interface
+  // updates it live + on Save). The startup init effect below also calls
+  // applyDocumentZoom directly so the persisted level is painted before
+  // the store has hydrated, avoiding a one-frame flash at 100%.
+  useEffect(() => {
+    applyDocumentZoom(zoomLevel)
+  }, [zoomLevel])
 
   // Theme switching: re-apply whenever the store's theme changes,
   // AND subscribe to OS color-scheme changes so a "system"-mode user
@@ -258,6 +278,15 @@ function App() {
   useEffect(() => {
     async function init() {
       try {
+        // Restore the persisted interface zoom FIRST so the UI paints at
+        // the user's chosen size from the very first frame. We apply it
+        // straight to the document here (before React re-renders) and also
+        // push it into the store so Settings → Interface reflects it and
+        // the subscribe-effect above stays the single source of truth.
+        const savedZoom = await loadZoomLevel()
+        applyDocumentZoom(savedZoom)
+        useZoomStore.getState().setLevel(savedZoom)
+
         const savedConfig = await loadLlmConfig()
         if (savedConfig) {
           useWikiStore.getState().setLlmConfig(savedConfig)
