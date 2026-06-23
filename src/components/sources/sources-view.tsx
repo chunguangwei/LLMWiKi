@@ -32,7 +32,7 @@ export function SourcesView() {
   const project = useWikiStore((s) => s.project)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
-  const setFileContent = useWikiStore((s) => s.setFileContent)
+  const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const llmConfig = useWikiStore((s) => s.llmConfig)
   const dataVersion = useWikiStore((s) => s.dataVersion)
@@ -263,10 +263,9 @@ export function SourcesView() {
   }
 
   async function handleOpenSource(node: FileNode) {
-    setSelectedFile(node.path)
     try {
       const content = await readFile(node.path)
-      setFileContent(content)
+      openFileInPreview(node.path, content)
     } catch (err) {
       console.error("Failed to read source:", err)
     }

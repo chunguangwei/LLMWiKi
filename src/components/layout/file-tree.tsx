@@ -10,7 +10,7 @@ import { openProjectFolder } from "@/commands/fs"
 function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
   const [expanded, setExpanded] = useState(depth < 1)
   const selectedFile = useWikiStore((s) => s.selectedFile)
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
+  const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
 
   const isSelected = selectedFile === node.path
   const paddingLeft = 12 + depth * 16
@@ -40,7 +40,7 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
 
   return (
     <button
-      onClick={() => setSelectedFile(node.path)}
+      onClick={() => openPathInPreview(node.path)}
       className={`flex w-full items-center gap-1 py-1 text-sm ${
         isSelected
           ? "bg-accent text-accent-foreground"

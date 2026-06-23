@@ -298,8 +298,25 @@ interface WikiState {
    * one wiki-relative) still works.
    */
   pendingScrollImageSrc: string | null
-  chatExpanded: boolean
-  activeView: "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "settings"
+  /**
+   * When a view opens a page directly in the preview (search result,
+   * graph node, wikilink click, research synthesis, …) it stashes the
+   * content via `openFileInPreview` and records the path here. The
+   * PreviewPanel's load effect short-circuits when this matches
+   * `selectedFile`, so the freshly-passed content (which may be
+   * synthesized — e.g. "Unable to load …" — rather than on-disk) is
+   * shown verbatim instead of being clobbered by a redundant disk read.
+   * Cleared on any plain `setSelectedFile` / `openPathInPreview`.
+   */
+  previewContentPath: string | null
+  /**
+   * Chat used to live in a collapsible bottom bar (`chatExpanded`).
+   * As of the "chat as standalone view" refactor it is a first-class
+   * entry in `activeView` selected from the icon sidebar, so the bar —
+   * and its expanded flag — are gone. `"chat"` is a valid
+   * `previousView` target, so Esc-from-search can return to chat.
+   */
+  activeView: "chat" | "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "settings"
   /**
    * The view we were on immediately before the current one. Lets a view
    * like global search offer "Esc / close → go back where I came from"
@@ -439,8 +456,22 @@ interface WikiState {
   setFileTree: (tree: FileNode[]) => void
   setSelectedFile: (path: string | null) => void
   setFileContent: (content: string) => void
+  /**
+   * Select a wiki page by path and switch to the wiki view so the
+   * preview shows up in the center work area. The page's content is
+   * loaded from disk by PreviewPanel. Use this for navigation where
+   * you don't already hold the content (file tree, frontmatter links,
+   * wikilinks resolved to a path, …).
+   */
+  openPathInPreview: (path: string) => void
+  /**
+   * Like `openPathInPreview` but you already have the content in hand
+   * (search read it, research synthesized it, "Unable to load …"
+   * placeholder, …). Stashes the content and marks `previewContentPath`
+   * so PreviewPanel shows it verbatim without a redundant disk read.
+   */
+  openFileInPreview: (path: string, content: string) => void
   setPendingScrollImageSrc: (src: string | null) => void
-  setChatExpanded: (expanded: boolean) => void
   setActiveView: (view: WikiState["activeView"]) => void
   requestSearchFocus: () => void
   setLlmConfig: (config: LlmConfig) => void
@@ -473,7 +504,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   selectedFile: null,
   fileContent: "",
   pendingScrollImageSrc: null,
-  chatExpanded: false,
+  previewContentPath: null,
   activeView: "wiki",
   previousView: "wiki",
   searchFocusRequest: 0,
@@ -494,10 +525,33 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   setProject: (project) => set({ project }),
   setFileTree: (fileTree) => set({ fileTree }),
-  setSelectedFile: (selectedFile) => set({ selectedFile }),
+  setSelectedFile: (selectedFile) => set({ selectedFile, previewContentPath: null }),
   setFileContent: (fileContent) => set({ fileContent }),
+  // Navigate to a wiki page and surface the preview in the center work
+  // area. Switching to "wiki" goes through the same "remember previous"
+  // dance as `setActiveView` so that, e.g., clicking a wikilink from
+  // chat lets Esc/back return to chat. previewContentPath is cleared so
+  // PreviewPanel re-reads the page from disk.
+  openPathInPreview: (selectedFile) =>
+    set((state) => ({
+      selectedFile,
+      previewContentPath: null,
+      activeView: "wiki",
+      ...(state.activeView === "wiki" ? {} : { previousView: state.activeView }),
+    })),
+  // Same navigation as openPathInPreview, but the caller already holds
+  // the content (search read it, research synthesized it, an "Unable to
+  // load …" placeholder). Stash it and mark previewContentPath so
+  // PreviewPanel shows it verbatim without a redundant disk read.
+  openFileInPreview: (selectedFile, fileContent) =>
+    set((state) => ({
+      selectedFile,
+      fileContent,
+      previewContentPath: selectedFile,
+      activeView: "wiki",
+      ...(state.activeView === "wiki" ? {} : { previousView: state.activeView }),
+    })),
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),
-  setChatExpanded: (chatExpanded) => set({ chatExpanded }),
   setActiveView: (activeView) =>
     set((state) =>
       // Remember where we came from so a view can navigate "back".

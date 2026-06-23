@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import {
-  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe, Sun, Moon, Monitor,
+  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe, Sun, Moon, Monitor, MessageSquare,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -12,10 +12,15 @@ import logoImg from "@/assets/logo.png"
 import type { WikiState } from "@/stores/wiki-store"
 import type { Theme } from "@/lib/theme"
 import { saveTheme } from "@/lib/project-store"
+import {
+  isResearchPanelVisible,
+  nextResearchPanelNavState,
+} from "./research-panel-nav"
 
 type NavView = WikiState["activeView"]
 
 const NAV_ITEMS: { view: NavView; icon: typeof FileText; labelKey: string }[] = [
+  { view: "chat", icon: MessageSquare, labelKey: "nav.chat" },
   { view: "wiki", icon: FileText, labelKey: "nav.wiki" },
   { view: "sources", icon: FolderOpen, labelKey: "nav.sources" },
   { view: "search", icon: Search, labelKey: "nav.search" },
@@ -76,6 +81,16 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
     return () => clearInterval(interval)
   }, [])
 
+  // Deep Research lives in the right panel, which is hidden in the
+  // standalone chat/settings views. Toggling it from there must first
+  // switch back to the wiki view (so the panel has somewhere to show) —
+  // nextResearchPanelNavState encapsulates that decision.
+  function handleResearchPanelToggle() {
+    const next = nextResearchPanelNavState(activeView, researchPanelOpen)
+    if (next.activeView !== activeView) setActiveView(next.activeView)
+    toggleResearchPanel(next.researchPanelOpen)
+  }
+
   return (
     <TooltipProvider delay={300}>
       <div className="flex h-full w-12 flex-col items-center border-r bg-muted/50 py-2">
@@ -115,9 +130,9 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           {/* Deep Research — same row as other nav items */}
           <Tooltip>
             <TooltipTrigger
-              onClick={() => toggleResearchPanel(!researchPanelOpen)}
+              onClick={handleResearchPanelToggle}
               className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
-                researchPanelOpen
+                isResearchPanelVisible(activeView, researchPanelOpen)
                   ? "bg-accent text-accent-foreground"
                   : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
               }`}

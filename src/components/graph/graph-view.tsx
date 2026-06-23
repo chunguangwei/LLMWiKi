@@ -541,8 +541,7 @@ export function GraphView() {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const dataVersion = useWikiStore((s) => s.dataVersion)
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
-  const setFileContent = useWikiStore((s) => s.setFileContent)
+  const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
 
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
@@ -633,13 +632,12 @@ export function GraphView() {
       if (!node) return
       try {
         const content = await readFile(node.path)
-        setSelectedFile(node.path)
-        setFileContent(content)
+        openFileInPreview(node.path, content)
       } catch (err) {
         console.error("Failed to open wiki page:", err)
       }
     },
-    [nodes, setSelectedFile, setFileContent],
+    [nodes, openFileInPreview],
   )
 
   const handleNodeContextMenu = useCallback((nodeId: string, x: number, y: number) => {

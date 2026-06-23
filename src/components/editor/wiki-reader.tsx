@@ -35,13 +35,13 @@ interface WikiReaderProps {
  * never serialize back to disk, transforming for display is safe.
  *
  * Wikilink anchor clicks are intercepted: `#slug` is resolved
- * against the project's wiki tree and routed to setSelectedFile,
+ * against the project's wiki tree and routed to the wiki preview,
  * giving the user single-click navigation between pages.
  */
 export function WikiReader({ body, filePath }: WikiReaderProps) {
   const project = useWikiStore((s) => s.project)
   const fileTree = useWikiStore((s) => s.fileTree)
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
+  const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
 
   // Image embeds (`![[…]]`) must be rewritten BEFORE the generic
   // wikilink pass, otherwise the embed target gets mangled into a
@@ -76,7 +76,7 @@ export function WikiReader({ body, filePath }: WikiReaderProps) {
       }
     })()
     const path = resolveRelatedSlug(fileTree, slug, wikiRoot)
-    if (path) setSelectedFile(path)
+    if (path) openPathInPreview(path)
   }
 
   return (

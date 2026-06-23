@@ -51,7 +51,7 @@ const TOP_LEVEL_KEYS = new Set([
 export function FrontmatterPanel({ data, onChangeType }: FrontmatterPanelProps) {
   const project = useWikiStore((s) => s.project)
   const fileTree = useWikiStore((s) => s.fileTree)
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
+  const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
 
   const title = stringValue(data.title)
   const type = stringValue(data.type)
@@ -90,7 +90,7 @@ export function FrontmatterPanel({ data, onChangeType }: FrontmatterPanelProps) 
 
   function handleNavigate(path: string | null) {
     if (!path) return
-    setSelectedFile(path)
+    openPathInPreview(path)
   }
 
   return (

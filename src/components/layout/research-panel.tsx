@@ -244,8 +244,7 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
   const [expanded, setExpanded] = useState(
     task.status === "synthesizing" || task.status === "searching"
   )
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
-  const setFileContent = useWikiStore((s) => s.setFileContent)
+  const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
   const project = useWikiStore((s) => s.project)
 
   const statusIcon = {
@@ -271,8 +270,7 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
     const path = `${normalizePath(project.path)}/${task.savedPath}`
     try {
       const content = await readFile(path)
-      setSelectedFile(path)
-      setFileContent(content)
+      openFileInPreview(path, content)
     } catch {
       // ignore
     }

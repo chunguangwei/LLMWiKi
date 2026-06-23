@@ -117,10 +117,10 @@ export function ReviewView() {
         // Refresh tree
         const tree = await listDirectory(pp)
         setFileTree(tree)
-        // Open the freshly created page in the preview pane and invalidate
-        // cached graphs/views so the new page shows up immediately.
-        useWikiStore.getState().setSelectedFile(filePath)
-        useWikiStore.getState().setFileContent(pageContent)
+        // Open the freshly created page in the center preview (switches
+        // to the wiki view) and invalidate cached graphs/views so the
+        // new page shows up immediately.
+        useWikiStore.getState().openFileInPreview(filePath, pageContent)
         useWikiStore.getState().bumpDataVersion()
 
         resolveItem(id, "Saved to Wiki")
@@ -129,7 +129,7 @@ export function ReviewView() {
         resolveItem(id, "Save failed")
       }
     } else if ((action.startsWith("open:") || actionLooksLikeOpen(action)) && project) {
-      // Open a page in the right-side preview without resolving the
+      // Open a page in the center wiki preview without resolving the
       // review item. Viewing is not the same as accepting / fixing it.
       const page = action.startsWith("open:")
         ? action.slice(5)
@@ -144,8 +144,7 @@ export function ReviewView() {
       for (const path of candidates) {
         try {
           const content = await readFile(path)
-          useWikiStore.getState().setSelectedFile(path)
-          useWikiStore.getState().setFileContent(content)
+          useWikiStore.getState().openFileInPreview(path, content)
           return
         } catch {
           // try next
@@ -244,15 +243,15 @@ export function ReviewView() {
           const logDate = created[0]?.date ?? makeQueryFileName("review").date
           await writeFile(logPath, logContent.trimEnd() + `\n- ${logDate}: Created ${created.length} page${created.length === 1 ? "" : "s"} from review: ${createdNames}\n`)
 
-          // Refresh + open the first created page in the preview pane.
-          // (Our wiki-store exposes setSelectedFile/setFileContent rather than
-          // upstream's openFileInPreview helper.)
+          // Refresh + open the first created page in the center preview
+          // (openFileInPreview switches to the wiki view). Fork note: this
+          // path creates MULTIPLE pages from one review draft (see
+          // createReviewPageDrafts) — we surface the first one.
           const tree = await listDirectory(pp)
           setFileTree(tree)
           const first = created[0]
           if (first) {
-            useWikiStore.getState().setSelectedFile(first.filePath)
-            useWikiStore.getState().setFileContent(first.pageContent)
+            useWikiStore.getState().openFileInPreview(first.filePath, first.pageContent)
           }
           useWikiStore.getState().bumpDataVersion()
 

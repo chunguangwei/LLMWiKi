@@ -114,6 +114,7 @@ export function KnowledgeTree() {
   const project = useWikiStore((s) => s.project)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
+  const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
   const fileTree = useWikiStore((s) => s.fileTree)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
@@ -286,7 +287,7 @@ export function KnowledgeTree() {
                         }`}
                       >
                         <button
-                          onClick={() => setSelectedFile(page.path)}
+                          onClick={() => openPathInPreview(page.path)}
                           className={`flex flex-1 items-center gap-1.5 px-2 py-1 text-left text-sm min-w-0 ${
                             isSelected
                               ? "text-accent-foreground"
@@ -330,7 +331,7 @@ export function KnowledgeTree() {
 function RawSourcesSection() {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
+  const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const [expanded, setExpanded] = useState(false)
   const [sources, setSources] = useState<FileNode[]>([])
@@ -367,7 +368,7 @@ function RawSourcesSection() {
             return (
               <button
                 key={file.path}
-                onClick={() => setSelectedFile(file.path)}
+                onClick={() => openPathInPreview(file.path)}
                 className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm ${
                   isSelected
                     ? "bg-accent text-accent-foreground"

@@ -606,8 +606,7 @@ interface CitedImageInfo {
 
 function CitedReferencesPanel({ content, savedReferences }: { content: string; savedReferences?: CitedPage[] }) {
   const project = useWikiStore((s) => s.project)
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
-  const setFileContent = useWikiStore((s) => s.setFileContent)
+  const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
   const setPendingScrollImageSrc = useWikiStore((s) => s.setPendingScrollImageSrc)
   const [expanded, setExpanded] = useState(false)
   /**
@@ -697,8 +696,7 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
         try {
           const content = await readFile(rawPath)
           setPendingScrollImageSrc(imageUrlToAbsolute(firstUrl, pp))
-          setSelectedFile(rawPath)
-          setFileContent(content)
+          openFileInPreview(rawPath, content)
           console.log(`[refs:image-jump] ${firstUrl} → raw source ${rawPath}`)
           return
         } catch (err) {
@@ -711,13 +709,12 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
       try {
         const content = await readFile(`${pp}/${fallbackPath}`)
         setPendingScrollImageSrc(firstUrl)
-        setSelectedFile(`${pp}/${fallbackPath}`)
-        setFileContent(content)
+        openFileInPreview(`${pp}/${fallbackPath}`, content)
       } catch (err) {
         console.warn(`[refs:image-jump] fallback also failed:`, err)
       }
     },
-    [project, setPendingScrollImageSrc, setSelectedFile, setFileContent],
+    [project, setPendingScrollImageSrc, openFileInPreview],
   )
 
   if (citedPages.length === 0) return null
@@ -764,14 +761,14 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
             ]
             for (const candidate of candidates) {
               try {
-                await readFile(candidate)
-                setSelectedFile(candidate)
+                const content = await readFile(candidate)
+                openFileInPreview(candidate, content)
                 return
               } catch {
                 // try next
               }
             }
-            setSelectedFile(`${pp}/${page.path}`)
+            openFileInPreview(`${pp}/${page.path}`, `Unable to load: ${page.path}`)
           }
           return (
             // Outer is a div, NOT a button — we have two click
@@ -1367,9 +1364,7 @@ function processContent(text: string): string {
 
 function WikiLink({ pageName, children }: { pageName: string; children: React.ReactNode }) {
   const project = useWikiStore((s) => s.project)
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
-  const setFileContent = useWikiStore((s) => s.setFileContent)
-  const setActiveView = useWikiStore((s) => s.setActiveView)
+  const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
   const [exists, setExists] = useState<boolean | null>(null)
   const resolvedPath = useRef<string | null>(null)
 
@@ -1410,13 +1405,13 @@ function WikiLink({ pageName, children }: { pageName: string; children: React.Re
     if (!resolvedPath.current) return
     try {
       const content = await readFile(resolvedPath.current)
-      setSelectedFile(resolvedPath.current)
-      setFileContent(content)
-      setActiveView("wiki")
+      // openFileInPreview switches to the wiki view itself, so clicking a
+      // wikilink from chat lands on the page preview in the center area.
+      openFileInPreview(resolvedPath.current, content)
     } catch {
       // ignore
     }
-  }, [setSelectedFile, setFileContent, setActiveView])
+  }, [openFileInPreview])
 
   if (exists === false) {
     return (

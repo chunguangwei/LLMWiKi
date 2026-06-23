@@ -6,11 +6,19 @@ import { ReviewView } from "@/components/review/review-view"
 import { LintView } from "@/components/lint/lint-view"
 import { SearchView } from "@/components/search/search-view"
 import { GraphView } from "@/components/graph/graph-view"
+import { PreviewPanel } from "./preview-panel"
 
 export function ContentArea() {
   const activeView = useWikiStore((s) => s.activeView)
 
   switch (activeView) {
+    case "chat":
+      return <ChatPanel />
+    case "wiki":
+      // The wiki page preview now lives in the center work area instead
+      // of a right-side panel — selecting a file switches activeView to
+      // "wiki" (see openPathInPreview / openFileInPreview).
+      return <PreviewPanel />
     case "settings":
       return <SettingsView />
     case "sources":
@@ -24,6 +32,6 @@ export function ContentArea() {
     case "graph":
       return <GraphView />
     default:
-      return <ChatPanel />
+      return <PreviewPanel />
   }
 }

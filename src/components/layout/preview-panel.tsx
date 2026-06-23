@@ -59,6 +59,7 @@ async function syncIndexForType(pagePath: string, pageContent: string, newType: 
 export function PreviewPanel() {
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const fileContent = useWikiStore((s) => s.fileContent)
+  const previewContentPath = useWikiStore((s) => s.previewContentPath)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
@@ -81,6 +82,16 @@ export function PreviewPanel() {
       return
     }
 
+    // When a view opened this page via openFileInPreview, the content
+    // is already in the store (and may be synthesized — a research
+    // write-up or an "Unable to load …" placeholder — rather than what's
+    // on disk). Adopt it verbatim instead of re-reading, which would
+    // either clobber synthesized content or cause a load flash.
+    if (previewContentPath === selectedFile) {
+      lastLoadedRef.current = fileContent
+      return
+    }
+
     const category = getFileCategory(selectedFile)
 
     if (isBinary(category)) {
@@ -98,7 +109,7 @@ export function PreviewPanel() {
         lastLoadedRef.current = ""
         setFileContent(`Error loading file: ${err}`)
       })
-  }, [selectedFile, setFileContent])
+  }, [selectedFile, previewContentPath, fileContent, setFileContent])
 
   const handleSave = useCallback(
     (markdown: string) => {

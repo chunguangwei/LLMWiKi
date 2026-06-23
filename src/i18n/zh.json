@@ -4,6 +4,7 @@
     "subtitle": "用 LLM 构建和维护你的个人知识库"
   },
   "nav": {
+    "chat": "对话",
     "wiki": "Wiki",
     "sources": "原始资料",
     "search": "搜索",

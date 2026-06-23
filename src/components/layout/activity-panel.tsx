@@ -569,7 +569,7 @@ function FileSyncRow({ task, onRetry, onIgnore }: { task: FileChangeTask; onRetr
 }
 
 function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCancel?: () => void; onResume?: (itemId: string, sourcePath: string) => void | Promise<void> }) {
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
+  const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
   const project = useWikiStore((s) => s.project)
   const { t } = useTranslation()
   // Disables the Resume button the instant it's clicked. Resuming routes
@@ -591,7 +591,7 @@ function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCance
     const fullPath = isAbsolutePath(filePath)
       ? normalizePath(filePath)
       : `${pp}/${filePath}`
-    setSelectedFile(fullPath)
+    openPathInPreview(fullPath)
   }
 
   return (

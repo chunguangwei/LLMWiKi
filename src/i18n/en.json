@@ -4,6 +4,7 @@
     "subtitle": "Build and maintain your personal knowledge base with LLMs"
   },
   "nav": {
+    "chat": "Chat",
     "wiki": "Wiki",
     "sources": "Sources",
     "search": "Search",
