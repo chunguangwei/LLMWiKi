@@ -187,6 +187,7 @@ function initialDraft(
     mineruModelVersion: mineru.modelVersion,
     apiEnabled: apiConfig.enabled,
     apiAllowUnauthenticated: apiConfig.allowUnauthenticated,
+    apiMcpEnabled: apiConfig.mcpEnabled,
     apiToken: apiConfig.token,
     autostart: generalConfig.autostart,
     closeBehavior: generalConfig.closeBehavior,
@@ -450,12 +451,13 @@ export function SettingsView() {
     await saveMineruConfig(newMineruConfig)
 
     // ── API server: persist + push to store. The Rust side reads
-    // `apiConfig.{enabled,token}` from this same `app-state.json` on
+    // `apiConfig.{enabled,token,mcpEnabled}` from this same `app-state.json` on
     // every request via a 5s cache, so saved changes propagate
     // within that window without any IPC round-trip.
     const newApiConfig = {
       enabled: draft.apiEnabled,
       allowUnauthenticated: draft.apiAllowUnauthenticated,
+      mcpEnabled: draft.apiMcpEnabled,
       token: draft.apiToken.trim(),
     }
     setApiConfig(newApiConfig)

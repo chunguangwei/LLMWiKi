@@ -21,6 +21,8 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 const MAX_FILE_CONTENT_BYTES: u64 = 2 * 1024 * 1024;
 const DEFAULT_MAX_FILES: usize = 2_000;
 const HARD_MAX_FILES: usize = 10_000;
+const DEFAULT_MAX_REVIEWS: usize = 200;
+const HARD_MAX_REVIEWS: usize = 1_000;
 const MAX_SEARCH_RESULTS: usize = 50;
 const BIND_RETRY_DELAY_SECS: u64 = 2;
 const MAX_BIND_RETRIES: u32 = 3;
@@ -220,6 +222,7 @@ fn handle_request(
             "authConfigured": api_token(app).is_some(),
             "tokenSource": api_token_source(app),
             "enabled": api_enabled(app),
+            "mcpEnabled": api_mcp_enabled(app),
             "allowUnauthenticated": api_allow_unauthenticated(app),
         }));
     }
@@ -253,6 +256,9 @@ fn handle_request(
         (&Method::Get, ["projects", project_id, "files"]) => handle_files(app, project_id, query),
         (&Method::Get, ["projects", project_id, "files", "content"]) => {
             handle_file_content(app, project_id, query)
+        }
+        (&Method::Get, ["projects", project_id, "reviews"]) => {
+            handle_reviews(app, project_id, query)
         }
         (&Method::Post, ["projects", project_id, "search"]) => handle_search(app, project_id, body),
         (&Method::Get, ["projects", project_id, "graph"]) => handle_graph(app, project_id, query),
@@ -470,6 +476,17 @@ fn api_enabled(app: &AppHandle) -> bool {
         .and_then(|v| v.get("enabled"))
         .and_then(Value::as_bool)
         .unwrap_or(true)
+}
+
+fn api_mcp_enabled(app: &AppHandle) -> bool {
+    let Some(parsed) = load_app_state(app) else {
+        return false;
+    };
+    parsed
+        .get("apiConfig")
+        .and_then(|v| v.get("mcpEnabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
@@ -930,6 +947,128 @@ fn relative_to_project(project_path: &str, path: &Path) -> String {
         .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReviewStatus {
+    Unresolved,
+    Resolved,
+    All,
+}
+
+impl ReviewStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            ReviewStatus::Unresolved => "unresolved",
+            ReviewStatus::Resolved => "resolved",
+            ReviewStatus::All => "all",
+        }
+    }
+
+    fn matches(self, resolved: bool) -> bool {
+        match self {
+            ReviewStatus::Unresolved => !resolved,
+            ReviewStatus::Resolved => resolved,
+            ReviewStatus::All => true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ReviewQuery {
+    status: ReviewStatus,
+    item_type: Option<String>,
+    limit: usize,
+}
+
+fn parse_review_query(query: &str) -> Result<ReviewQuery, String> {
+    let params = parse_query(query);
+    let status = match params
+        .get("status")
+        .map(|s| s.as_str())
+        .unwrap_or("unresolved")
+    {
+        "unresolved" | "pending" => ReviewStatus::Unresolved,
+        "resolved" => ReviewStatus::Resolved,
+        "all" => ReviewStatus::All,
+        value => {
+            return Err(format!(
+                "Invalid review status '{value}'. Expected unresolved, resolved, or all"
+            ))
+        }
+    };
+    let item_type = params
+        .get("type")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let limit = params
+        .get("limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_MAX_REVIEWS)
+        .clamp(1, HARD_MAX_REVIEWS);
+
+    Ok(ReviewQuery {
+        status,
+        item_type,
+        limit,
+    })
+}
+
+fn load_review_items(project_path: &str, query: &ReviewQuery) -> Result<Vec<Value>, String> {
+    let path = Path::new(project_path).join(".llm-wiki/review.json");
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(format!("Failed to read review state: {err}")),
+    };
+    let parsed: Value =
+        serde_json::from_str(&raw).map_err(|err| format!("Invalid review state JSON: {err}"))?;
+    let items = parsed
+        .as_array()
+        .ok_or_else(|| "Invalid review state JSON: expected an array".to_string())?;
+
+    let mut reviews = Vec::new();
+    for item in items {
+        let resolved = item
+            .get("resolved")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !query.status.matches(resolved) {
+            continue;
+        }
+        if let Some(item_type) = &query.item_type {
+            if item.get("type").and_then(Value::as_str) != Some(item_type.as_str()) {
+                continue;
+            }
+        }
+        reviews.push(item.clone());
+        if reviews.len() >= query.limit {
+            break;
+        }
+    }
+
+    Ok(reviews)
+}
+
+fn handle_reviews(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project,
+        Err(e) => return err(404, e),
+    };
+    let query = match parse_review_query(query) {
+        Ok(query) => query,
+        Err(e) => return err(400, e),
+    };
+    match load_review_items(&project.path, &query) {
+        Ok(reviews) => ok(json!({
+            "ok": true,
+            "projectId": project.id,
+            "status": query.status.as_str(),
+            "count": reviews.len(),
+            "reviews": reviews,
+        })),
+        Err(e) => err(500, e),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchRequest {
@@ -1261,6 +1400,77 @@ mod tests {
     }
 
     #[test]
+    fn review_query_defaults_to_unresolved_items() {
+        let root = test_project_dir();
+        let state_dir = root.join(".llm-wiki");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::write(
+            state_dir.join("review.json"),
+            json!([
+                {
+                    "id": "r1",
+                    "type": "missing-page",
+                    "title": "Missing page: Attention",
+                    "description": "Add Attention",
+                    "options": [],
+                    "resolved": false,
+                    "createdAt": 1
+                },
+                {
+                    "id": "r2",
+                    "type": "duplicate",
+                    "title": "Duplicate: LLM",
+                    "description": "Merge pages",
+                    "options": [],
+                    "resolved": true,
+                    "createdAt": 2
+                }
+            ])
+            .to_string(),
+        )
+        .unwrap();
+
+        let query = parse_review_query("").unwrap();
+        let reviews = load_review_items(root.to_str().unwrap(), &query).unwrap();
+
+        assert_eq!(query.status.as_str(), "unresolved");
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].get("id").and_then(Value::as_str), Some("r1"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn review_query_filters_by_type_status_and_limit() {
+        let root = test_project_dir();
+        let state_dir = root.join(".llm-wiki");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::write(
+            state_dir.join("review.json"),
+            json!([
+                { "id": "r1", "type": "missing-page", "resolved": false, "createdAt": 1 },
+                { "id": "r2", "type": "missing-page", "resolved": false, "createdAt": 2 },
+                { "id": "r3", "type": "duplicate", "resolved": false, "createdAt": 3 },
+                { "id": "r4", "type": "missing-page", "resolved": true, "createdAt": 4 }
+            ])
+            .to_string(),
+        )
+        .unwrap();
+
+        let query = parse_review_query("status=all&type=missing-page&limit=2").unwrap();
+        let reviews = load_review_items(root.to_str().unwrap(), &query).unwrap();
+
+        assert_eq!(query.status.as_str(), "all");
+        assert_eq!(
+            reviews
+                .iter()
+                .filter_map(|r| r.get("id").and_then(Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["r1", "r2"]
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn project_path_match_normalizes_separators() {
         assert!(project_path_matches(
             "C:/Users/me/wiki",
@@ -1322,6 +1532,7 @@ mod tests {
             "apiConfig": {
                 "enabled": false,
                 "allowUnauthenticated": true,
+                "mcpEnabled": true,
                 "token": "abc"
             }
         });
@@ -1337,6 +1548,12 @@ mod tests {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         assert!(allow_unauthenticated);
+        let mcp_enabled = payload
+            .get("apiConfig")
+            .and_then(|v| v.get("mcpEnabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        assert!(mcp_enabled);
         let token_source = payload
             .get("apiConfig")
             .and_then(|v| v.get("token"))
@@ -1354,5 +1571,11 @@ mod tests {
             .unwrap_or(true);
         // Fail-open by design — see `api_enabled` doc comment.
         assert!(enabled_missing);
+        let mcp_enabled_missing = missing
+            .get("apiConfig")
+            .and_then(|v| v.get("mcpEnabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        assert!(!mcp_enabled_missing);
     }
 }

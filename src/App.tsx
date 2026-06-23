@@ -342,7 +342,7 @@ function App() {
         }
         // Local HTTP API server config — global (single token + enable
         // flag for the whole install, not per-project). The Rust side
-        // reads `apiConfig.{enabled,token}` from `app-state.json`
+        // reads `apiConfig.{enabled,token,mcpEnabled}` from `app-state.json`
         // directly; this only hydrates the Zustand store so the
         // Settings UI reflects the persisted values.
         const savedApi = await loadApiConfig()
@@ -352,6 +352,10 @@ function App() {
             allowUnauthenticated:
               typeof savedApi.allowUnauthenticated === "boolean"
                 ? savedApi.allowUnauthenticated
+                : false,
+            mcpEnabled:
+              typeof savedApi.mcpEnabled === "boolean"
+                ? savedApi.mcpEnabled
                 : false,
             token: typeof savedApi.token === "string" ? savedApi.token : "",
           })

@@ -43,6 +43,56 @@ fn api_server_reload_config() -> String {
     .unwrap_or_else(|e| format!("error: {e}"))
 }
 
+/// Resolve the absolute path to the bundled MCP server entry
+/// (`mcp-server/dist/src/index.js`) so the Settings UI can show a ready
+/// MCP client config. Searches dev-repo layouts (CARGO_MANIFEST_DIR and
+/// cwd, walking up a couple levels) first, then the packaged Tauri
+/// resource dir, then the executable dir / macOS `.app/Resources`. This
+/// mirrors how the bundled resource is mapped in the per-platform
+/// `tauri.*.conf.json` files (`../mcp-server/dist` → `mcp-server/dist`).
+#[tauri::command]
+fn mcp_server_entry_path(app: tauri::AppHandle) -> Result<String, String> {
+    run_guarded("mcp_server_entry_path", || {
+        let relative = std::path::Path::new("mcp-server")
+            .join("dist")
+            .join("src")
+            .join("index.js");
+        let mut candidates = Vec::new();
+
+        let mut push_repo_candidates = |base: std::path::PathBuf| {
+            candidates.push(base.join(&relative));
+            candidates.push(base.join("..").join(&relative));
+            candidates.push(base.join("..").join("..").join(&relative));
+        };
+
+        push_repo_candidates(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        if let Ok(cwd) = std::env::current_dir() {
+            push_repo_candidates(cwd);
+        }
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            candidates.push(resource_dir.join(&relative));
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                candidates.push(exe_dir.join(&relative));
+                candidates.push(exe_dir.join("..").join("Resources").join(&relative));
+            }
+        }
+
+        for candidate in &candidates {
+            if candidate.is_file() {
+                return Ok(candidate
+                    .canonicalize()
+                    .unwrap_or_else(|_| candidate.clone())
+                    .to_string_lossy()
+                    .into_owned());
+            }
+        }
+
+        Err("MCP server entry was not found. Run `npm run mcp:build` from the LLM Wiki repository, then reopen Settings.".to_string())
+    })
+}
+
 /// Apply a proxy configuration to the process env immediately, so the
 /// next outbound HTTP request picks it up without needing the user to
 /// restart the app. tauri-plugin-http builds a fresh
@@ -241,6 +291,7 @@ pub fn run() {
             clip_server_status,
             api_server_status,
             api_server_reload_config,
+            mcp_server_entry_path,
             commands::vectorstore::vector_upsert,
             commands::vectorstore::vector_search,
             commands::vectorstore::vector_delete,

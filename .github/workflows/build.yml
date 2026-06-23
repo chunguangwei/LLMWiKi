@@ -94,6 +94,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Prepare MCP server resources
+        run: |
+          npm --prefix mcp-server ci
+          npm run mcp:build
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:

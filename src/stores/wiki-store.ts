@@ -166,6 +166,9 @@ interface ScheduledImportConfig {
  *     env-token-only setup keeps working after the toggle is added.
  *   - `allowUnauthenticated` lets local agents call the API without a
  *     token. It is explicit and default-off.
+ *   - `mcpEnabled` allows the optional MCP stdio server to use this
+ *     API. It is separate from the HTTP API kill-switch so users can
+ *     expose scripts while keeping MCP disabled.
  *   - `token` is the bearer secret. Empty + auth required =
  *     every non-/health request returns 401. The env var
  *     `LLM_WIKI_API_TOKEN` overrides this field at the backend.
@@ -173,6 +176,7 @@ interface ScheduledImportConfig {
 interface ApiConfig {
   enabled: boolean
   allowUnauthenticated: boolean
+  mcpEnabled: boolean
   token: string
 }
 
@@ -566,6 +570,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   apiConfig: {
     enabled: true,
     allowUnauthenticated: false,
+    mcpEnabled: false,
     token: "",
   },
 

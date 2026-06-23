@@ -148,3 +148,7 @@ export async function apiServerStatus(): Promise<string> {
 export async function apiServerReloadConfig(): Promise<string> {
   return invoke<string>("api_server_reload_config")
 }
+
+export async function mcpServerEntryPath(): Promise<string> {
+  return invoke<string>("mcp_server_entry_path")
+}
