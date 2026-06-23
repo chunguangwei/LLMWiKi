@@ -7,10 +7,12 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-05-25（merge `70d5579`，37 commit，8 处冲突全部解决） |
+| 最近一次 sync | 2026-06-23（Round 3 大同步，merge-base `70d5579`，按子系统逐项移植至上游 v0.4.25，14 个 fork 提交 `890ea29`→`813819e`；cherry-pick 不可行，i18n/wiki-store/ingest 已结构性分叉，故全程手工三方合并）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.4.13`（自上游同步：0.4.10 → 0.4.11 → 0.4.12 → 0.4.13） |
-| **本 fork 版本** | `0.4.16`（在上游 0.4.13 之上叠加 fork 功能，作为自动更新的发布版本）|
+| Upstream 版本号 | `0.4.25`（Round 3 追平：providers / embeddings+LanceDB / 摄取质量 / 审阅 / 渲染 / 稳定性 / 关系图性能 / MiniMax M3 / Lint 链接修复 / Firecrawl / 界面缩放 / MinerU / 托盘+自启 / MCP 打包 / 聊天独立视图）|
+| **本 fork 版本** | `0.4.44`（在上游 v0.4.25 功能之上叠加 fork 功能，作为自动更新的发布版本）|
+
+> **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局

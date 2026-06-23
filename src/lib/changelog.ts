@@ -26,6 +26,32 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.44",
+    date: "2026-06-23",
+    highlights: {
+      en: [
+        "Big upstream sync — caught the fork up to upstream v0.4.25 with a large batch of new features and fixes.",
+        "New: MinerU high-quality PDF parsing (opt-in in Settings → MinerU) for complex layouts, tables, and formulas; falls back to the built-in parser on failure.",
+        "New: bundled MCP server so external LLM clients can read your wiki, plus a reviews API endpoint (Settings → API server).",
+        "New: system tray + launch-at-startup, with a configurable window-close behavior (ask / minimize to tray / quit) in Settings → General.",
+        "New: interface zoom in Settings → Interface (font-size based, so layout stays aligned) and a Firecrawl web-search provider.",
+        "Chat is now a standalone view in the sidebar and the wiki page preview moved into the center work area.",
+        "Search: press Esc or click the ✕ to leave global search and return to where you were.",
+        "Better Chinese handling: ingest keeps CJK filenames in the target language, preserves proper nouns/technical names, and vector indexing accepts Unicode page ids. Plus Markdown image + Obsidian ![[embed]] rendering, lint link-repair suggestions, broader provider compatibility (Kimi / third-party SSE, doubao embeddings, Ollama reasoning, Anthropic prompt caching), and many robustness fixes.",
+      ],
+      zh: [
+        "大型上游同步 —— 把本 fork 追平到上游 v0.4.25,带来一大批新功能与修复。",
+        "新增:MinerU 高质量 PDF 解析(在 设置 → MinerU 开启),擅长复杂排版、表格、公式;失败时自动回退内置解析。",
+        "新增:打包 MCP 服务,外部 LLM 客户端可读取你的 wiki;并新增审阅项 API 端点(设置 → API 服务)。",
+        "新增:系统托盘 + 开机自启,关闭窗口行为可配置(询问 / 最小化到托盘 / 退出),见 设置 → 通用。",
+        "新增:界面缩放(设置 → 界面,基于字号,布局不错位)与 Firecrawl 联网搜索 provider。",
+        "聊天现在是侧栏里的独立视图,Wiki 页面预览移到了中央工作区。",
+        "搜索:按 Esc 或点 ✕ 即可退出全局搜索并返回原来的位置。",
+        "更好的中文处理:导入会按目标语言保留中文文件名、保留专有名词/技术名,向量索引也支持 Unicode 页面 ID。另有 Markdown 图片 + Obsidian ![[嵌入]] 渲染、Lint 链接修复建议、更广的 provider 兼容(Kimi/第三方 SSE、豆包 embeddings、Ollama 推理、Anthropic 提示缓存),以及大量健壮性修复。",
+      ],
+    },
+  },
+  {
     version: "0.4.43",
     date: "2026-06-04",
     highlights: {
