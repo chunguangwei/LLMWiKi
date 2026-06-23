@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useMemo, useState, useRef, type ChangeEvent } from "react"
 import Graph from "graphology"
-import { SigmaContainer, useLoadGraph, useRegisterEvents, useSigma } from "@react-sigma/core"
+import { SigmaContainer, useLoadGraph, useRegisterEvents, useSetSettings, useSigma } from "@react-sigma/core"
 import "@react-sigma/core/lib/style.css"
 import type { SigmaNodeEventPayload } from "sigma/types"
 import forceAtlas2 from "graphology-layout-forceatlas2"
@@ -86,6 +86,15 @@ type ColorMode = "type" | "community"
 
 const BASE_NODE_SIZE = 8
 const MAX_NODE_SIZE = 28
+// Graphs at or above this node count are laid out in a Web Worker so the
+// ForceAtlas2 pass doesn't block the UI thread (upstream 836eb8b).
+const WORKER_LAYOUT_NODE_THRESHOLD = 220
+
+// Hovering one node lifts it + its neighbors and dims the rest. We keep the
+// hover state in React (lifted out of the per-node graph attributes the old
+// EventHandler mutated) so the sigma reducers can derive styling cheaply
+// without rewriting graph attributes on every pointer move.
+type HoverState = { node: string; neighbors: Set<string> } | null
 
 function nodeColor(type: string): string {
   return NODE_TYPE_COLORS[type] ?? NODE_TYPE_COLORS.other
@@ -122,21 +131,102 @@ function nodeSize(linkCount: number, maxLinks: number): number {
   return BASE_NODE_SIZE + Math.sqrt(ratio) * (MAX_NODE_SIZE - BASE_NODE_SIZE)
 }
 
+// ForceAtlas2 iteration budget scaled down for large graphs so layout
+// stays responsive — small graphs get a full, high-quality pass; huge ones
+// settle "good enough" quickly (upstream 836eb8b).
+function layoutIterations(nodeCount: number): number {
+  if (nodeCount > 2500) return 28
+  if (nodeCount > 1200) return 40
+  if (nodeCount > 600) return 65
+  if (nodeCount > 250) return 90
+  return 140
+}
+
+// Below this normalized-weight threshold an edge is treated as low-priority
+// and hidden by default on dense graphs (it reappears on hover/highlight),
+// cutting the number of edges sigma has to draw each frame.
+function edgeVisibilityThreshold(nodeCount: number): number {
+  if (nodeCount > 2500) return 0.16
+  if (nodeCount > 1200) return 0.1
+  if (nodeCount > 700) return 0.05
+  return 0
+}
+
+// Sigma label-culling knobs scaled by graph size so dense graphs don't try
+// to paint thousands of labels.
+function labelSizeThreshold(nodeCount: number): number {
+  if (nodeCount > 2500) return 18
+  if (nodeCount > 1200) return 14
+  if (nodeCount > 600) return 10
+  return 6
+}
+
+function labelDensity(nodeCount: number): number {
+  if (nodeCount > 2500) return 0.08
+  if (nodeCount > 1200) return 0.14
+  if (nodeCount > 600) return 0.24
+  return 0.4
+}
+
+// Stable fingerprint of the current node/edge set used to skip re-running
+// layout when the data hasn't actually changed. Sorting + hashing keeps the
+// key compact regardless of graph size (upstream 836eb8b).
+function graphDataKey(nodes: readonly GraphNode[], edges: readonly GraphEdge[]): string {
+  const nodeIds = nodes.map((n) => n.id).sort()
+  const edgeIds = edges
+    .map((e) => `${e.source}->${e.target}:${Math.round(e.weight * 1000)}`)
+    .sort()
+  return `${hashParts(nodeIds)}:${hashParts(edgeIds)}:${nodes.length}:${edges.length}`
+}
+
+// FNV-1a over the joined parts — cheap, allocation-light, and good enough
+// for change detection (not security).
+function hashParts(parts: readonly string[]): string {
+  let hash = 2166136261
+  for (const part of parts) {
+    for (let i = 0; i < part.length; i++) {
+      hash ^= part.charCodeAt(i)
+      hash = Math.imul(hash, 16777619)
+    }
+    hash ^= 0xff
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+// Spin up the off-main-thread layout worker. Returns null (and we fall back
+// to a main-thread layout) if the runtime can't construct it.
+function makeLayoutWorker(): Worker | null {
+  try {
+    return new Worker(new URL("./graph-layout-worker.ts", import.meta.url), { type: "module" })
+  } catch (err) {
+    console.warn("[Graph] failed to start layout worker; falling back to main-thread layout:", err)
+    return null
+  }
+}
+
 // --- Inner components ---
 
 // Cache computed node positions so re-renders don't re-layout
 const positionCache = new Map<string, { x: number; y: number }>()
 let lastLayoutDataKey = ""
+// Tracks a layout currently running in the worker so a re-render with the
+// same data doesn't kick off a second (redundant) worker pass.
+let pendingLayoutDataKey = ""
 
 function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: GraphEdge[]; colorMode: ColorMode }) {
   const loadGraph = useLoadGraph()
+  const sigma = useSigma()
 
   useEffect(() => {
-    const dataKey = nodes.map((n) => n.id).sort().join(",") + "|" + edges.length
-    const needsLayout = dataKey !== lastLayoutDataKey
+    const dataKey = graphDataKey(nodes, edges)
+    const needsLayout = dataKey !== lastLayoutDataKey && dataKey !== pendingLayoutDataKey
+    let cancelled = false
+    let worker: Worker | null = null
 
     const graph = new Graph()
     const maxLinks = Math.max(...nodes.map((n) => n.linkCount), 1)
+    const weakEdgeThreshold = edgeVisibilityThreshold(nodes.length)
 
     for (const node of nodes) {
       const cached = positionCache.get(node.id)
@@ -144,6 +234,10 @@ function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: G
         ? COMMUNITY_COLORS[node.community % COMMUNITY_COLORS.length]
         : nodeColor(node.type)
       graph.addNode(node.id, {
+        // Pin the renderer type so a node never falls back to sigma's
+        // default program (keeps nodes painted while search filters churn
+        // the data — upstream 5c569ae).
+        type: "circle",
         x: cached?.x ?? Math.random() * 100,
         y: cached?.y ?? Math.random() * 100,
         size: nodeSize(node.linkCount, maxLinks),
@@ -171,16 +265,22 @@ function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: G
             color,
             size,
             weight: edge.weight,
+            normalizedWeight,
+            // Stash endpoints + a low-priority flag so the edge reducer can
+            // cull weak edges and resolve hover/highlight without scanning
+            // the whole graph (upstream 836eb8b).
+            sourceNode: edge.source,
+            targetNode: edge.target,
+            lowPriority: weakEdgeThreshold > 0 && normalizedWeight < weakEdgeThreshold,
           })
         }
       }
     }
 
-    // Only run expensive ForceAtlas2 layout when data actually changed
-    if (needsLayout && nodes.length > 1) {
+    const runMainThreadLayout = () => {
       const settings = forceAtlas2.inferSettings(graph)
       forceAtlas2.assign(graph, {
-        iterations: 150,
+        iterations: layoutIterations(nodes.length),
         settings: {
           ...settings,
           gravity: 1,
@@ -197,48 +297,146 @@ function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: G
       })
     }
 
+    // Only run the expensive ForceAtlas2 layout when the data actually
+    // changed. Small graphs lay out synchronously on the main thread;
+    // large graphs offload to a Web Worker so the UI stays responsive
+    // while coordinates settle (upstream 836eb8b).
+    if (needsLayout && nodes.length > 1 && nodes.length < WORKER_LAYOUT_NODE_THRESHOLD) {
+      runMainThreadLayout()
+    }
+
     loadGraph(graph)
-  }, [loadGraph, nodes, edges, colorMode])
+
+    if (needsLayout && nodes.length >= WORKER_LAYOUT_NODE_THRESHOLD) {
+      worker = makeLayoutWorker()
+      if (!worker) {
+        runMainThreadLayout()
+        loadGraph(graph)
+        return undefined
+      }
+      pendingLayoutDataKey = dataKey
+
+      worker.onmessage = (event: MessageEvent<{ key: string; positions: Array<{ id: string; x: number; y: number }> }>) => {
+        if (cancelled || event.data.key !== dataKey) return
+        for (const { id, x, y } of event.data.positions) {
+          if (!graph.hasNode(id)) continue
+          graph.setNodeAttribute(id, "x", x)
+          graph.setNodeAttribute(id, "y", y)
+          positionCache.set(id, { x, y })
+        }
+        lastLayoutDataKey = dataKey
+        if (pendingLayoutDataKey === dataKey) pendingLayoutDataKey = ""
+        sigma.refresh()
+      }
+      worker.onerror = (event) => {
+        if (cancelled) return
+        console.warn("[Graph] layout worker failed; falling back to main-thread layout:", event.message)
+        if (pendingLayoutDataKey === dataKey) pendingLayoutDataKey = ""
+        runMainThreadLayout()
+        loadGraph(graph)
+      }
+      worker.postMessage({
+        key: dataKey,
+        nodes: nodes.map((node) => {
+          const cached = positionCache.get(node.id)
+          return {
+            id: node.id,
+            x: cached?.x ?? graph.getNodeAttribute(node.id, "x"),
+            y: cached?.y ?? graph.getNodeAttribute(node.id, "y"),
+          }
+        }),
+        edges: edges.map((edge) => ({ source: edge.source, target: edge.target, weight: edge.weight })),
+        iterations: layoutIterations(nodes.length),
+        scalingRatio: nodes.length > 400 ? 3 : 2,
+      })
+    }
+
+    return () => {
+      cancelled = true
+      if (pendingLayoutDataKey === dataKey) pendingLayoutDataKey = ""
+      worker?.terminate()
+    }
+  }, [loadGraph, sigma, nodes, edges, colorMode])
 
   return null
 }
 
-function HighlightManager({ highlightedNodes }: { highlightedNodes: Set<string> }) {
+// Drives all hover/highlight/dimming styling through sigma's node/edge
+// reducers instead of mutating per-element graph attributes (the old
+// HighlightManager). Reducers run lazily at paint time, so we no longer
+// walk every node + edge on each hover/search change — this is the core
+// of the rendering-perf win (upstream 836eb8b). Also owns the size-scaled
+// label-culling settings so dense graphs stay legible and fast.
+function GraphRenderSettings({
+  hoverState,
+  highlightedNodes,
+  nodeCount,
+}: {
+  hoverState: HoverState
+  highlightedNodes: Set<string>
+  nodeCount: number
+}) {
   const sigma = useSigma()
+  const setSettings = useSetSettings()
 
   useEffect(() => {
-    const graph = sigma.getGraph()
-    if (highlightedNodes.size === 0) {
-      graph.forEachNode((n) => {
-        graph.removeNodeAttribute(n, "insightHighlight")
-        graph.removeNodeAttribute(n, "dimmed")
-      })
-      graph.forEachEdge((e) => {
-        graph.removeEdgeAttribute(e, "dimmed")
-        graph.removeEdgeAttribute(e, "highlighted")
-      })
-    } else {
-      graph.forEachNode((n) => {
-        if (highlightedNodes.has(n)) {
-          graph.setNodeAttribute(n, "insightHighlight", true)
-          graph.removeNodeAttribute(n, "dimmed")
-        } else {
-          graph.setNodeAttribute(n, "dimmed", true)
-          graph.removeNodeAttribute(n, "insightHighlight")
+    setSettings({
+      hideEdgesOnMove: true,
+      hideLabelsOnMove: true,
+      labelDensity: labelDensity(nodeCount),
+      labelRenderedSizeThreshold: labelSizeThreshold(nodeCount),
+      renderEdgeLabels: false,
+      nodeReducer: (node, attrs) => {
+        const result = { ...attrs }
+        const hasHover = !!hoverState
+        const hasHighlight = highlightedNodes.size > 0
+        const isHoverNode = hoverState?.node === node
+        const isHoverNeighbor = hoverState?.neighbors.has(node) ?? false
+        const isHighlighted = highlightedNodes.has(node)
+
+        if (isHighlighted) {
+          result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.5
+          result.zIndex = 10
+          result.forceLabel = true
         }
-      })
-      graph.forEachEdge((e, _attrs, source, target) => {
-        if (highlightedNodes.has(source) && highlightedNodes.has(target)) {
-          graph.setEdgeAttribute(e, "highlighted", true)
-          graph.removeEdgeAttribute(e, "dimmed")
-        } else {
-          graph.setEdgeAttribute(e, "dimmed", true)
-          graph.removeEdgeAttribute(e, "highlighted")
+        if (isHoverNode) {
+          result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.4
+          result.zIndex = 10
+          result.forceLabel = true
         }
-      })
-    }
+        if ((hasHover && !isHoverNode && !isHoverNeighbor) || (hasHighlight && !isHighlighted)) {
+          result.color = mixColor(attrs.color ?? "#94a3b8", "#e2e8f0", 0.75)
+          result.label = ""
+          result.size = (attrs.size ?? BASE_NODE_SIZE) * 0.6
+        }
+        return result
+      },
+      edgeReducer: (_edge, attrs) => {
+        const result = { ...attrs }
+        const source = String(attrs.sourceNode ?? "")
+        const target = String(attrs.targetNode ?? "")
+        const hasHover = !!hoverState
+        const hasHighlight = highlightedNodes.size > 0
+        const hoverEdge = hasHover && (source === hoverState?.node || target === hoverState?.node)
+        const highlightedEdge = hasHighlight && highlightedNodes.has(source) && highlightedNodes.has(target)
+
+        if (attrs.lowPriority && !hoverEdge && !highlightedEdge) {
+          result.hidden = true
+          return result
+        }
+        if ((hasHover && !hoverEdge) || (hasHighlight && !highlightedEdge)) {
+          result.color = "#f1f5f9"
+          result.size = 0.3
+        }
+        if (hoverEdge || highlightedEdge) {
+          result.color = "#1e293b"
+          result.size = Math.max(2, (attrs.size ?? 1) * 1.5)
+        }
+        return result
+      },
+    })
     sigma.refresh()
-  }, [sigma, highlightedNodes])
+  }, [setSettings, sigma, hoverState, highlightedNodes, nodeCount])
 
   return null
 }
@@ -246,9 +444,11 @@ function HighlightManager({ highlightedNodes }: { highlightedNodes: Set<string> 
 function EventHandler({
   onNodeClick,
   onNodeContextMenu,
+  onHoverChange,
 }: {
   onNodeClick: (nodeId: string) => void
   onNodeContextMenu: (nodeId: string, x: number, y: number) => void
+  onHoverChange: (state: HoverState) => void
 }) {
   const registerEvents = useRegisterEvents()
   const sigma = useSigma()
@@ -267,37 +467,18 @@ function EventHandler({
         const container = sigma.getContainer()
         container.style.cursor = "pointer"
         const graph = sigma.getGraph()
-        graph.setNodeAttribute(node, "hovering", true)
-        const neighbors = new Set(graph.neighbors(node))
-        neighbors.add(node)
-        graph.forEachNode((n) => {
-          if (!neighbors.has(n)) graph.setNodeAttribute(n, "dimmed", true)
-        })
-        graph.forEachEdge((e, _attrs, source, target) => {
-          if (source !== node && target !== node) {
-            graph.setEdgeAttribute(e, "dimmed", true)
-          } else {
-            graph.setEdgeAttribute(e, "highlighted", true)
-          }
-        })
-        sigma.refresh()
+        // Hand the hover off to React state; GraphRenderSettings'
+        // reducers do the dimming at paint time instead of mutating every
+        // node/edge attribute here (upstream 836eb8b).
+        onHoverChange({ node, neighbors: new Set(graph.neighbors(node)) })
       },
       leaveNode: () => {
         const container = sigma.getContainer()
         container.style.cursor = "default"
-        const graph = sigma.getGraph()
-        graph.forEachNode((n) => {
-          graph.removeNodeAttribute(n, "hovering")
-          graph.removeNodeAttribute(n, "dimmed")
-        })
-        graph.forEachEdge((e) => {
-          graph.removeEdgeAttribute(e, "dimmed")
-          graph.removeEdgeAttribute(e, "highlighted")
-        })
-        sigma.refresh()
+        onHoverChange(null)
       },
     })
-  }, [registerEvents, sigma, onNodeClick, onNodeContextMenu])
+  }, [registerEvents, sigma, onNodeClick, onNodeContextMenu, onHoverChange])
 
   return null
 }
@@ -374,6 +555,7 @@ export function GraphView() {
   const [colorMode, setColorMode] = useState<ColorMode>("type")
   const [showInsights, setShowInsights] = useState(false)
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set())
+  const [hoverState, setHoverState] = useState<HoverState>(null)
   const [dismissedInsights, setDismissedInsights] = useState<Set<string>>(new Set())
   const [sigmaKey, setSigmaKey] = useState(0)
   const [isResizing, setIsResizing] = useState(false)
@@ -766,73 +948,65 @@ export function GraphView() {
             <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
               {t("graph.resizing")}
             </div>
-          ) : searchedGraph.nodes.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-              <Search className="h-8 w-8 opacity-40" />
-              <p className="text-sm">{searchActive ? t("graph.noSearchResults") : t("graph.noVisibleNodes")}</p>
-              {searchActive && (
-                <Button variant="outline" size="sm" onClick={() => setGraphSearch("")}>
-                  {t("graph.clearSearch")}
-                </Button>
-              )}
-            </div>
           ) : (
-          <ErrorBoundary>
-          <SigmaContainer
-            key={sigmaKey}
-            style={{ width: "100%", height: "100%", background: "transparent" }}
-            settings={{
-              renderEdgeLabels: true,
-              defaultEdgeColor: "#cbd5e1",
-              defaultNodeColor: "#94a3b8",
-              labelSize: 13,
-              labelWeight: "bold",
-              labelColor: { color: "#1e293b" },
-              labelDensity: 0.4,
-              labelRenderedSizeThreshold: 6,
-              stagePadding: 30,
-              nodeReducer: (_node, attrs) => {
-                const result = { ...attrs }
-                if (attrs.insightHighlight) {
-                  result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.5
-                  result.zIndex = 10
-                  result.forceLabel = true
-                }
-                if (attrs.hovering) {
-                  result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.4
-                  result.zIndex = 10
-                  result.forceLabel = true
-                }
-                if (attrs.dimmed) {
-                  result.color = mixColor(attrs.color ?? "#94a3b8", "#e2e8f0", 0.75)
-                  result.label = ""
-                  result.size = (attrs.size ?? BASE_NODE_SIZE) * 0.6
-                }
-                return result
-              },
-              edgeReducer: (_edge, attrs) => {
-                const result = { ...attrs }
-                if (attrs.dimmed) {
-                  result.color = "#f1f5f9"
-                  result.size = 0.3
-                }
-                if (attrs.highlighted) {
-                  const w = attrs.weight ?? 1
-                  result.color = "#1e293b"
-                  result.size = Math.max(2, (attrs.size ?? 1) * 1.5)
-                  result.label = `relevance: ${w.toFixed(1)}`
-                  result.forceLabel = true
-                }
-                return result
-              },
-            }}
-          >
-            <GraphLoader nodes={searchedGraph.nodes} edges={searchedGraph.edges} colorMode={colorMode} />
-            <EventHandler onNodeClick={handleNodeClick} onNodeContextMenu={handleNodeContextMenu} />
-            <HighlightManager highlightedNodes={searchActive ? searchedGraph.matchedNodeIds : highlightedNodes} />
-            <ZoomControls />
-          </SigmaContainer>
-          </ErrorBoundary>
+            // Keep the renderer mounted even when a search filters out every
+            // node — the empty state is an overlay rather than a separate
+            // branch, so sigma isn't torn down and rebuilt (which caused a
+            // flash / lost layout) every time a search emptied the graph
+            // (upstream 5c569ae). Static settings hold only the stable,
+            // non-size-dependent knobs; the size-scaled label-culling and
+            // the hover/highlight reducers live in GraphRenderSettings so
+            // they update without remounting sigma (upstream 836eb8b/019fc0b).
+            <>
+              <ErrorBoundary>
+                <SigmaContainer
+                  key={sigmaKey}
+                  style={{ width: "100%", height: "100%", background: "transparent" }}
+                  settings={{
+                    defaultNodeType: "circle",
+                    renderEdgeLabels: false,
+                    hideEdgesOnMove: true,
+                    hideLabelsOnMove: true,
+                    defaultEdgeColor: "#cbd5e1",
+                    defaultNodeColor: "#94a3b8",
+                    labelSize: 13,
+                    labelWeight: "bold",
+                    labelColor: { color: "#1e293b" },
+                    stagePadding: 30,
+                  }}
+                >
+                  <GraphLoader nodes={searchedGraph.nodes} edges={searchedGraph.edges} colorMode={colorMode} />
+                  <EventHandler
+                    onNodeClick={handleNodeClick}
+                    onNodeContextMenu={handleNodeContextMenu}
+                    onHoverChange={setHoverState}
+                  />
+                  <GraphRenderSettings
+                    hoverState={hoverState}
+                    highlightedNodes={searchActive ? searchedGraph.matchedNodeIds : highlightedNodes}
+                    nodeCount={searchedGraph.nodes.length}
+                  />
+                  <ZoomControls />
+                </SigmaContainer>
+              </ErrorBoundary>
+
+              {searchedGraph.nodes.length === 0 && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-slate-50/85 text-muted-foreground backdrop-blur-[1px] dark:bg-slate-950/85">
+                  <Search className="h-8 w-8 opacity-40" />
+                  <p className="text-sm">{searchActive ? t("graph.noSearchResults") : t("graph.noVisibleNodes")}</p>
+                  {searchActive && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="pointer-events-auto"
+                      onClick={() => setGraphSearch("")}
+                    >
+                      {t("graph.clearSearch")}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </>
           )}
 
           {showFilters && (
