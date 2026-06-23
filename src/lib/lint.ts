@@ -111,7 +111,45 @@ export interface LintResult {
   page: string
   detail: string
   affectedPages?: string[]
+  // ── Link-repair suggestions (structural lint only) ────────────────
+  // The original broken wikilink text as the user typed it, e.g.
+  // "transfomer". Carried so the one-click Fix knows what to rewrite.
+  brokenTarget?: string
+  // The best-guess existing page (wiki-relative path, e.g.
+  // "entities/transformer.md") that this finding should link TO —
+  // populated for broken-link (closest fuzzy match) and no-outlinks
+  // (most topically-related page). Empty when no confident match.
+  suggestedTarget?: string
+  // The best-guess existing page that should link INTO an orphan
+  // (wiki-relative path). The Fix appends a wikilink there.
+  suggestedSource?: string
 }
+
+// Confidence thresholds for the link-repair suggestion engine. Tuned
+// against a real ~250-page wiki so that suggestions stay actionable
+// rather than noisy — a wrong suggestion is worse than none because
+// the one-click Fix acts on it.
+//   - BROKEN_LINK: fuzzy string match between the broken target and an
+//     existing page must clear this before we offer a rename.
+//   - RELATED_PAGE: token-overlap (cosine-ish) score for orphan /
+//     no-outlinks "related page" suggestions. Deliberately low — even
+//     a weak topical link beats a fully unlinked page.
+//   - SAME_FOLDER_SCORE_BONUS: nudge co-located pages up; siblings in
+//     the same folder are usually about the same sub-topic.
+//   - SINGLE_CJK_TOKEN_WEIGHT: a lone CJK character is a weaker signal
+//     than a multi-char word, so it counts for less in the overlap sum.
+//   - SUGGESTION_TOKEN_WINDOW: only the first N chars of a page body
+//     feed the token set (keeps long imports from dominating).
+//   - SAME_BASENAME / CONTAINS_TARGET: short-circuit scores for the
+//     two highest-confidence broken-link cases (same filename, or one
+//     target is a substring of the other).
+const BROKEN_LINK_SUGGESTION_MIN_SCORE = 0.74
+const RELATED_PAGE_SUGGESTION_MIN_SCORE = 0.08
+const SAME_FOLDER_SCORE_BONUS = 0.08
+const SINGLE_CJK_TOKEN_WEIGHT = 0.35
+const SUGGESTION_TOKEN_WINDOW = 4000
+const SAME_BASENAME_SCORE = 0.96
+const CONTAINS_TARGET_SCORE = 0.82
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -140,6 +178,96 @@ function extractWikilinks(content: string): string[] {
 function relativeToSlug(relativePath: string): string {
   // relativePath relative to wiki/ dir, e.g. "entities/foo-bar" or "queries/my-page-2024-01-01"
   return relativePath.replace(/\.md$/, "")
+}
+
+// ── Link-repair suggestion helpers ─────────────────────────────────────────────
+
+/** Canonicalise a wikilink target / path for comparison: drop the
+ *  optional `wiki/` prefix and `.md` suffix, trim, lowercase. So
+ *  "wiki/Entities/Transformer.md" and "entities/transformer" compare
+ *  equal. */
+function normalizeLinkTarget(target: string): string {
+  return normalizePath(target)
+    .replace(/^wiki\//i, "")
+    .replace(/\.md$/i, "")
+    .trim()
+    .toLowerCase()
+}
+
+/** Best human-readable title for a page: frontmatter `title:`, else the
+ *  first H1, else the de-slugged filename. Used to widen the fuzzy
+ *  match surface for broken-link suggestions. */
+function extractTitle(content: string, fallbackPath: string): string {
+  const frontmatter = content.match(/^---\s*\n([\s\S]*?)\n---/)
+  if (frontmatter) {
+    const title = frontmatter[1].match(/^title:\s*["']?(.+?)["']?\s*$/m)
+    if (title?.[1]?.trim()) return title[1].trim()
+  }
+  const heading = content.match(/^#\s+(.+)$/m)
+  if (heading?.[1]?.trim()) return heading[1].trim()
+  return getFileName(fallbackPath)
+    .replace(/\.md$/i, "")
+    .replace(/[-_]+/g, " ")
+}
+
+/** Tokenise text for topical-overlap scoring. Words of length ≥ 2 plus,
+ *  for CJK runs, each individual character (so two pages sharing a
+ *  Chinese term still overlap even when word boundaries are absent).
+ *  NFKC-normalised + lowercased for stable comparison. */
+function tokenizeForSuggestion(text: string): Set<string> {
+  const tokens = new Set<string>()
+  const normalized = text.normalize("NFKC").toLowerCase()
+  for (const match of normalized.matchAll(/[\p{L}\p{N}]+/gu)) {
+    const token = match[0]
+    if (token.length >= 2) tokens.add(token)
+    if (/[㐀-鿿]/u.test(token)) {
+      for (const char of Array.from(token)) tokens.add(char)
+    }
+  }
+  return tokens
+}
+
+/** Plain Levenshtein edit distance (two-row DP). Used by the broken-link
+ *  fuzzy matcher to catch typos like "transfomer" → "transformer". */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0
+  if (!a) return b.length
+  if (!b) return a.length
+  const previous = Array.from({ length: b.length + 1 }, (_, i) => i)
+  const current = new Array<number>(b.length + 1)
+  for (let i = 1; i <= a.length; i++) {
+    current[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      current[j] = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + cost,
+      )
+    }
+    for (let j = 0; j <= b.length; j++) previous[j] = current[j]
+  }
+  return previous[b.length]
+}
+
+/** 0..1 similarity between a broken target and a candidate page key.
+ *  Short-circuits the high-confidence cases (exact / same basename /
+ *  substring) before falling back to a length-normalised edit-distance
+ *  ratio. Very short basenames (< 5 chars) get a 0 to avoid wiring up
+ *  bogus links like cat → bat. */
+function stringSimilarity(a: string, b: string): number {
+  const left = normalizeLinkTarget(a)
+  const right = normalizeLinkTarget(b)
+  if (!left || !right) return 0
+  if (left === right) return 1
+  const leftBase = getFileName(left)
+  const rightBase = getFileName(right)
+  if (leftBase === rightBase) return SAME_BASENAME_SCORE
+  if (right.includes(left) || left.includes(right)) return CONTAINS_TARGET_SCORE
+  if (leftBase.length < 5 || rightBase.length < 5) return 0
+  const maxLen = Math.max(leftBase.length, rightBase.length)
+  if (maxLen === 0) return 0
+  return 1 - levenshtein(leftBase, rightBase) / maxLen
 }
 
 /**
@@ -236,18 +364,80 @@ export async function runStructuralLintWithStats(
   const slugMap = buildSlugMap(wikiFiles, wikiRoot)
 
   // Read all content files
-  type PageData = { path: string; slug: string; content: string; outlinks: string[] }
+  type PageData = {
+    path: string
+    shortName: string
+    slug: string
+    title: string
+    content: string
+    outlinks: string[]
+    tokens: Set<string>
+  }
   const pages: PageData[] = []
 
   for (const f of contentFiles) {
     try {
       const content = await readFile(f.path)
-      const slug = relativeToSlug(getRelativePath(f.path, wikiRoot))
+      const shortName = getRelativePath(f.path, wikiRoot)
+      const slug = relativeToSlug(shortName)
+      const title = extractTitle(content, shortName)
       const outlinks = extractWikilinks(content)
-      pages.push({ path: f.path, slug, content, outlinks })
+      const slugName = getFileName(slug)
+      const tokens = tokenizeForSuggestion(`${title}\n${slugName}\n${content.slice(0, SUGGESTION_TOKEN_WINDOW)}`)
+      pages.push({ path: f.path, shortName, slug, title, content, outlinks, tokens })
     } catch {
       // skip unreadable files
     }
+  }
+
+  // Suggest the closest EXISTING page for a broken wikilink target —
+  // fuzzy-matched against each page's slug, wiki-relative path, and
+  // title. Returns undefined unless the best score clears the
+  // confidence threshold (a wrong rename is worse than none).
+  function suggestBrokenTarget(target: string): PageData | undefined {
+    let best: { page: PageData; score: number } | undefined
+    for (const candidate of pages) {
+      const score = Math.max(
+        stringSimilarity(target, candidate.slug),
+        stringSimilarity(target, candidate.shortName),
+        stringSimilarity(target, candidate.title),
+      )
+      if (score > (best?.score ?? 0)) best = { page: candidate, score }
+    }
+    return best && best.score >= BROKEN_LINK_SUGGESTION_MIN_SCORE ? best.page : undefined
+  }
+
+  // Suggest a topically-related page for orphan ("source" = a page that
+  // should link INTO this one) and no-outlinks ("target" = a page this
+  // one should link OUT to). Scored by token overlap with a same-folder
+  // bonus. For the "target" direction we skip pages this page already
+  // links to, so we never suggest a redundant link.
+  function suggestRelatedPage(page: PageData, direction: "source" | "target"): PageData | undefined {
+    const existingOutlinks = new Set(page.outlinks.map(normalizeLinkTarget))
+    let best: { page: PageData; score: number } | undefined
+    for (const candidate of pages) {
+      if (candidate.shortName === page.shortName) continue
+      if (direction === "target") {
+        const candidateKeys = [
+          normalizeLinkTarget(candidate.slug),
+          normalizeLinkTarget(candidate.shortName),
+          normalizeLinkTarget(getFileName(candidate.shortName).replace(/\.md$/i, "")),
+        ]
+        if (candidateKeys.some((key) => existingOutlinks.has(key))) continue
+      }
+      let overlap = 0
+      for (const token of page.tokens) {
+        if (candidate.tokens.has(token)) overlap += token.length > 1 ? 1 : SINGLE_CJK_TOKEN_WEIGHT
+      }
+      if (overlap === 0) continue
+      const folderBonus =
+        page.shortName.split("/")[0] === candidate.shortName.split("/")[0] ? SAME_FOLDER_SCORE_BONUS : 0
+      const score =
+        overlap / Math.sqrt(Math.max(1, page.tokens.size) * Math.max(1, candidate.tokens.size)) +
+        folderBonus
+      if (score > (best?.score ?? 0)) best = { page: candidate, score }
+    }
+    return best && best.score >= RELATED_PAGE_SUGGESTION_MIN_SCORE ? best.page : undefined
   }
 
   // Build inbound link count. Lookups are case-insensitive — [[Transformer]]
@@ -298,11 +488,13 @@ export async function runStructuralLintWithStats(
     // Orphan: no inbound links (lowercased slug for case-insensitive match)
     const inbound = inboundCounts.get(p.slug.toLowerCase()) ?? 0
     if (inbound === 0) {
+      const suggestedSource = suggestRelatedPage(p, "source")
       results.push({
         type: "orphan",
         severity: "info",
         page: shortName,
         detail: "No other pages link to this page.",
+        suggestedSource: suggestedSource?.shortName,
       })
     }
 
@@ -337,11 +529,13 @@ export async function runStructuralLintWithStats(
 
     // No outbound links
     if (p.outlinks.length === 0) {
+      const suggestedTarget = suggestRelatedPage(p, "target")
       results.push({
         type: "no-outlinks",
         severity: "info",
         page: shortName,
         detail: "This page has no [[wikilink]] references to other pages.",
+        suggestedTarget: suggestedTarget?.shortName,
       })
     }
 
@@ -362,12 +556,19 @@ export async function runStructuralLintWithStats(
   // Emit one broken-link row per missing target. Sort the affected-
   // pages list so the output is stable across runs (the input page
   // order depends on the OS's directory enumeration, which isn't).
+  //
+  // `brokenTarget` (the original typed link) + `suggestedTarget` (the
+  // closest existing page, if any) drive the one-click link repair:
+  // rewrite the link to the suggestion, or stub out the missing page.
+  // Suggestion is computed ONCE per target — the grouping means a
+  // popular typo is fuzzy-matched a single time, not once per source.
   for (const { target, pages: sourcePages } of brokenByTarget.values()) {
     const pageList = Array.from(sourcePages).sort()
     const detail =
       pageList.length === 1
         ? `Broken link: [[${target}]] — target page not found.`
         : `Broken link: [[${target}]] — target page not found, referenced from ${pageList.length} pages.`
+    const suggestedTarget = suggestBrokenTarget(target)
     results.push({
       type: "broken-link",
       severity: "warning",
@@ -376,6 +577,8 @@ export async function runStructuralLintWithStats(
       // then expands to the rest.
       page: pageList[0],
       detail,
+      brokenTarget: target,
+      suggestedTarget: suggestedTarget?.shortName,
       ...(pageList.length > 1 ? { affectedPages: pageList } : {}),
     })
   }

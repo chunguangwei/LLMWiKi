@@ -31,7 +31,7 @@ interface LlmConfig {
   reasoning?: ReasoningConfig
 }
 
-export type SearchProvider = "tavily" | "serpapi" | "searxng" | "ollama" | "none"
+export type SearchProvider = "tavily" | "serpapi" | "searxng" | "ollama" | "firecrawl" | "none"
 export type SerpApiEngine =
   | "google"
   | "google_news"

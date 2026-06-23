@@ -45,6 +45,9 @@ describe("lint-store addItems", () => {
         page: "entities/transformer.md",
         detail: "contradiction: conflicting claims about model size",
         affectedPages: ["a.md", "b.md"],
+        brokenTarget: "transfomer",
+        suggestedTarget: "entities/transformer.md",
+        suggestedSource: "concepts/attention.md",
       },
     ]
     useLintStore.getState().addItems(results)
@@ -54,6 +57,9 @@ describe("lint-store addItems", () => {
     expect(item.page).toBe("entities/transformer.md")
     expect(item.detail).toBe("contradiction: conflicting claims about model size")
     expect(item.affectedPages).toEqual(["a.md", "b.md"])
+    expect(item.brokenTarget).toBe("transfomer")
+    expect(item.suggestedTarget).toBe("entities/transformer.md")
+    expect(item.suggestedSource).toBe("concepts/attention.md")
   })
 })
 

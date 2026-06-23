@@ -13,7 +13,7 @@ vi.mock("@/commands/fs", () => ({
   listDirectory: vi.fn(),
 }))
 
-import { runSemanticLint } from "./lint"
+import { runSemanticLint, runStructuralLint } from "./lint"
 import { streamChat } from "./llm-client"
 import { readFile, listDirectory } from "@/commands/fs"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -150,5 +150,99 @@ describe("runSemanticLint — activity & early returns", () => {
     await runSemanticLint("/project", fakeLlmConfig())
     const items = useActivityStore.getState().items
     expect(items[0].status).toBe("error")
+  })
+})
+
+describe("runStructuralLint — link suggestions", () => {
+  it("suggests the closest existing page for a broken wikilink", async () => {
+    const pages = [
+      makeFileNode("transformer.md", "---\ntitle: Transformer\n---\n# Transformer\nAttention model."),
+      makeFileNode("attention.md", "# Attention\nSee [[transfomer]] for the architecture."),
+    ]
+    mockListDirectory.mockResolvedValue(pages.map((p) => p.node))
+    mockReadFile.mockImplementation(async (path) => {
+      const match = pages.find((p) => p.node.path === path)
+      return match?.content ?? ""
+    })
+
+    const results = await runStructuralLint("/project")
+    const broken = results.find((result) => result.type === "broken-link")
+
+    expect(broken).toMatchObject({
+      page: "attention.md",
+      brokenTarget: "transfomer",
+      suggestedTarget: "transformer.md",
+    })
+  })
+
+  it("suggests related pages for orphan and no-outlinks findings", async () => {
+    const pages = [
+      makeFileNode("rag.md", "# RAG\nRetrieval augmented generation uses vector search."),
+      makeFileNode("vector-search.md", "# Vector Search\nVector search retrieval finds related chunks."),
+    ]
+    mockListDirectory.mockResolvedValue(pages.map((p) => p.node))
+    mockReadFile.mockImplementation(async (path) => {
+      const match = pages.find((p) => p.node.path === path)
+      return match?.content ?? ""
+    })
+
+    const results = await runStructuralLint("/project")
+    const noOutlinks = results.find((result) => result.type === "no-outlinks" && result.page === "rag.md")
+    const orphan = results.find((result) => result.type === "orphan" && result.page === "rag.md")
+
+    expect(noOutlinks?.suggestedTarget).toBe("vector-search.md")
+    expect(orphan?.suggestedSource).toBe("vector-search.md")
+  })
+
+  it("does not attach self-referential suggestions when no related page exists", async () => {
+    const pages = [
+      makeFileNode("alpha.md", "# Alpha\nAardvark apricot."),
+      makeFileNode("beta.md", "# Beta\nZeppelin zircon."),
+    ]
+    mockListDirectory.mockResolvedValue(pages.map((p) => p.node))
+    mockReadFile.mockImplementation(async (path) => {
+      const match = pages.find((p) => p.node.path === path)
+      return match?.content ?? ""
+    })
+
+    const results = await runStructuralLint("/project")
+    const orphan = results.find((result) => result.type === "orphan" && result.page === "alpha.md")
+
+    expect(orphan?.suggestedSource).toBeUndefined()
+    expect(orphan?.suggestedTarget).toBeUndefined()
+  })
+
+  it("does not suggest same-folder pages without shared terms", async () => {
+    const pages = [
+      makeFileNode("concepts/alpha.md", "# Alpha\nAardvark apricot."),
+      makeFileNode("concepts/beta.md", "# Beta\nZeppelin zircon."),
+    ]
+    mockListDirectory.mockResolvedValue(pages.map((p) => p.node))
+    mockReadFile.mockImplementation(async (path) => {
+      const match = pages.find((p) => p.node.path === path)
+      return match?.content ?? ""
+    })
+
+    const results = await runStructuralLint("/project")
+    const orphan = results.find((result) => result.type === "orphan" && result.page === "concepts/alpha.md")
+
+    expect(orphan?.suggestedSource).toBeUndefined()
+  })
+
+  it("does not suggest short unrelated typo targets", async () => {
+    const pages = [
+      makeFileNode("bat.md", "# Bat\nFlying mammal."),
+      makeFileNode("note.md", "# Note\nSee [[cat]]."),
+    ]
+    mockListDirectory.mockResolvedValue(pages.map((p) => p.node))
+    mockReadFile.mockImplementation(async (path) => {
+      const match = pages.find((p) => p.node.path === path)
+      return match?.content ?? ""
+    })
+
+    const results = await runStructuralLint("/project")
+    const broken = results.find((result) => result.type === "broken-link" && result.brokenTarget === "cat")
+
+    expect(broken?.suggestedTarget).toBeUndefined()
   })
 })

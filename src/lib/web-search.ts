@@ -41,7 +41,7 @@ export const SEARXNG_CATEGORY_OPTIONS: { value: SearXngCategory; label: string; 
 
 export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
   const providerConfigs: SearchProviderConfigs = config.providerConfigs ?? {
-    ...(config.provider !== "none" && config.provider !== "ollama" && config.apiKey
+    ...(config.provider !== "none" && config.provider !== "ollama" && config.provider !== "firecrawl" && config.apiKey
       ? {
           [config.provider]: {
             apiKey: config.apiKey,
@@ -109,6 +109,12 @@ export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
   if (resolved.provider === "ollama") {
     return Boolean(resolved.apiKey?.trim())
   }
+  // Firecrawl's anonymous Search API needs no key — it's "configured"
+  // by simply being selected (Firecrawl may still block suspicious IPs
+  // at request time, surfaced as a friendly error then).
+  if (resolved.provider === "firecrawl") {
+    return true
+  }
   return Boolean(resolved.apiKey?.trim())
 }
 
@@ -122,7 +128,7 @@ export async function webSearch(
     throw new Error("Web search not configured. Select a search provider in Settings.")
   }
   if ((resolved.provider === "tavily" || resolved.provider === "serpapi") && !resolved.apiKey) {
-    throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings, or select a different provider.")
+    throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings, or select a key-free provider such as Firecrawl or SearXNG.")
   }
   if (resolved.provider === "searxng" && !resolved.searXngUrl?.trim()) {
     throw new Error("Web search not configured. Add a SearXNG instance URL in Settings.")
@@ -140,6 +146,8 @@ export async function webSearch(
       return searXngSearch(query, resolved.searXngUrl ?? "", maxResults, resolved.searXngCategories ?? ["general"])
     case "ollama":
       return ollamaSearch(query, resolved.apiKey ?? "", maxResults)
+    case "firecrawl":
+      return firecrawlSearch(query, maxResults)
     default:
       throw new Error(`Unknown search provider: ${resolved.provider}`)
   }
@@ -276,6 +284,115 @@ async function tavilySearch(
     snippet: r.content ?? "",
     source: hostnameFromUrl(r.url ?? ""),
   }))
+}
+
+// ── Firecrawl (anonymous Search API) ────────────────────────────────────────────
+// Firecrawl exposes a keyless `/v2/search` endpoint. No Authorization
+// header is sent — but Firecrawl can refuse anonymous requests from
+// IPs it flags as suspicious, which we translate to a friendly,
+// actionable error rather than leaking the raw API message.
+
+interface FirecrawlSearchResponse {
+  success?: boolean
+  error?: string
+  data?: unknown[]
+  results?: unknown[]
+}
+
+async function firecrawlSearch(
+  query: string,
+  maxResults: number,
+): Promise<WebSearchResult[]> {
+  const httpFetch = await getHttpFetch()
+  let response: Response
+  try {
+    response = await httpFetch("https://api.firecrawl.dev/v2/search", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query,
+        limit: maxResults,
+      }),
+    })
+  } catch (err) {
+    if (isFetchNetworkError(err)) {
+      throw new Error(
+        "Network error reaching Firecrawl Search. Check your connectivity or choose another Web Search provider.",
+      )
+    }
+    throw err
+  }
+
+  const text = await response.text().catch(() => "")
+  let data: FirecrawlSearchResponse = {}
+  try {
+    data = text ? JSON.parse(text) as FirecrawlSearchResponse : {}
+  } catch {
+    if (!response.ok) {
+      throw new Error(`Firecrawl search failed (${response.status}): ${text || "Unknown error"}`)
+    }
+    throw new Error("Firecrawl search returned an invalid JSON response.")
+  }
+
+  if (!response.ok) {
+    throw new Error(friendlyFirecrawlError(data.error) ?? `Firecrawl search failed (${response.status}): ${text || "Unknown error"}`)
+  }
+
+  // Firecrawl sometimes returns success:true alongside an advisory
+  // `error` (e.g. "partial results only") — only treat it as a failure
+  // when success is explicitly false, or success is absent AND a real
+  // error string is present.
+  if (data.success === false || (data.success !== true && typeof data.error === "string" && data.error.trim())) {
+    throw new Error(friendlyFirecrawlError(data.error) ?? `Firecrawl search failed: ${data.error ?? "Unknown error"}`)
+  }
+
+  return normalizeFirecrawlResults(data, maxResults)
+}
+
+function friendlyFirecrawlError(error?: string): string | null {
+  const message = error?.trim()
+  if (!message) return null
+  if (/suspicious|without an API key|firecrawl can't be used without an api key/i.test(message)) {
+    return "Firecrawl anonymous search is blocked for this IP. Firecrawl says this network looks suspicious; choose another Web Search provider or try a different network."
+  }
+  return `Firecrawl search failed: ${message}`
+}
+
+function normalizeFirecrawlResults(data: FirecrawlSearchResponse, maxResults: number): WebSearchResult[] {
+  const rawResults = data.data ?? data.results ?? []
+  return rawResults
+    .slice(0, maxResults)
+    .map((item) => normalizeFirecrawlResult(item))
+    .filter((item) => item.url.length > 0)
+}
+
+function normalizeFirecrawlResult(item: unknown): WebSearchResult {
+  const r = item as {
+    title?: string
+    url?: string
+    link?: string
+    markdown?: string
+    content?: string
+    description?: string
+    snippet?: string
+    source?: string
+    metadata?: {
+      title?: string
+      sourceURL?: string
+      url?: string
+      description?: string
+    }
+  }
+  const url = r.url ?? r.link ?? r.metadata?.sourceURL ?? r.metadata?.url ?? ""
+  return {
+    title: r.title ?? r.metadata?.title ?? "Untitled",
+    url,
+    snippet: r.snippet ?? r.description ?? r.metadata?.description ?? r.content ?? r.markdown ?? "",
+    source: hostnameFromUrl(url) || r.source || "",
+  }
 }
 
 async function serpApiSearch(
