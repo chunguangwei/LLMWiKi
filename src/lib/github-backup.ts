@@ -64,7 +64,10 @@ export const DEFAULT_GITHUB_BACKUP_CONFIG: GithubBackupConfig = {
 export interface GithubBackupResult {
   newSha: string
   pushedFiles: string[]
+  /** Files skipped up-front for exceeding the per-file size cap. */
   skippedOversize: string[]
+  /** Files skipped because they couldn't be read/uploaded (backup continued). */
+  failedUploads: string[]
   pulledFirst: boolean
 }
 

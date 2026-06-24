@@ -320,15 +320,28 @@ export function GithubBackupSection() {
         defaultValue: "Backed up {{count}} file(s).",
         count: r.pushedFiles.length,
       })
+      // Collect any skip notices (oversize up-front + read/upload failures).
+      const notices: string[] = []
       if (r.skippedOversize.length > 0) {
-        setResult({
-          kind: "warn",
-          message: `${base} ${t("settings.sections.githubBackup.skippedOversize", {
+        notices.push(
+          t("settings.sections.githubBackup.skippedOversize", {
             defaultValue: "Skipped {{count}} oversize file(s): {{list}}",
             count: r.skippedOversize.length,
             list: r.skippedOversize.join(", "),
-          })}`,
-        })
+          }),
+        )
+      }
+      if (r.failedUploads.length > 0) {
+        notices.push(
+          t("settings.sections.githubBackup.failedUploads", {
+            defaultValue: "Skipped {{count}} file(s) that couldn't be uploaded: {{list}}",
+            count: r.failedUploads.length,
+            list: r.failedUploads.join(", "),
+          }),
+        )
+      }
+      if (notices.length > 0) {
+        setResult({ kind: "warn", message: `${base} ${notices.join(" ")}` })
       } else {
         setResult({ kind: "ok", message: base })
       }

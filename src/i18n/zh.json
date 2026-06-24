@@ -811,6 +811,7 @@
         "backupNow": "立即备份",
         "backupOk": "已备份 {{count}} 个文件。",
         "skippedOversize": "已跳过 {{count}} 个超大文件：{{list}}",
+        "failedUploads": "已跳过 {{count}} 个无法上传的文件：{{list}}",
         "uploadProgress": "上传中 {{current}}/{{total}}：{{file}}",
         "pullNow": "立即拉取",
         "pullOk": "已拉取：{{changed}} 个改动，{{deleted}} 个删除。",

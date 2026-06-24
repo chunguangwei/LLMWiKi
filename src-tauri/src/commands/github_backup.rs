@@ -48,6 +48,11 @@ const USER_AGENT: &str = "LLMWiki";
 /// belong in a wiki backup anyway.
 const DEFAULT_MAX_BYTES: u64 = 50 * 1024 * 1024;
 
+/// Max tree entries per create-tree request. We build the tree in batches
+/// (chaining `base_tree`) so a backup with thousands of changed files never
+/// posts one giant tree that GitHub times out on (HTTP 422 "input too large").
+const TREE_BATCH: usize = 200;
+
 /// HTTP request timeout. Blob up/downloads can be a few MB each, so this is
 /// generous relative to the search client's 8s.
 const HTTP_TIMEOUT_SECS: u64 = 120;
@@ -674,13 +679,28 @@ pub struct TreeEntryInput {
     pub mode: String,
     #[serde(rename = "type")]
     pub kind: String,
-    pub sha: String,
+    /// Blob sha for an add/update, or `None` (serialized as JSON `null`) to
+    /// DELETE the path when posting against a `base_tree`.
+    pub sha: Option<String>,
 }
 
 /// POST .../git/trees → a new tree sha. We always build the FULL tree from
 /// scratch (not base_tree deltas) so locally-deleted paths drop out cleanly.
-pub async fn create_tree(token: &str, owner: &str, repo: &str, entries: &[TreeEntryInput]) -> Result<String, String> {
-    let body = serde_json::json!({ "tree": entries });
+pub async fn create_tree(
+    token: &str,
+    owner: &str,
+    repo: &str,
+    entries: &[TreeEntryInput],
+    base_tree: Option<&str>,
+) -> Result<String, String> {
+    // With `base_tree`, GitHub layers `entries` ON TOP of an existing tree:
+    // unchanged paths are inherited (not re-sent) and `sha: null` entries
+    // delete paths. This keeps each request small — sending the full tree at
+    // once times out on large repos (HTTP 422 "input too large").
+    let body = match base_tree {
+        Some(bt) => serde_json::json!({ "tree": entries, "base_tree": bt }),
+        None => serde_json::json!({ "tree": entries }),
+    };
     let client = http_client()?;
     let resp = send_with_retry(
         || auth(client.post(format!("{API_BASE}/repos/{owner}/{repo}/git/trees")), token).json(&body),
@@ -846,7 +866,11 @@ fn file_mtime_epoch(path: &Path) -> i64 {
 pub struct BackupResult {
     pub new_sha: String,
     pub pushed_files: Vec<String>,
+    /// files skipped up-front for exceeding the per-file size cap
     pub skipped_oversize: Vec<String>,
+    /// files skipped because they couldn't be read or uploaded (even after
+    /// retries) — the backup proceeds with the rest instead of aborting
+    pub failed_uploads: Vec<String>,
     /// whether a pull-merge ran before pushing (remote had moved on)
     pub pulled_first: bool,
 }
@@ -905,20 +929,26 @@ pub async fn github_backup_now(
         }
     }
 
-    // Remote tree (path → blob sha) so we can skip unchanged blobs.
-    let remote_map = match &remote_sha {
+    // Remote tree (path → blob sha) so we can skip unchanged blobs, plus the
+    // remote tree sha to use as the `base_tree` for incremental tree building.
+    let (remote_map, remote_tree_sha) = match &remote_sha {
         Some(sha) => {
             let commit = get_commit(&token, &owner, &repo, sha).await?;
             let tree = get_tree_recursive(&token, &owner, &repo, &commit.tree_sha).await?;
-            remote_tree_map(&tree)
+            (remote_tree_map(&tree), Some(commit.tree_sha))
         }
-        None => BTreeMap::new(),
+        None => (BTreeMap::new(), None),
     };
 
     let (files, skipped_oversize) = enumerate_files(&dir, include_raw_sources, DEFAULT_MAX_BYTES)?;
+    let local_paths: std::collections::BTreeSet<String> =
+        files.iter().map(|(rel, _, _)| rel.clone()).collect();
 
-    let mut entries: Vec<TreeEntryInput> = Vec::with_capacity(files.len());
+    // Only NEW/CHANGED files become tree entries; unchanged files are inherited
+    // from `base_tree` and never re-sent.
+    let mut entries: Vec<TreeEntryInput> = Vec::new();
     let mut pushed_files = Vec::new();
+    let mut failed_uploads = Vec::new();
 
     // Total in-scope file count drives the UI progress denominator. Best-effort
     // emit: a dropped event must never fail the backup, hence the `let _ =`.
@@ -931,54 +961,95 @@ pub async fn github_backup_now(
             "github-backup-progress",
             serde_json::json!({ "phase": "upload", "current": i + 1, "total": total, "file": rel }),
         );
-        let content = std::fs::read(abs).map_err(|e| format!("read {rel}: {e}"))?;
-        let local_sha = git_blob_sha1(&content);
-        let blob_sha = match remote_map.get(rel) {
-            // unchanged: reuse the existing remote blob sha, no upload
-            Some(remote) if *remote == local_sha => remote.clone(),
-            // new or changed: upload, then reference the fresh blob. Wrap the
-            // error with the path here (the helper already labels itself with
-            // attempt count) so a failure names the offending file.
-            _ => {
-                let b64 = B64.encode(&content);
-                let sha = create_blob(&token, &owner, &repo, &b64)
-                    .await
-                    .map_err(|e| format!("upload {rel}: {e}"))?;
-                pushed_files.push(rel.clone());
-                sha
+
+        // A single unreadable file must not abort the whole backup — skip it
+        // and record it so the UI can report what was left out.
+        let content = match std::fs::read(abs) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[github-backup] skip (read failed) {rel}: {e}");
+                failed_uploads.push(rel.clone());
+                continue;
             }
         };
-        entries.push(TreeEntryInput {
-            path: rel.clone(),
-            mode: "100644".to_string(),
-            kind: "blob".to_string(),
-            sha: blob_sha,
-        });
+        let local_sha = git_blob_sha1(&content);
+
+        // Unchanged vs the remote tree → inherited via base_tree, send nothing.
+        if matches!(remote_map.get(rel), Some(remote) if *remote == local_sha) {
+            continue;
+        }
+
+        // New or changed → upload the blob. If the upload still fails after the
+        // built-in retries (e.g. a large source file over a flaky link), SKIP
+        // it and keep going rather than failing the entire backup.
+        let b64 = B64.encode(&content);
+        match create_blob(&token, &owner, &repo, &b64).await {
+            Ok(sha) => {
+                entries.push(TreeEntryInput {
+                    path: rel.clone(),
+                    mode: "100644".to_string(),
+                    kind: "blob".to_string(),
+                    sha: Some(sha),
+                });
+                pushed_files.push(rel.clone());
+            }
+            Err(e) => {
+                eprintln!("[github-backup] skip (upload failed) {rel}: {e}");
+                failed_uploads.push(rel.clone());
+            }
+        }
     }
 
-    // Nothing local? Avoid creating an empty tree that would wipe the repo —
-    // only commit when there is at least one file in scope.
+    // Deletions: paths in the remote tree that are IN SCOPE but no longer exist
+    // locally get removed (sha: null + base_tree). Out-of-scope remote paths
+    // (e.g. raw/ when "include raw sources" is off) are left untouched so
+    // turning the toggle off never wipes already-backed-up sources.
+    for remote_path in remote_map.keys() {
+        if is_excluded(remote_path, include_raw_sources) {
+            continue;
+        }
+        if !local_paths.contains(remote_path) {
+            entries.push(TreeEntryInput {
+                path: remote_path.clone(),
+                mode: "100644".to_string(),
+                kind: "blob".to_string(),
+                sha: None,
+            });
+        }
+    }
+
+    // No adds/changes and no deletions → nothing to commit.
     if entries.is_empty() {
         let new_sha = remote_sha.unwrap_or_default();
-        return Ok(BackupResult { new_sha, pushed_files, skipped_oversize, pulled_first });
+        let _ = app.emit("github-backup-progress", serde_json::json!({ "phase": "done" }));
+        return Ok(BackupResult { new_sha, pushed_files, skipped_oversize, failed_uploads, pulled_first });
     }
 
     // Blobs are uploaded; the remaining tree/commit/ref calls are quick. Tell
     // the UI we've moved past the per-file upload phase.
     let _ = app.emit("github-backup-progress", serde_json::json!({ "phase": "commit" }));
 
-    let tree_sha = create_tree(&token, &owner, &repo, &entries).await?;
+    // Build the tree INCREMENTALLY: start from the remote tip's tree and layer
+    // batches of changed/deleted entries on top. Each create_tree request only
+    // carries up to TREE_BATCH entries, so we never trip GitHub's "input too
+    // large" timeout even when thousands of files changed.
+    let mut running_tree = remote_tree_sha;
+    for chunk in entries.chunks(TREE_BATCH) {
+        running_tree = Some(create_tree(&token, &owner, &repo, chunk, running_tree.as_deref()).await?);
+    }
+    let tree_sha = running_tree.ok_or("internal: empty tree after batching")?;
+
     let parents: Vec<String> = remote_sha.iter().cloned().collect();
     let msg = format!("LLMWiki backup {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
     let new_commit = create_commit(&token, &owner, &repo, &msg, &tree_sha, &parents).await?;
-    // Force only when we have no parent overlap concern; since parent is the
-    // current remote tip (possibly after merge), a non-force update is a
-    // fast-forward. Use force=false to refuse if the branch raced ahead.
+    // Parent is the current remote tip (possibly after a pull-merge), so a
+    // non-force update is a clean fast-forward; force=false refuses if the
+    // branch raced ahead.
     update_ref(&token, &owner, &repo, &branch, &new_commit, false).await?;
 
     let _ = app.emit("github-backup-progress", serde_json::json!({ "phase": "done" }));
 
-    Ok(BackupResult { new_sha: new_commit, pushed_files, skipped_oversize, pulled_first })
+    Ok(BackupResult { new_sha: new_commit, pushed_files, skipped_oversize, failed_uploads, pulled_first })
 }
 
 /// Internal pull-merge used by both the public pull command and the

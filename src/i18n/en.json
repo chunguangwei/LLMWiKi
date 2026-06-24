@@ -811,6 +811,7 @@
         "backupNow": "Backup now",
         "backupOk": "Backed up {{count}} file(s).",
         "skippedOversize": "Skipped {{count}} oversize file(s): {{list}}",
+        "failedUploads": "Skipped {{count}} file(s) that couldn't be uploaded: {{list}}",
         "uploadProgress": "Uploading {{current}}/{{total}}: {{file}}",
         "pullNow": "Pull now",
         "pullOk": "Pulled: {{changed}} changed, {{deleted}} deleted.",
