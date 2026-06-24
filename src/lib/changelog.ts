@@ -26,6 +26,24 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.0",
+    date: "2026-06-24",
+    highlights: {
+      en: [
+        "Chat is now agent-powered: instead of a single fixed retrieval, the assistant plans and routes across tools (wiki search, knowledge graph, and optionally web / AnyTXT), showing a live activity feed of what it's doing. Toggle web search per message right in the chat box. (Replaces the old experimental chat agent.)",
+        "New provider: Atlas Cloud (api.atlascloud.ai) — an OpenAI-compatible gateway to many model families — available as a built-in preset.",
+        "Intel macOS builds are back: a native x86_64 .dmg with auto-update, for Macs without Apple Silicon.",
+        "GitHub Backup: when nothing changed, it now says \"already up to date\" instead of \"backed up 0 files\".",
+      ],
+      zh: [
+        "聊天升级为 Agent 模式:不再是单一固定检索,助手会自行规划并在多种工具间路由(Wiki 搜索、知识图谱,以及可选的联网 / AnyTXT),并实时显示它在做什么。可在输入框为每条消息单独开关联网搜索。(替换了原先的实验性聊天 agent。)",
+        "新增 provider:Atlas Cloud(api.atlascloud.ai)——OpenAI 兼容、聚合多家模型的网关,已内置为预设。",
+        "恢复 Intel macOS 构建:为非 Apple Silicon 的 Mac 提供原生 x86_64 .dmg 并支持自动更新。",
+        "GitHub 备份:无改动时提示「已经是最新知识，无需更新」,不再显示「备份了 0 个文件」。",
+      ],
+    },
+  },
+  {
     version: "0.4.48",
     date: "2026-06-24",
     highlights: {
