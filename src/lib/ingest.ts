@@ -63,6 +63,10 @@ function resolveCaptionConfig(
 import { buildLanguageDirective } from "@/lib/output-language"
 import { detectLanguage } from "@/lib/detect-language"
 import { sameScriptFamily } from "@/lib/language-metadata"
+import {
+  loadProjectWikiSchemaRouting,
+  validateWikiPageRouting,
+} from "@/lib/wiki-schema"
 
 // Legacy export kept for backward compatibility with existing diagnostic
 // tests. The live pipeline goes through parseFileBlocks() below, which
@@ -1316,6 +1320,13 @@ async function writeFileBlocks(
 
   const targetLang = useWikiStore.getState().outputLanguage
 
+  // Schema-routing guard (upstream d969cd4): if the project's schema.md has a
+  // parseable Page Types table, drop any generated page whose frontmatter
+  // `type` disagrees with the directory it landed in. This is a consistency
+  // check ONLY — it never reclassifies; the fork's 34-type "dominant type →
+  // folder" logic is unchanged. Inert when schema.md has no table.
+  const projectSchemaRouting = await loadProjectWikiSchemaRouting(projectPath)
+
   for (const { path: rawRelativePath, content: rawContent } of blocks) {
     let relativePath = rawRelativePath
     if (sourceSummaryPath && relativePath.startsWith("wiki/sources/")) {
@@ -1366,6 +1377,23 @@ async function writeFileBlocks(
     // that language if the page title is CJK but the model emitted an English
     // slug. No-op for logs/listings/source summaries (guarded inside).
     relativePath = rewriteIngestPathFromTitleForTargetLanguage(relativePath, content, targetLang)
+
+    // Drop pages whose frontmatter `type` contradicts the schema's directory
+    // mapping (validated against the FINAL path, post CJK-rename). Skip logs +
+    // listings (index.md etc. carry no routable `type`).
+    if (
+      projectSchemaRouting &&
+      !isLogPath(relativePath) &&
+      !isListingPath(relativePath)
+    ) {
+      const routingIssue = validateWikiPageRouting(relativePath, content, projectSchemaRouting)
+      if (routingIssue) {
+        const msg = `Dropped "${relativePath}" — ${routingIssue.message}`
+        console.warn(`[ingest] ${msg}`)
+        warnings.push(msg)
+        continue
+      }
+    }
 
     const fullPath = `${projectPath}/${relativePath}`
     try {
@@ -2536,6 +2564,7 @@ export function buildGenerationPrompt(
     "That schema's Page Types table is the AUTHORITATIVE allowlist of directories.",
     "Do NOT invent new top-level directories. Do NOT default to entities/concepts unless",
     "the schema lists them. Match the document's nature to the schema's most appropriate type.",
+    "Every generated page's frontmatter `type` MUST match the schema directory used in its FILE path (a page in `wiki/concepts/` must declare `type: concept`).",
     "",
     "Required outputs:",
     "",

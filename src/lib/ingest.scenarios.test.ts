@@ -206,6 +206,88 @@ describe("ingest scenarios (fixture-driven)", () => {
     },
   )
 
+  // Schema-routing guard (ported from upstream d969cd4): a generated page whose
+  // frontmatter `type` disagrees with the schema's directory mapping is dropped.
+  it("drops generated pages whose frontmatter type disagrees with schema routing", async () => {
+    ctx = { tmp: await createTempProject("ingest-schema-routing") }
+    const projectPath = ctx.tmp.path
+
+    await writeFileRaw(
+      `${projectPath}/schema.md`,
+      [
+        "# Wiki Schema",
+        "",
+        "## Page Types",
+        "",
+        "| Type | Directory | Purpose |",
+        "| ---- | --------- | ------- |",
+        "| source | wiki/sources/ | Source summaries |",
+        "| concept | wiki/concepts/ | Ideas |",
+      ].join("\n"),
+    )
+    await writeFileRaw(`${projectPath}/purpose.md`, "")
+    await writeFileRaw(`${projectPath}/wiki/index.md`, "# Index\n")
+    await writeFileRaw(`${projectPath}/wiki/overview.md`, "# Overview\n")
+    await writeFileRaw(`${projectPath}/raw/sources/schema-routing.md`, "source\n")
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: projectPath,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+    })
+    useWikiStore.getState().setLlmConfig({
+      provider: "openai",
+      apiKey: "test-key",
+      model: "gpt-4",
+      ollamaUrl: "",
+      customEndpoint: "",
+      maxContextSize: 128000,
+    })
+
+    pendingResponses = [
+      "analysis",
+      [
+        "---FILE: wiki/sources/schema-routing.md---",
+        "---",
+        "type: source",
+        "title: Source: schema-routing.md",
+        "sources: [schema-routing.md]",
+        "tags: []",
+        "related: []",
+        "---",
+        "",
+        "# Source: schema-routing.md",
+        "---END FILE---",
+        "",
+        // A page declaring type:source but written under wiki/concepts/ — must be dropped.
+        "---FILE: wiki/concepts/wrong-place.md---",
+        "---",
+        "type: source",
+        "title: Wrong Place",
+        "sources: [schema-routing.md]",
+        "tags: []",
+        "related: []",
+        "---",
+        "",
+        "# Wrong Place",
+        "---END FILE---",
+      ].join("\n"),
+    ]
+
+    const written = await autoIngest(
+      projectPath,
+      `${projectPath}/raw/sources/schema-routing.md`,
+      useWikiStore.getState().llmConfig,
+    )
+
+    expect(written).not.toContain("wiki/concepts/wrong-place.md")
+    expect(await fileExists(`${projectPath}/wiki/concepts/wrong-place.md`)).toBe(false)
+  })
+
   it("keeps source summaries distinct for same basenames in different source folders", async () => {
     ctx = { tmp: await createTempProject("ingest-duplicate-source-basenames") }
     const projectPath = ctx.tmp.path
