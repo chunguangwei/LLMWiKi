@@ -15,18 +15,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS Apple Silicon only. We previously tried
-          # `--target universal-apple-darwin` but pdfium ships in this
-          # repo as an arm64-only `libpdfium.dylib`, so the x86_64
-          # leg of the universal build fails the link step with
-          # "Undefined symbols for architecture x86_64". Restoring
-          # universal needs a fat pdfium dylib (lipo'd from bblanchon
-          # /pdfium-binaries mac-x64 + the existing arm64 .dylib)
-          # committed to src-tauri/pdfium/. Until then ship aarch64
-          # only — Intel Mac support is a known gap, tracked separately.
+          # macOS Apple Silicon (arm64) — native build on the default
+          # (Apple Silicon) runner; uses the committed arm64 libpdfium.dylib.
           - platform: macos-latest
             args: '--target aarch64-apple-darwin'
             rust_target: aarch64-apple-darwin
+          # macOS Intel (x86_64). macos-13 is GitHub's last x86_64 runner
+          # (macos-14+ are Apple Silicon), so this is a NATIVE build — no
+          # cross-compile. We now ship a committed x86_64 libpdfium
+          # (libpdfium-x86_64.dylib), swapped into place below, so the Intel
+          # .dmg is restored (it had been dropped while pdfium was arm64-only).
+          - platform: macos-13
+            args: '--target x86_64-apple-darwin'
+            rust_target: x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: ''
             rust_target: ''
@@ -51,7 +52,7 @@ jobs:
           targets: ${{ matrix.rust_target }}
 
       - name: Install protoc (macOS)
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos-')
         run: brew install protobuf
 
       - name: Install dependencies (Ubuntu)
@@ -67,18 +68,24 @@ jobs:
 
       # The repo ships pre-downloaded PDFium binaries under
       # src-tauri/pdfium/ for every supported architecture
-      # (libpdfium.so = x86_64, libpdfium-arm64.so = aarch64,
-      # libpdfium.dylib = macOS, pdfium.dll = Windows). On the
-      # ARM Linux runner we swap libpdfium.so to the aarch64 build
-      # before tauri-action runs cargo. We do NOT pull from
-      # bblanchon/pdfium-binaries during CI — that download has
-      # historically failed often enough that committing the
+      # (libpdfium.so = Linux x86_64, libpdfium-arm64.so = Linux aarch64,
+      # libpdfium.dylib = macOS arm64, libpdfium-x86_64.dylib = macOS Intel,
+      # pdfium.dll = Windows). For arches whose bundled filename must stay
+      # `libpdfium.*`, swap the matching binary into place before cargo runs.
+      # We do NOT pull from bblanchon/pdfium-binaries during CI — that
+      # download has historically failed often enough that committing the
       # binaries is the maintenance-friendly path.
       - name: Use ARM64 pdfium binary (Ubuntu ARM only)
         if: matrix.platform == 'ubuntu-22.04-arm'
         run: |
           cp src-tauri/pdfium/libpdfium-arm64.so src-tauri/pdfium/libpdfium.so
           file src-tauri/pdfium/libpdfium.so
+
+      - name: Use x86_64 pdfium binary (macOS Intel only)
+        if: matrix.rust_target == 'x86_64-apple-darwin'
+        run: |
+          cp src-tauri/pdfium/libpdfium-x86_64.dylib src-tauri/pdfium/libpdfium.dylib
+          file src-tauri/pdfium/libpdfium.dylib
 
       - name: Install protoc (Windows)
         if: matrix.platform == 'windows-latest'
