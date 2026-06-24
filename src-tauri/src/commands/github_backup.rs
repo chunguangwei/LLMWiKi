@@ -944,15 +944,23 @@ pub async fn github_backup_now(
     let local_paths: std::collections::BTreeSet<String> =
         files.iter().map(|(rel, _, _)| rel.clone()).collect();
 
-    // Only NEW/CHANGED files become tree entries; unchanged files are inherited
-    // from `base_tree` and never re-sent.
-    let mut entries: Vec<TreeEntryInput> = Vec::new();
     let mut pushed_files = Vec::new();
     let mut failed_uploads = Vec::new();
 
     // Total in-scope file count drives the UI progress denominator. Best-effort
     // emit: a dropped event must never fail the backup, hence the `let _ =`.
     let total = files.len();
+
+    // We commit in BATCHES as we go (every TREE_BATCH uploaded files) instead of
+    // one big commit at the very end. Each committed batch is durably saved on
+    // GitHub, so if a large backup is interrupted (network drop, app close, a
+    // later file failing) the NEXT run sees those files already in the remote
+    // tree and skips them — backups RESUME instead of restarting from scratch.
+    // `tip_*` is the commit/tree each new batch builds on; it advances per batch.
+    let mut tip_commit = remote_sha.clone();
+    let mut tip_tree = remote_tree_sha;
+    // Entries pending in the current (not-yet-committed) batch.
+    let mut batch: Vec<TreeEntryInput> = Vec::new();
 
     for (i, (rel, abs, _size)) in files.iter().enumerate() {
         // Tell the UI which file we're about to process (1-based) so the
@@ -985,7 +993,7 @@ pub async fn github_backup_now(
         let b64 = B64.encode(&content);
         match create_blob(&token, &owner, &repo, &b64).await {
             Ok(sha) => {
-                entries.push(TreeEntryInput {
+                batch.push(TreeEntryInput {
                     path: rel.clone(),
                     mode: "100644".to_string(),
                     kind: "blob".to_string(),
@@ -998,18 +1006,28 @@ pub async fn github_backup_now(
                 failed_uploads.push(rel.clone());
             }
         }
+
+        // Flush a full batch into its own commit so the work is durable.
+        if batch.len() >= TREE_BATCH {
+            let _ = app.emit("github-backup-progress", serde_json::json!({ "phase": "commit" }));
+            let (c, t) = commit_batch(&token, &owner, &repo, &branch, &batch, tip_tree.as_deref(), tip_commit.as_deref()).await?;
+            tip_commit = Some(c);
+            tip_tree = Some(t);
+            batch.clear();
+        }
     }
 
-    // Deletions: paths in the remote tree that are IN SCOPE but no longer exist
-    // locally get removed (sha: null + base_tree). Out-of-scope remote paths
-    // (e.g. raw/ when "include raw sources" is off) are left untouched so
-    // turning the toggle off never wipes already-backed-up sources.
+    // Deletions go LAST (so an interrupted run still keeps the additions it
+    // already committed): in-scope remote paths no longer present locally are
+    // removed (sha: null + base_tree). Out-of-scope remote paths (e.g. raw/ when
+    // "include raw sources" is off) are left untouched so turning the toggle off
+    // never wipes already-backed-up sources.
     for remote_path in remote_map.keys() {
         if is_excluded(remote_path, include_raw_sources) {
             continue;
         }
         if !local_paths.contains(remote_path) {
-            entries.push(TreeEntryInput {
+            batch.push(TreeEntryInput {
                 path: remote_path.clone(),
                 mode: "100644".to_string(),
                 kind: "blob".to_string(),
@@ -1018,38 +1036,43 @@ pub async fn github_backup_now(
         }
     }
 
-    // No adds/changes and no deletions → nothing to commit.
-    if entries.is_empty() {
-        let new_sha = remote_sha.unwrap_or_default();
-        let _ = app.emit("github-backup-progress", serde_json::json!({ "phase": "done" }));
-        return Ok(BackupResult { new_sha, pushed_files, skipped_oversize, failed_uploads, pulled_first });
+    // Final flush: commit whatever remains (leftover adds + all deletions).
+    if !batch.is_empty() {
+        let _ = app.emit("github-backup-progress", serde_json::json!({ "phase": "commit" }));
+        let (c, _t) = commit_batch(&token, &owner, &repo, &branch, &batch, tip_tree.as_deref(), tip_commit.as_deref()).await?;
+        tip_commit = Some(c);
     }
-
-    // Blobs are uploaded; the remaining tree/commit/ref calls are quick. Tell
-    // the UI we've moved past the per-file upload phase.
-    let _ = app.emit("github-backup-progress", serde_json::json!({ "phase": "commit" }));
-
-    // Build the tree INCREMENTALLY: start from the remote tip's tree and layer
-    // batches of changed/deleted entries on top. Each create_tree request only
-    // carries up to TREE_BATCH entries, so we never trip GitHub's "input too
-    // large" timeout even when thousands of files changed.
-    let mut running_tree = remote_tree_sha;
-    for chunk in entries.chunks(TREE_BATCH) {
-        running_tree = Some(create_tree(&token, &owner, &repo, chunk, running_tree.as_deref()).await?);
-    }
-    let tree_sha = running_tree.ok_or("internal: empty tree after batching")?;
-
-    let parents: Vec<String> = remote_sha.iter().cloned().collect();
-    let msg = format!("LLMWiki backup {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
-    let new_commit = create_commit(&token, &owner, &repo, &msg, &tree_sha, &parents).await?;
-    // Parent is the current remote tip (possibly after a pull-merge), so a
-    // non-force update is a clean fast-forward; force=false refuses if the
-    // branch raced ahead.
-    update_ref(&token, &owner, &repo, &branch, &new_commit, false).await?;
 
     let _ = app.emit("github-backup-progress", serde_json::json!({ "phase": "done" }));
 
-    Ok(BackupResult { new_sha: new_commit, pushed_files, skipped_oversize, failed_uploads, pulled_first })
+    // `tip_commit` is the latest commit (unchanged remote tip if nothing was
+    // committed — i.e. nothing changed). Empty only for a brand-new repo with
+    // no commits and no local files, which can't happen here.
+    let new_sha = tip_commit.unwrap_or_default();
+    Ok(BackupResult { new_sha, pushed_files, skipped_oversize, failed_uploads, pulled_first })
+}
+
+/// Commit one batch of tree entries on top of `tip` and fast-forward the
+/// branch ref. Returns the new (commit_sha, tree_sha) so the caller can chain
+/// the next batch. Each call is a durable checkpoint — that's what makes a big
+/// backup resumable across interruptions.
+async fn commit_batch(
+    token: &str,
+    owner: &str,
+    repo: &str,
+    branch: &str,
+    entries: &[TreeEntryInput],
+    base_tree: Option<&str>,
+    parent: Option<&str>,
+) -> Result<(String, String), String> {
+    let tree_sha = create_tree(token, owner, repo, entries, base_tree).await?;
+    let parents: Vec<String> = parent.map(|s| s.to_string()).into_iter().collect();
+    let msg = format!("LLMWiki backup {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
+    let commit = create_commit(token, owner, repo, &msg, &tree_sha, &parents).await?;
+    // Parent is the current branch tip, so force=false is a clean fast-forward
+    // (and refuses if another device raced the branch ahead between batches).
+    update_ref(token, owner, repo, branch, &commit, false).await?;
+    Ok((commit, tree_sha))
 }
 
 /// Internal pull-merge used by both the public pull command and the
