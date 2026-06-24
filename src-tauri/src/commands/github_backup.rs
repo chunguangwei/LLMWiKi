@@ -30,6 +30,7 @@ use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
+use tauri::Emitter;
 use walkdir::WalkDir;
 
 const KEYRING_SERVICE: &str = "com.llmwiki.app";
@@ -358,6 +359,63 @@ fn auth(req: reqwest::RequestBuilder, token: &str) -> reqwest::RequestBuilder {
         .header("User-Agent", USER_AGENT)
 }
 
+/// Exponential backoff (ms) for retry attempt `n` (1-based): 500, 1000, 2000…
+/// capped at 8000ms so a flaky link can't stall a single call for minutes.
+fn backoff_ms(attempt: u32) -> u64 {
+    (500u64 * 2u64.pow(attempt - 1)).min(8000)
+}
+
+/// Send a request with bounded retries, so a single stalled/dropped connection
+/// on a slow link doesn't abort the whole backup.
+///
+/// Why a closure instead of a prebuilt `RequestBuilder`: reqwest's builder is
+/// consumed by `.send()` (it isn't `Clone` once a JSON body is attached in the
+/// general case), so each attempt must rebuild the request. `make` is `Fn` and
+/// captures the (cheap-to-clone) `Client`, the URL, and any borrowed body, so
+/// re-invoking it costs nothing meaningful.
+///
+/// Retry policy:
+///   - Transport errors (timeout / connect / request-build / body-stream) are
+///     transient on a bad network → retry with backoff.
+///   - HTTP 429 (rate limit) and 5xx (server side) → retry with backoff.
+///   - Any other response (2xx, 4xx like 404/422) is returned as-is for the
+///     caller's existing status handling — we must NOT swallow those, the
+///     404→None and 422→"already exists" branches depend on seeing them.
+/// After `MAX_ATTEMPTS` we give up and surface a labelled error naming how many
+/// attempts were made.
+async fn send_with_retry<F>(make: F, label: &str) -> Result<reqwest::Response, String>
+where
+    F: Fn() -> reqwest::RequestBuilder,
+{
+    const MAX_ATTEMPTS: u32 = 4;
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match make().send().await {
+            Ok(resp) => {
+                let s = resp.status();
+                if (s == reqwest::StatusCode::TOO_MANY_REQUESTS || s.is_server_error())
+                    && attempt < MAX_ATTEMPTS
+                {
+                    tokio::time::sleep(Duration::from_millis(backoff_ms(attempt))).await;
+                    continue;
+                }
+                return Ok(resp);
+            }
+            Err(e) => {
+                // Transport-level failure: the kinds that a slow/unstable link
+                // produces and that a retry can plausibly fix.
+                let transient = e.is_timeout() || e.is_connect() || e.is_request() || e.is_body();
+                if transient && attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(backoff_ms(attempt))).await;
+                    continue;
+                }
+                return Err(format!("{label} failed after {attempt} attempt(s): {e}"));
+            }
+        }
+    }
+}
+
 /// Read a non-2xx response into a useful error string (status + truncated
 /// body) so failures surface a real GitHub message, not just "request failed".
 async fn err_body(resp: reqwest::Response) -> String {
@@ -378,10 +436,12 @@ pub struct GithubUser {
 
 /// GET /user — validates a token and returns the authenticated identity.
 pub async fn validate_token(token: &str) -> Result<GithubUser, String> {
-    let resp = auth(http_client()?.get(format!("{API_BASE}/user")), token)
-        .send()
-        .await
-        .map_err(|e| format!("validate_token request failed: {e}"))?;
+    let client = http_client()?;
+    let resp = send_with_retry(
+        || auth(client.get(format!("{API_BASE}/user")), token),
+        "validate_token",
+    )
+    .await?;
     if !resp.status().is_success() {
         return Err(err_body(resp).await);
     }
@@ -439,10 +499,11 @@ pub fn sanitize_repo_name(name: &str) -> String {
 /// `repo` must already be a sanitized slug (see `sanitize_repo_name`).
 pub async fn ensure_repo(token: &str, owner: &str, repo: &str, private: bool) -> Result<bool, String> {
     let client = http_client()?;
-    let resp = auth(client.get(format!("{API_BASE}/repos/{owner}/{repo}")), token)
-        .send()
-        .await
-        .map_err(|e| format!("ensure_repo lookup failed: {e}"))?;
+    let resp = send_with_retry(
+        || auth(client.get(format!("{API_BASE}/repos/{owner}/{repo}")), token),
+        "ensure_repo lookup",
+    )
+    .await?;
     if resp.status().is_success() {
         return Ok(false);
     }
@@ -452,11 +513,11 @@ pub async fn ensure_repo(token: &str, owner: &str, repo: &str, private: bool) ->
     // 404 → create under the authenticated user. auto_init gives us an
     // initial commit + default branch so subsequent ref reads succeed.
     let body = serde_json::json!({ "name": repo, "private": private, "auto_init": true });
-    let resp = auth(client.post(format!("{API_BASE}/user/repos")), token)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("create repo failed: {e}"))?;
+    let resp = send_with_retry(
+        || auth(client.post(format!("{API_BASE}/user/repos")), token).json(&body),
+        "create repo",
+    )
+    .await?;
     if resp.status().is_success() {
         return Ok(true);
     }
@@ -475,13 +536,12 @@ pub async fn ensure_repo(token: &str, owner: &str, repo: &str, private: bool) ->
 /// GET .../git/ref/heads/{branch} → the commit sha the branch points at, or
 /// None when the branch doesn't exist yet (404).
 pub async fn get_ref_sha(token: &str, owner: &str, repo: &str, branch: &str) -> Result<Option<String>, String> {
-    let resp = auth(
-        http_client()?.get(format!("{API_BASE}/repos/{owner}/{repo}/git/ref/heads/{branch}")),
-        token,
+    let client = http_client()?;
+    let resp = send_with_retry(
+        || auth(client.get(format!("{API_BASE}/repos/{owner}/{repo}/git/ref/heads/{branch}")), token),
+        "get_ref_sha",
     )
-    .send()
-    .await
-    .map_err(|e| format!("get_ref_sha failed: {e}"))?;
+    .await?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
@@ -501,13 +561,12 @@ pub struct CommitInfo {
 
 /// GET .../git/commits/{sha} → the commit's tree sha + committer date.
 pub async fn get_commit(token: &str, owner: &str, repo: &str, sha: &str) -> Result<CommitInfo, String> {
-    let resp = auth(
-        http_client()?.get(format!("{API_BASE}/repos/{owner}/{repo}/git/commits/{sha}")),
-        token,
+    let client = http_client()?;
+    let resp = send_with_retry(
+        || auth(client.get(format!("{API_BASE}/repos/{owner}/{repo}/git/commits/{sha}")), token),
+        "get_commit",
     )
-    .send()
-    .await
-    .map_err(|e| format!("get_commit failed: {e}"))?;
+    .await?;
     if !resp.status().is_success() {
         return Err(err_body(resp).await);
     }
@@ -543,13 +602,12 @@ pub struct TreeEntryRemote {
 /// Note GitHub truncates very large trees (`truncated:true`); we surface that
 /// as an error rather than silently syncing a partial snapshot.
 pub async fn get_tree_recursive(token: &str, owner: &str, repo: &str, tree_sha: &str) -> Result<Vec<TreeEntryRemote>, String> {
-    let resp = auth(
-        http_client()?.get(format!("{API_BASE}/repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1")),
-        token,
+    let client = http_client()?;
+    let resp = send_with_retry(
+        || auth(client.get(format!("{API_BASE}/repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1")), token),
+        "get_tree",
     )
-    .send()
-    .await
-    .map_err(|e| format!("get_tree failed: {e}"))?;
+    .await?;
     if !resp.status().is_success() {
         return Err(err_body(resp).await);
     }
@@ -578,14 +636,12 @@ pub async fn get_tree_recursive(token: &str, owner: &str, repo: &str, tree_sha: 
 /// POST .../git/blobs with base64 content → the new blob sha.
 pub async fn create_blob(token: &str, owner: &str, repo: &str, base64_content: &str) -> Result<String, String> {
     let body = serde_json::json!({ "content": base64_content, "encoding": "base64" });
-    let resp = auth(
-        http_client()?.post(format!("{API_BASE}/repos/{owner}/{repo}/git/blobs")),
-        token,
+    let client = http_client()?;
+    let resp = send_with_retry(
+        || auth(client.post(format!("{API_BASE}/repos/{owner}/{repo}/git/blobs")), token).json(&body),
+        "create_blob",
     )
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| format!("create_blob failed: {e}"))?;
+    .await?;
     if !resp.status().is_success() {
         return Err(err_body(resp).await);
     }
@@ -595,13 +651,12 @@ pub async fn create_blob(token: &str, owner: &str, repo: &str, base64_content: &
 
 /// GET .../git/blobs/{sha} → the decoded raw bytes.
 pub async fn get_blob(token: &str, owner: &str, repo: &str, sha: &str) -> Result<Vec<u8>, String> {
-    let resp = auth(
-        http_client()?.get(format!("{API_BASE}/repos/{owner}/{repo}/git/blobs/{sha}")),
-        token,
+    let client = http_client()?;
+    let resp = send_with_retry(
+        || auth(client.get(format!("{API_BASE}/repos/{owner}/{repo}/git/blobs/{sha}")), token),
+        "get_blob",
     )
-    .send()
-    .await
-    .map_err(|e| format!("get_blob failed: {e}"))?;
+    .await?;
     if !resp.status().is_success() {
         return Err(err_body(resp).await);
     }
@@ -626,14 +681,12 @@ pub struct TreeEntryInput {
 /// scratch (not base_tree deltas) so locally-deleted paths drop out cleanly.
 pub async fn create_tree(token: &str, owner: &str, repo: &str, entries: &[TreeEntryInput]) -> Result<String, String> {
     let body = serde_json::json!({ "tree": entries });
-    let resp = auth(
-        http_client()?.post(format!("{API_BASE}/repos/{owner}/{repo}/git/trees")),
-        token,
+    let client = http_client()?;
+    let resp = send_with_retry(
+        || auth(client.post(format!("{API_BASE}/repos/{owner}/{repo}/git/trees")), token).json(&body),
+        "create_tree",
     )
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| format!("create_tree failed: {e}"))?;
+    .await?;
     if !resp.status().is_success() {
         return Err(err_body(resp).await);
     }
@@ -645,14 +698,12 @@ pub async fn create_tree(token: &str, owner: &str, repo: &str, entries: &[TreeEn
 /// first commit on an empty repo (rare, since auto_init seeds one).
 pub async fn create_commit(token: &str, owner: &str, repo: &str, message: &str, tree_sha: &str, parents: &[String]) -> Result<String, String> {
     let body = serde_json::json!({ "message": message, "tree": tree_sha, "parents": parents });
-    let resp = auth(
-        http_client()?.post(format!("{API_BASE}/repos/{owner}/{repo}/git/commits")),
-        token,
+    let client = http_client()?;
+    let resp = send_with_retry(
+        || auth(client.post(format!("{API_BASE}/repos/{owner}/{repo}/git/commits")), token).json(&body),
+        "create_commit",
     )
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| format!("create_commit failed: {e}"))?;
+    .await?;
     if !resp.status().is_success() {
         return Err(err_body(resp).await);
     }
@@ -672,21 +723,25 @@ pub async fn update_ref(token: &str, owner: &str, repo: &str, branch: &str, sha:
     let exists = get_ref_sha(token, owner, repo, branch).await?.is_some();
     let resp = if exists {
         let body = serde_json::json!({ "sha": sha, "force": force });
-        auth(
-            client.patch(format!("{API_BASE}/repos/{owner}/{repo}/git/refs/heads/{branch}")),
-            token,
+        send_with_retry(
+            || {
+                auth(
+                    client.patch(format!("{API_BASE}/repos/{owner}/{repo}/git/refs/heads/{branch}")),
+                    token,
+                )
+                .json(&body)
+            },
+            "update_ref",
         )
-        .json(&body)
-        .send()
-        .await
+        .await?
     } else {
         let body = serde_json::json!({ "ref": format!("refs/heads/{branch}"), "sha": sha });
-        auth(client.post(format!("{API_BASE}/repos/{owner}/{repo}/git/refs")), token)
-            .json(&body)
-            .send()
-            .await
-    }
-    .map_err(|e| format!("update_ref failed: {e}"))?;
+        send_with_retry(
+            || auth(client.post(format!("{API_BASE}/repos/{owner}/{repo}/git/refs")), token).json(&body),
+            "create_ref",
+        )
+        .await?
+    };
     if !resp.status().is_success() {
         return Err(err_body(resp).await);
     }
@@ -705,15 +760,19 @@ pub struct CommitSummary {
 /// GET .../commits?sha={branch}&per_page=N → recent commit summaries for the
 /// version-history UI.
 pub async fn list_commits(token: &str, owner: &str, repo: &str, branch: &str, per_page: u32) -> Result<Vec<CommitSummary>, String> {
-    let resp = auth(
-        http_client()?.get(format!(
-            "{API_BASE}/repos/{owner}/{repo}/commits?sha={branch}&per_page={per_page}"
-        )),
-        token,
+    let client = http_client()?;
+    let resp = send_with_retry(
+        || {
+            auth(
+                client.get(format!(
+                    "{API_BASE}/repos/{owner}/{repo}/commits?sha={branch}&per_page={per_page}"
+                )),
+                token,
+            )
+        },
+        "list_commits",
     )
-    .send()
-    .await
-    .map_err(|e| format!("list_commits failed: {e}"))?;
+    .await?;
     if !resp.status().is_success() {
         return Err(err_body(resp).await);
     }
@@ -812,6 +871,10 @@ pub struct PullResult {
 ///    commit, and move the ref.
 #[tauri::command]
 pub async fn github_backup_now(
+    // Tauri injects the AppHandle automatically (it is NOT part of the JS
+    // invoke args) — we use it to emit live `github-backup-progress` events so
+    // the UI shows per-file progress instead of a blind spinner.
+    app: tauri::AppHandle,
     project_dir: String,
     owner: String,
     repo: String,
@@ -857,16 +920,30 @@ pub async fn github_backup_now(
     let mut entries: Vec<TreeEntryInput> = Vec::with_capacity(files.len());
     let mut pushed_files = Vec::new();
 
-    for (rel, abs, _size) in &files {
+    // Total in-scope file count drives the UI progress denominator. Best-effort
+    // emit: a dropped event must never fail the backup, hence the `let _ =`.
+    let total = files.len();
+
+    for (i, (rel, abs, _size)) in files.iter().enumerate() {
+        // Tell the UI which file we're about to process (1-based) so the
+        // spinner becomes a real "uploading 7/142: wiki/foo.md" line.
+        let _ = app.emit(
+            "github-backup-progress",
+            serde_json::json!({ "phase": "upload", "current": i + 1, "total": total, "file": rel }),
+        );
         let content = std::fs::read(abs).map_err(|e| format!("read {rel}: {e}"))?;
         let local_sha = git_blob_sha1(&content);
         let blob_sha = match remote_map.get(rel) {
             // unchanged: reuse the existing remote blob sha, no upload
             Some(remote) if *remote == local_sha => remote.clone(),
-            // new or changed: upload, then reference the fresh blob
+            // new or changed: upload, then reference the fresh blob. Wrap the
+            // error with the path here (the helper already labels itself with
+            // attempt count) so a failure names the offending file.
             _ => {
                 let b64 = B64.encode(&content);
-                let sha = create_blob(&token, &owner, &repo, &b64).await?;
+                let sha = create_blob(&token, &owner, &repo, &b64)
+                    .await
+                    .map_err(|e| format!("upload {rel}: {e}"))?;
                 pushed_files.push(rel.clone());
                 sha
             }
@@ -886,6 +963,10 @@ pub async fn github_backup_now(
         return Ok(BackupResult { new_sha, pushed_files, skipped_oversize, pulled_first });
     }
 
+    // Blobs are uploaded; the remaining tree/commit/ref calls are quick. Tell
+    // the UI we've moved past the per-file upload phase.
+    let _ = app.emit("github-backup-progress", serde_json::json!({ "phase": "commit" }));
+
     let tree_sha = create_tree(&token, &owner, &repo, &entries).await?;
     let parents: Vec<String> = remote_sha.iter().cloned().collect();
     let msg = format!("LLMWiki backup {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
@@ -894,6 +975,8 @@ pub async fn github_backup_now(
     // current remote tip (possibly after merge), a non-force update is a
     // fast-forward. Use force=false to refuse if the branch raced ahead.
     update_ref(&token, &owner, &repo, &branch, &new_commit, false).await?;
+
+    let _ = app.emit("github-backup-progress", serde_json::json!({ "phase": "done" }));
 
     Ok(BackupResult { new_sha: new_commit, pushed_files, skipped_oversize, pulled_first })
 }

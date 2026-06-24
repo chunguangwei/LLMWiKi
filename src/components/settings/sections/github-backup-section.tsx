@@ -32,6 +32,7 @@ import {
   githubBackupNow,
   githubListVersions,
   githubRestoreVersion,
+  onBackupProgress,
   pullAndApply,
   startGithubBackup,
   stopGithubBackup,
@@ -85,6 +86,13 @@ export function GithubBackupSection() {
   const [result, setResult] = useState<{ kind: "ok" | "err" | "warn"; message: string } | null>(
     null,
   )
+
+  // ── Live upload progress (drives the per-file line under the buttons) ─
+  const [progress, setProgress] = useState<{
+    current: number
+    total: number
+    file: string
+  } | null>(null)
 
   // ── Refresh the token status (drives the "connected as" line) ───────
   const refreshTokenStatus = useCallback(async () => {
@@ -291,6 +299,14 @@ export function GithubBackupSection() {
     if (busy || !project) return
     setBusy("backup")
     setResult(null)
+    setProgress(null)
+    // Subscribe to live per-file progress so the slow-network case shows a
+    // real counter instead of a blind spinner. Cleaned up in `finally`.
+    const un = await onBackupProgress((p) => {
+      if (p.phase === "upload") {
+        setProgress({ current: p.current, total: p.total, file: p.file })
+      }
+    })
     try {
       const r = await githubBackupNow({
         projectDir: project.path,
@@ -326,6 +342,8 @@ export function GithubBackupSection() {
     } catch (e) {
       setResult({ kind: "err", message: String(e) })
     } finally {
+      un()
+      setProgress(null)
       setBusy(null)
     }
   }, [busy, project, cfg, persistCfg, refreshAfterSync, t])
@@ -742,6 +760,18 @@ export function GithubBackupSection() {
           {t("settings.sections.githubBackup.showVersions", { defaultValue: "Show versions" })}
         </Button>
       </div>
+
+      {/* ── Live upload progress (slow-network feedback) ────────── */}
+      {busy === "backup" && progress && (
+        <p className="truncate text-xs text-muted-foreground">
+          {t("settings.sections.githubBackup.uploadProgress", {
+            defaultValue: "Uploading {{current}}/{{total}}: {{file}}",
+            current: progress.current,
+            total: progress.total,
+            file: progress.file,
+          })}
+        </p>
+      )}
 
       {/* ── Result banner ──────────────────────────────────────── */}
       {result && (

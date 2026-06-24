@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { writeFile, readFile, createDirectory, listDirectory } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import type { FileNode, WikiProject } from "@/types/wiki"
@@ -161,6 +162,38 @@ export async function githubTokenStatus(): Promise<GithubTokenStatus> {
 
 export async function githubClearToken(): Promise<void> {
   return invoke<void>("github_clear_token")
+}
+
+// ── Live backup progress ─────────────────────────────────────────────
+//
+// The Rust `github_backup_now` command emits `github-backup-progress`
+// events as it uploads each file (so a slow link shows real progress
+// instead of a blind spinner). One payload per file in the upload phase,
+// plus a `commit`/`done` marker.
+
+/** Shape of every `github-backup-progress` event payload. */
+export interface GithubBackupProgress {
+  /** "upload" (per-file), "commit" (building the tree/commit), or "done". */
+  phase: string
+  /** 1-based index of the file currently uploading (upload phase only). */
+  current: number
+  /** Total in-scope file count (upload phase only). */
+  total: number
+  /** Project-relative path of the current file (upload phase only). */
+  file: string
+}
+
+/**
+ * Subscribe to backup progress events. Returns the unlisten function — the
+ * caller MUST invoke it (e.g. in a `finally`) to avoid leaking the listener
+ * across repeated backups. The `commit`/`done` phases omit current/total/file.
+ */
+export async function onBackupProgress(
+  cb: (p: GithubBackupProgress) => void,
+): Promise<() => void> {
+  return listen<GithubBackupProgress>("github-backup-progress", (event) => {
+    cb(event.payload)
+  })
 }
 
 // ── Config persistence (.llm-wiki-local/github-backup.json) ──────────
