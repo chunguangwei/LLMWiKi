@@ -361,6 +361,31 @@ schema 语言在项目创建时确定，之后改 UI 语言不会影响目录命
 
 ---
 
+## 7. GitHub 版本化备份与多设备同步
+
+把整个 wiki 项目持续备份到你自己的 GitHub 私有仓库,支持**按版本恢复**和**多设备同步**——是 [cloud-sharing.md](cloud-sharing.md) 里「Git 模式」升级路径的产品化。设置入口:**设置 → GitHub 备份**。
+
+### 7.1 解决了什么问题
+- 即时、版本化地把 wiki 存到 GitHub,任何一次提交都能回滚。
+- 多台电脑用同一配置时,A 改完上传、B 端定时/启动/聚焦时自动拉取并实时刷新界面。
+
+### 7.2 工作方式
+- **技术路线**:走 **GitHub REST(Git Data API)**——blobs/trees/commits/refs,不内置 libgit2、不引入任何 C 依赖,因此对跨平台构建零风险(复用现有 `reqwest`)。代价是项目目录里没有本地 `.git`(也更干净)。
+- **认证**:Personal Access Token(在 GitHub 生成、勾选目标仓库的 Contents 读写权限,粘贴即用)或 OAuth 设备登录(需先注册 GitHub OAuth App 填入 `client_id`,未填时该项禁用、PAT 仍可用)。Token 存 OS 钥匙串(`com.llmwiki.app` / `github-pat`),从不进项目目录或二进制。
+- **备份范围**:默认含 `raw/sources` 原始资料(可在设置里关闭)。始终排除 `.llm-wiki-local/`(每台机器私有)、`raw/sources/.cache/`、`.DS_Store`。单文件 > 50MB 会被跳过并提示(GitHub 单文件上限 100MB)。
+- **冲突**:多设备改了同一文件时按「最新修改优先」自动合并(本地 mtime vs 远端提交时间)。
+- **触发**:按你设的周期自动备份(上传前先拉取合并);启动 + 窗口重新聚焦时拉取;另有「立即备份 / 立即拉取」手动按钮。
+- **恢复**:在版本列表里选一个提交点 → 还原,把该快照写回本地并刷新界面。
+
+### 7.3 配置存放
+- 每项目、每设备的备份配置(仓库、周期、范围、`lastSyncSha`)存 `.llm-wiki-local/github-backup.json`(本身不被备份)。
+
+详细技术实现见 `app/src-tauri/src/commands/github_backup.rs`、`src/lib/github-backup.ts`、`src/components/settings/sections/github-backup-section.tsx`。
+
+> **OAuth 启用待办**:在项目 GitHub 账号下注册一个 OAuth App,把它的 `client_id` 填进 `app/src/lib/app-repo.ts` 的 `GITHUB_OAUTH_CLIENT_ID`,即可解锁「OAuth 设备登录」。在此之前用 PAT。
+
+---
+
 ## 故障排查
 
 ### `.llmwiki` 导入提示 "Package missing manifest.json"
