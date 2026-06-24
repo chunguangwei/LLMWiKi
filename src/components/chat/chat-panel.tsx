@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { BookOpen, Plus, Trash2, MessageSquare, Pencil, Check, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { ChatMessage, StreamingMessage, useSourceFiles } from "./chat-message"
+import { ChatMessage, StreamingMessage, useSourceFiles, type ChatReferencePreview } from "./chat-message"
 import { ChatInput } from "./chat-input"
 import { useChatStore, chatMessagesToLLM, type MessageReference } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -30,6 +30,14 @@ import {
 } from "@/lib/web-search"
 import { ChatSearchResults } from "./chat-search-results"
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow"
+// Reference-preview side-panel building blocks (ported from upstream).
+// The panel reuses the editor's existing file/markdown renderers so a
+// cited reference previews identically to how it'd look in the wiki view.
+import { FilePreview } from "@/components/editor/file-preview"
+import { WikiReader } from "@/components/editor/wiki-reader"
+import { FrontmatterPanel } from "@/components/editor/frontmatter-panel"
+import { parseFrontmatter } from "@/lib/frontmatter"
+import { getFileCategory } from "@/lib/file-types"
 
 // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
@@ -426,6 +434,15 @@ export function ChatPanel() {
   const dropTargetRef = useRef<HTMLDivElement>(null)
   // Live chat-agent activity feed shown above the streaming reply.
   const [agentEvents, setAgentEvents] = useState<ChatAgentEvent[]>([])
+
+  // Chat-internal reference-preview side panel (ported from upstream).
+  // Clicking a citation sets `referencePreview`; the panel renders as a
+  // resizable right pane INSIDE the chat view (sibling of the message
+  // column, NOT the app-wide wiki view), so it coexists with our
+  // standalone-view layout. `null` = closed. Width persists for the
+  // session only.
+  const [referencePreview, setReferencePreview] = useState<ChatReferencePreview | null>(null)
+  const [referencePreviewWidth, setReferencePreviewWidth] = useState(420)
 
   // OS files dragged into the chat — accumulate paths until the user hits
   // send, at which point we copy them to raw/sources/ with the typed message
@@ -1051,6 +1068,7 @@ export function ChatPanel() {
                       message={msg}
                       isLastAssistant={isLastAssistant && !isStreaming}
                       onRegenerate={isLastAssistant ? handleRegenerate : undefined}
+                      onOpenReferencePreview={setReferencePreview}
                     />
                   )
                 })}
@@ -1110,6 +1128,171 @@ export function ChatPanel() {
           searchIntent={searchIntent}
           onClearSearchIntent={clearSearchIntent}
         />
+      </div>
+
+      {/*
+        Reference-preview side panel (ported from upstream). Rendered as a
+        third flex column to the RIGHT of the message column, inside the
+        chat view's own `flex-row` — so it's scoped to chat and never
+        replaces our standalone wiki view. Citation clicks set the
+        preview; FILE cards / "open page" buttons still go through
+        `openFileInPreview` (the full wiki view) unchanged.
+      */}
+      {referencePreview && (
+        <ChatReferencePreviewPanel
+          preview={referencePreview}
+          width={referencePreviewWidth}
+          onResize={setReferencePreviewWidth}
+          onClose={() => setReferencePreview(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Resizable right-side panel that previews a clicked chat citation
+ * (ported from upstream). Reuses the editor's FilePreview / WikiReader /
+ * FrontmatterPanel so a reference renders identically to the wiki view,
+ * but stays contained within the chat panel. The left edge is a
+ * pointer-drag separator (also keyboard-resizable for a11y).
+ */
+function ChatReferencePreviewPanel({
+  preview,
+  width,
+  onResize,
+  onClose,
+}: {
+  preview: ChatReferencePreview
+  width: number
+  onResize: (width: number) => void
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const displayTitle = preview.title || getFileName(preview.path)
+  const dragStartRef = useRef<{ x: number; width: number } | null>(null)
+
+  const startResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    dragStartRef.current = { x: event.clientX, width }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }, [width])
+
+  const handleResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStartRef.current) return
+    const delta = dragStartRef.current.x - event.clientX
+    onResize(clampReferencePreviewWidth(dragStartRef.current.width + delta))
+  }, [onResize])
+
+  const stopResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    dragStartRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }, [])
+
+  return (
+    <aside
+      className="relative flex h-full min-w-[320px] max-w-[56%] shrink-0 flex-col border-l bg-background"
+      style={{ width }}
+    >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t("chat.resizeReferencePreview")}
+        tabIndex={0}
+        onPointerDown={startResize}
+        onPointerMove={handleResize}
+        onPointerUp={stopResize}
+        onPointerCancel={stopResize}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft") {
+            event.preventDefault()
+            onResize(clampReferencePreviewWidth(width + 32))
+          } else if (event.key === "ArrowRight") {
+            event.preventDefault()
+            onResize(clampReferencePreviewWidth(width - 32))
+          }
+        }}
+        className="absolute -left-1 top-0 z-10 h-full w-2 cursor-col-resize outline-none transition-colors hover:bg-primary/15 focus-visible:bg-primary/20"
+      />
+      <div className="flex min-h-10 items-center gap-2 border-b px-3 py-2">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-medium" title={displayTitle}>
+            {displayTitle}
+          </div>
+          <div className="mt-0.5 truncate text-[10px] text-muted-foreground" title={preview.path}>
+            {preview.source ?? t("chat.referencePreview")} · {preview.path}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          title={t("chat.closeReferencePreview")}
+          aria-label={t("chat.closeReferencePreview")}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        {preview.external ? (
+          <ExternalReferencePreview preview={preview} />
+        ) : getFileCategory(preview.path) === "markdown" ? (
+          <ChatMarkdownReferencePreview preview={preview} />
+        ) : (
+          <FilePreview
+            key={preview.path}
+            filePath={preview.path}
+            textContent={preview.content}
+          />
+        )}
+      </div>
+    </aside>
+  )
+}
+
+// Clamp the side-panel width to a sane on-screen range (matches upstream).
+function clampReferencePreviewWidth(width: number): number {
+  return Math.min(760, Math.max(320, Math.round(width)))
+}
+
+// Markdown reference preview: frontmatter card + rendered wiki body,
+// mirroring the wiki view's markdown layout (ported from upstream).
+function ChatMarkdownReferencePreview({ preview }: { preview: ChatReferencePreview }) {
+  const { frontmatter, body } = parseFrontmatter(preview.content)
+  return (
+    <div className="h-full overflow-auto px-6 py-6">
+      {frontmatter && <FrontmatterPanel data={frontmatter} />}
+      <WikiReader body={body} filePath={preview.path} />
+    </div>
+  )
+}
+
+// External / AnyTXT reference preview: shows the source label, locator,
+// and returned snippet text (ported from upstream). Used when the cited
+// reference isn't an on-disk file.
+function ExternalReferencePreview({ preview }: { preview: ChatReferencePreview }) {
+  const { t } = useTranslation()
+  return (
+    <div className="flex h-full flex-col overflow-auto p-5">
+      <div className="mb-4 space-y-2">
+        <div className="flex items-center gap-2">
+          {preview.source && (
+            <span className="rounded border border-border/60 bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+              {preview.source}
+            </span>
+          )}
+          <h3 className="truncate text-sm font-medium" title={preview.title}>{preview.title}</h3>
+        </div>
+        <div className="break-all rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          {preview.path.replace(/^[a-z]+-preview:\/\//, "")}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border/60 bg-muted/20 p-4">
+        <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6">
+          {preview.snippet?.trim() || t("chat.noReferencePreviewFragment")}
+        </pre>
       </div>
     </div>
   )

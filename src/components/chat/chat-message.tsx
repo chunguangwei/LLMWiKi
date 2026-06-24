@@ -70,9 +70,33 @@ interface ChatMessageProps {
   message: DisplayMessage
   isLastAssistant?: boolean
   onRegenerate?: () => void
+  /**
+   * Inline-citation click handler (ported from upstream). When provided,
+   * clicking a cited reference opens the chat-internal right-side preview
+   * panel (chat-panel owns the state) instead of switching the whole app
+   * to the wiki view via `openFileInPreview`. Optional so the component
+   * still works standalone — without it the panel falls back to
+   * `openFileInPreview`, preserving the fork's original behavior.
+   */
+  onOpenReferencePreview?: (preview: ChatReferencePreview) => void
 }
 
-function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessageProps) {
+/**
+ * Payload for the chat-internal reference-preview side panel (ported from
+ * upstream). `path` is an absolute file path for on-disk references (the
+ * markdown/file preview reads it); `content` is the already-read text so
+ * the panel can render immediately without a second read.
+ */
+export interface ChatReferencePreview {
+  title: string
+  path: string
+  content: string
+  source?: string
+  external?: boolean
+  snippet?: string
+}
+
+function ChatMessageImpl({ message, isLastAssistant, onRegenerate, onOpenReferencePreview }: ChatMessageProps) {
   const { t } = useTranslation()
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
@@ -119,7 +143,13 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
           )}
         </div>
         {isAssistant && <ProposedEdits content={message.content} />}
-        {isAssistant && <CitedReferencesPanel content={message.content} savedReferences={message.references} />}
+        {isAssistant && (
+          <CitedReferencesPanel
+            content={message.content}
+            savedReferences={message.references}
+            onOpenReferencePreview={onOpenReferencePreview}
+          />
+        )}
         {isAssistant && hovered && (
           <div className="flex items-center gap-1">
             <CopyButton content={message.content} />
@@ -151,6 +181,7 @@ export const ChatMessage = memo(ChatMessageImpl, (prev, next) =>
   prev.message === next.message
   && prev.isLastAssistant === next.isLastAssistant
   && prev.onRegenerate === next.onRegenerate
+  && prev.onOpenReferencePreview === next.onOpenReferencePreview
 )
 
 /**
@@ -605,7 +636,17 @@ interface CitedImageInfo {
   firstUrl: string | null
 }
 
-function CitedReferencesPanel({ content, savedReferences }: { content: string; savedReferences?: CitedPage[] }) {
+function CitedReferencesPanel({
+  content,
+  savedReferences,
+  onOpenReferencePreview,
+}: {
+  content: string
+  savedReferences?: CitedPage[]
+  // When set, clicking a citation opens the chat-internal side preview
+  // (upstream behavior) rather than the full wiki view. See ChatMessageProps.
+  onOpenReferencePreview?: (preview: ChatReferencePreview) => void
+}) {
   const project = useWikiStore((s) => s.project)
   const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
   const setPendingScrollImageSrc = useWikiStore((s) => s.setPendingScrollImageSrc)
@@ -697,7 +738,13 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
         try {
           const content = await readFile(rawPath)
           setPendingScrollImageSrc(imageUrlToAbsolute(firstUrl, pp))
-          openFileInPreview(rawPath, content)
+          // Prefer the chat-internal side preview when available (upstream
+          // behavior); otherwise fall back to the full wiki view.
+          if (onOpenReferencePreview) {
+            onOpenReferencePreview({ title: getFileName(rawPath), path: rawPath, content })
+          } else {
+            openFileInPreview(rawPath, content)
+          }
           console.log(`[refs:image-jump] ${firstUrl} → raw source ${rawPath}`)
           return
         } catch (err) {
@@ -708,14 +755,19 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
       // target — at least the safety-net section will scroll into
       // view there.
       try {
-        const content = await readFile(`${pp}/${fallbackPath}`)
+        const fallbackAbsPath = `${pp}/${fallbackPath}`
+        const content = await readFile(fallbackAbsPath)
         setPendingScrollImageSrc(firstUrl)
-        openFileInPreview(`${pp}/${fallbackPath}`, content)
+        if (onOpenReferencePreview) {
+          onOpenReferencePreview({ title: getFileName(fallbackAbsPath), path: fallbackAbsPath, content })
+        } else {
+          openFileInPreview(fallbackAbsPath, content)
+        }
       } catch (err) {
         console.warn(`[refs:image-jump] fallback also failed:`, err)
       }
     },
-    [project, setPendingScrollImageSrc, openFileInPreview],
+    [project, setPendingScrollImageSrc, openFileInPreview, onOpenReferencePreview],
   )
 
   if (citedPages.length === 0) return null
@@ -763,13 +815,25 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
             for (const candidate of candidates) {
               try {
                 const content = await readFile(candidate)
-                openFileInPreview(candidate, content)
+                // Inline citation click → chat-internal side preview when
+                // wired (upstream behavior); else the full wiki view.
+                if (onOpenReferencePreview) {
+                  onOpenReferencePreview({ title: page.title, path: candidate, content })
+                } else {
+                  openFileInPreview(candidate, content)
+                }
                 return
               } catch {
                 // try next
               }
             }
-            openFileInPreview(`${pp}/${page.path}`, `Unable to load: ${page.path}`)
+            const fallbackAbsPath = `${pp}/${page.path}`
+            const fallbackContent = `Unable to load: ${page.path}`
+            if (onOpenReferencePreview) {
+              onOpenReferencePreview({ title: page.title, path: fallbackAbsPath, content: fallbackContent })
+            } else {
+              openFileInPreview(fallbackAbsPath, fallbackContent)
+            }
           }
           return (
             // Outer is a div, NOT a button — we have two click

@@ -5,10 +5,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   useWikiStore,
+  type AnyTxtConfig,
   type SearchApiConfig,
   type SearchProvider,
   type SearchProviderOverride,
 } from "@/stores/wiki-store"
+import { normalizeAnyTxtConfig } from "@/lib/anytxt-search"
 import {
   SEARXNG_CATEGORY_OPTIONS,
   SERPAPI_ENGINE_OPTIONS,
@@ -62,6 +64,15 @@ export function WebSearchSection() {
   const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
   const setSearchApiConfig = useWikiStore((s) => s.setSearchApiConfig)
   const resolvedConfig = resolveSearchConfig(searchApiConfig)
+  // AnyTXT local-search config (ported from upstream). Our fork's
+  // `resolveSearchConfig` spreads `...config`, so `resolvedConfig.anyTxt`
+  // is the raw (possibly-undefined) stored value; we normalize it here
+  // for display the same way the chat-agent normalizes it at call time.
+  // AnyTXT is a Windows-only local server (ATGUI.exe); on other
+  // platforms users simply leave it unconfigured.
+  const anyTxtConfig = normalizeAnyTxtConfig(resolvedConfig.anyTxt)
+  const anyTxtFilterDir = resolvedConfig.anyTxt?.filterDir ?? ""
+  const showBroadAnyTxtWarning = isBroadAnyTxtFilterDir(anyTxtFilterDir)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [savedId, setSavedId] = useState<string | null>(null)
   // Per-provider "Test search" result. Keyed by provider id; cleared
@@ -99,6 +110,25 @@ export function WebSearchSection() {
   function toggleActive(id: Exclude<SearchProvider, "none">) {
     const nextProvider = resolvedConfig.provider === id ? "none" : id
     persist(resolveSearchConfig({ ...resolvedConfig, provider: nextProvider })).catch(() => {})
+  }
+
+  // Patch the AnyTXT config (separate from the provider list above —
+  // AnyTXT is a local search source the chat-agent toggles per-turn, not
+  // one of the online web providers). We merge onto the normalized
+  // config so partial edits keep the other AnyTXT fields intact, then
+  // persist; `hasConfiguredAnyTxt` (read in chat-panel) flips the chat
+  // AnyTXT toggle's availability once `enabled` + a valid endpoint exist.
+  function updateAnyTxt(patch: AnyTxtConfig) {
+    const next = resolveSearchConfig({
+      ...resolvedConfig,
+      anyTxt: {
+        ...anyTxtConfig,
+        ...patch,
+      },
+    })
+    persist(next).catch(() => {})
+    setSavedId("anytxt")
+    setTimeout(() => setSavedId((cur) => (cur === "anytxt" ? null : cur)), 1500)
   }
 
   // Run a live "wikipedia" probe against a provider using its own
@@ -143,6 +173,101 @@ export function WebSearchSection() {
         <h2 className="text-xl font-semibold">{t("settings.sections.webSearch.title")} (Deep Research)</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           {t("settings.sections.webSearch.description")}
+        </p>
+      </div>
+
+      {/*
+        AnyTXT local file search (ported from upstream). A Windows-only
+        local JSON-RPC desktop-search server (ATGUI.exe) the chat-agent
+        can query as an extra source. Lives above the online providers
+        because it's a fundamentally different kind of source (local
+        index vs. web). Configuring + enabling it here is what makes the
+        chat AnyTXT pill usable (chat-panel gates on hasConfiguredAnyTxt).
+      */}
+      <div className="space-y-3 rounded-lg border p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <Label>{t("settings.sections.webSearch.anyTxtTitle")}</Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("settings.sections.webSearch.anyTxtDescription")}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {savedId === "anytxt" && (
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                {t("settings.sections.webSearch.savedBadge")}
+              </span>
+            )}
+            {anyTxtConfig.enabled && (
+              <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                {t("settings.sections.webSearch.activeBadge")}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => updateAnyTxt({ enabled: !anyTxtConfig.enabled })}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full border transition-colors ${
+                anyTxtConfig.enabled
+                  ? "border-primary bg-primary"
+                  : "border-muted-foreground/30 bg-muted-foreground/20 hover:bg-muted-foreground/30"
+              }`}
+              aria-label={anyTxtConfig.enabled ? t("settings.sections.webSearch.deactivate") : t("settings.sections.webSearch.activate")}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 dark:ring-white/20 transition-transform ${
+                  anyTxtConfig.enabled ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtEndpoint")}</Label>
+            <Input
+              value={anyTxtConfig.endpoint}
+              onChange={(e) => updateAnyTxt({ endpoint: e.target.value })}
+              placeholder="http://127.0.0.1:9920"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtLimit")}</Label>
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              value={anyTxtConfig.limit}
+              onChange={(e) => {
+                const value = e.target.value.trim()
+                updateAnyTxt({ limit: value ? Number(value) : undefined })
+              }}
+              placeholder="20"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtFilterDir")}</Label>
+            <Input
+              value={anyTxtFilterDir}
+              onChange={(e) => updateAnyTxt({ filterDir: e.target.value })}
+              placeholder={t("settings.sections.webSearch.anyTxtFilterDirPlaceholder")}
+            />
+            {showBroadAnyTxtWarning && (
+              <p className="text-xs text-destructive">
+                {t("settings.sections.webSearch.anyTxtBroadDirWarning")}
+              </p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtFilterExt")}</Label>
+            <Input
+              value={anyTxtConfig.filterExt}
+              onChange={(e) => updateAnyTxt({ filterExt: e.target.value })}
+              placeholder="*"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t("settings.sections.webSearch.anyTxtHint")}
         </p>
       </div>
 
@@ -324,6 +449,21 @@ function localizeSearchTestError(err: unknown, t: ReturnType<typeof useTranslati
     return t("settings.sections.webSearch.firecrawlInvalidJson")
   }
   return t("settings.sections.webSearch.testFailed", { message })
+}
+
+// Heuristic (ported from upstream) flagging an AnyTXT search folder that
+// is too broad — a whole drive root, home dir, UNC share root, or common
+// mount point. A broad scope means Deep Research / the chat-agent could
+// surface fragments of unrelated (possibly sensitive) local files, so we
+// warn the user. Normalizes backslashes to forward slashes first so the
+// Windows path forms (C:\, \\server\share) match the same patterns.
+function isBroadAnyTxtFilterDir(value: string): boolean {
+  const trimmed = value.trim().replace(/\\/g, "/")
+  if (!trimmed) return false
+  if (trimmed === "/" || trimmed === "~") return true
+  if (/^\/\/[^/]+\/[^/]+\/?$/.test(trimmed)) return true
+  if (/^[A-Za-z]:\/?$/.test(trimmed)) return true
+  return /^\/(?:Users|home|Volumes|mnt|media)?\/?$/.test(trimmed)
 }
 
 function SearXngCategoryPicker({
