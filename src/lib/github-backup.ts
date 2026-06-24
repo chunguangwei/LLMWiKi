@@ -88,6 +88,8 @@ export interface GithubRestoreResult {
 export interface GithubValidateResult {
   login: string
   created: boolean
+  /** Canonical slugified repo name actually used/created (spaces → "-"). */
+  repo: string
 }
 
 export interface GithubTokenStatus {

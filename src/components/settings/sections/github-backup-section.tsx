@@ -229,7 +229,9 @@ export function GithubBackupSection() {
         repo: cfg.repo.trim(),
         private: true,
       })
-      await persistCfg({ owner: r.login, repo: cfg.repo.trim() })
+      // Persist the canonical slug the backend actually used (e.g. spaces
+      // were converted to "-"), so the field + later push/pull all agree.
+      await persistCfg({ owner: r.login, repo: r.repo })
       setResult({
         kind: "ok",
         message: r.created

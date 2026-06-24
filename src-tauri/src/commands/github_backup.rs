@@ -396,8 +396,47 @@ pub async fn validate_token(token: &str) -> Result<GithubUser, String> {
     })
 }
 
+/// Normalize a user-typed repo name into a valid GitHub repo slug.
+///
+/// GitHub only allows ASCII letters/digits/`-`/`_`/`.` in repo names and
+/// silently rewrites everything else to `-` at creation time (so "LLM Wiki
+/// Backup" becomes "LLM-Wiki-Backup"). If we DON'T mirror that, the GET in
+/// ensure_repo looks up the raw spaced name (404), then POST tries to create
+/// it and collides with the already-slugified repo → HTTP 422 "name already
+/// exists". Slugifying up-front keeps lookup, create, and all later push/pull
+/// calls pointed at the same real repo.
+pub fn sanitize_repo_name(name: &str) -> String {
+    let mapped: String = name
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    // Collapse runs of '-' and trim leading/trailing '-' or '.'.
+    let mut collapsed = String::with_capacity(mapped.len());
+    let mut prev_dash = false;
+    for c in mapped.chars() {
+        if c == '-' {
+            if !prev_dash {
+                collapsed.push(c);
+            }
+            prev_dash = true;
+        } else {
+            collapsed.push(c);
+            prev_dash = false;
+        }
+    }
+    collapsed.trim_matches(|c| c == '-' || c == '.').to_string()
+}
+
 /// GET /repos/{owner}/{repo}; if 404, create it private+auto_init. Returns
 /// `true` when it had to create the repo (so the UI can say "created").
+/// `repo` must already be a sanitized slug (see `sanitize_repo_name`).
 pub async fn ensure_repo(token: &str, owner: &str, repo: &str, private: bool) -> Result<bool, String> {
     let client = http_client()?;
     let resp = auth(client.get(format!("{API_BASE}/repos/{owner}/{repo}")), token)
@@ -418,10 +457,19 @@ pub async fn ensure_repo(token: &str, owner: &str, repo: &str, private: bool) ->
         .send()
         .await
         .map_err(|e| format!("create repo failed: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(err_body(resp).await);
+    if resp.status().is_success() {
+        return Ok(true);
     }
-    Ok(true)
+    // A 422 "name already exists" means the repo IS there (e.g. created on a
+    // previous click, or the GET raced). Treat it as success, not an error.
+    if resp.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+        let msg = err_body(resp).await;
+        if msg.contains("already exists") {
+            return Ok(false);
+        }
+        return Err(msg);
+    }
+    Err(err_body(resp).await)
 }
 
 /// GET .../git/ref/heads/{branch} → the commit sha the branch points at, or
@@ -772,6 +820,7 @@ pub async fn github_backup_now(
     last_sync_sha: String,
 ) -> Result<BackupResult, String> {
     let token = require_token()?;
+    let repo = sanitize_repo_name(&repo);
     let dir = PathBuf::from(&project_dir);
     let private = true; // backups are always created private; ensure_repo only creates on 404
 
@@ -978,6 +1027,7 @@ pub async fn github_pull_now(
     last_sync_sha: String,
 ) -> Result<PullResult, String> {
     let token = require_token()?;
+    let repo = sanitize_repo_name(&repo);
     let dir = PathBuf::from(&project_dir);
     pull_merge_inner(&token, &dir, &owner, &repo, &branch, include_raw_sources, &last_sync_sha).await
 }
@@ -986,6 +1036,7 @@ pub async fn github_pull_now(
 #[tauri::command]
 pub async fn github_list_versions(owner: String, repo: String, branch: String, limit: u32) -> Result<Vec<CommitSummary>, String> {
     let token = require_token()?;
+    let repo = sanitize_repo_name(&repo);
     let per_page = limit.clamp(1, 100);
     list_commits(&token, &owner, &repo, &branch, per_page).await
 }
@@ -1014,6 +1065,7 @@ pub async fn github_restore_version(
     include_raw_sources: bool,
 ) -> Result<RestoreResult, String> {
     let token = require_token()?;
+    let repo = sanitize_repo_name(&repo);
     let dir = PathBuf::from(&project_dir);
 
     let commit = get_commit(&token, &owner, &repo, &sha).await?;
@@ -1041,16 +1093,25 @@ pub async fn github_restore_version(
 pub struct ValidatePrepareResult {
     pub login: String,
     pub created: bool,
+    /// The canonical (slugified) repo name actually used/created — the UI
+    /// persists this back so later push/pull use the same real repo.
+    pub repo: String,
 }
 
 /// Validate the stored token AND make sure the target repo exists (creating
-/// it private on first use). Used by the "Connect & set up" button.
+/// it private on first use). The repo name is slugified to a valid GitHub
+/// name first (spaces → "-", etc.) and returned so the UI can reflect it.
+/// Used by the "Create / verify repo" button.
 #[tauri::command]
 pub async fn github_validate_and_prepare(owner: String, repo: String, private: bool) -> Result<ValidatePrepareResult, String> {
     let token = require_token()?;
     let user = validate_token(&token).await?;
-    let created = ensure_repo(&token, &owner, &repo, private).await?;
-    Ok(ValidatePrepareResult { login: user.login, created })
+    let slug = sanitize_repo_name(&repo);
+    if slug.is_empty() {
+        return Err("repository name is empty after sanitizing".to_string());
+    }
+    let created = ensure_repo(&token, &owner, &slug, private).await?;
+    Ok(ValidatePrepareResult { login: user.login, created, repo: slug })
 }
 
 // ---------------------------------------------------------------------------
@@ -1125,6 +1186,18 @@ mod tests {
     fn blob_sha_empty_matches_git() {
         // git's empty-blob id, a well-known constant.
         assert_eq!(git_blob_sha1(b""), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
+    }
+
+    #[test]
+    fn sanitize_repo_name_slugifies_like_github() {
+        // Spaces → "-" (the bug that caused HTTP 422 "name already exists").
+        assert_eq!(sanitize_repo_name("LLM Wiki Backup"), "LLM-Wiki-Backup");
+        // Allowed chars kept; runs collapsed; edges trimmed.
+        assert_eq!(sanitize_repo_name("  my.repo_name  "), "my.repo_name");
+        assert_eq!(sanitize_repo_name("a//b  c"), "a-b-c");
+        assert_eq!(sanitize_repo_name("-trim--me-"), "trim-me");
+        assert_eq!(sanitize_repo_name("中文 仓库"), ""); // non-ASCII → all dashes → trimmed empty
+        assert_eq!(sanitize_repo_name("already-fine"), "already-fine");
     }
 
     #[test]
