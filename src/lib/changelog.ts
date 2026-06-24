@@ -26,6 +26,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.46",
+    date: "2026-06-24",
+    highlights: {
+      en: [
+        "GitHub Backup fixes: repository names with spaces (e.g. 'LLM Wiki Backup') no longer fail to create — the name is normalized to a valid form automatically.",
+        "Backups now retry automatically on flaky/slow connections instead of aborting on the first network hiccup, and show live progress (which file, X of N) instead of a blank spinner. If a single file still fails, the error now names that file.",
+        "Tip: if your network can't reach GitHub well, turn off 'Include raw sources' to back up just the (small) generated wiki, and/or set an HTTP proxy in Settings.",
+      ],
+      zh: [
+        "GitHub 备份修复:带空格的仓库名(如「LLM Wiki Backup」)不再创建失败——会自动规范化为合法名称。",
+        "备份在网络不稳/较慢时会自动重试,不再一遇到网络抖动就整体失败;并显示实时进度(正在上传第几个/共几个、哪个文件),不再是空白转圈。若某个文件仍失败,错误信息会指明是哪个文件。",
+        "提示:若你的网络访问 GitHub 不畅,可关闭「包含原始资料」只备份(体积小的)生成 wiki,并/或在设置里配置 HTTP 代理。",
+      ],
+    },
+  },
+  {
     version: "0.4.45",
     date: "2026-06-24",
     highlights: {
