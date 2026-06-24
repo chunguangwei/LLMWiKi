@@ -8,7 +8,7 @@ import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
-import { listDirectory, openProject } from "@/commands/fs"
+import { listDirectory, openProject, readFile } from "@/commands/fs"
 import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadExperimentalIngestPreview, loadTheme, loadZoomLevel } from "@/lib/project-store"
 import { applyTheme, subscribeToSystemThemeChanges, type Theme } from "@/lib/theme"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
@@ -29,6 +29,38 @@ import { APP_REPO, APP_RELEASES_URL } from "@/lib/app-repo"
 // zoom. Fixed-pixel panels (sidebar / research) keep their own px caps.
 function applyDocumentZoom(level: number) {
   document.documentElement.style.fontSize = `${BASE_FONT_SIZE_PX * level}px`
+}
+
+/**
+ * Refresh the UI after a GitHub backup/pull/restore brought files in from
+ * another device. Reuses the EXACT same refresh path the app runs on
+ * project-open and after external changes: rebuild the top-level file
+ * tree (listDirectory → setFileTree), bump the data version so cached
+ * graphs/views invalidate, and — if the currently-open file was among the
+ * changed/restored set — reload its content from disk.
+ *
+ * `touched` is the changed/deleted/restored file list returned by the
+ * backend so we only reload the open file when it's actually relevant.
+ */
+async function refreshAfterGithubSync(proj: WikiProject, touched: string[]): Promise<void> {
+  try {
+    const tree = await listDirectory(proj.path)
+    useWikiStore.getState().setFileTree(tree)
+  } catch (err) {
+    console.error("[github-backup] file-tree rebuild failed:", err)
+  }
+  useWikiStore.getState().bumpDataVersion()
+  const selected = useWikiStore.getState().selectedFile
+  // Backend paths may be repo-relative while selectedFile is absolute —
+  // match on equality OR suffix so either form triggers the reload.
+  if (selected && touched.some((p) => p === selected || selected.endsWith(p))) {
+    try {
+      const content = await readFile(selected)
+      useWikiStore.getState().setFileContent(content)
+    } catch (err) {
+      console.error("[github-backup] reload of open file failed:", err)
+    }
+  }
 }
 
 function App() {
@@ -132,6 +164,45 @@ function App() {
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
   }, [])
+
+  // Window-focus → opportunistic GitHub pull. When the user tabs back
+  // into the app, pull anything other devices pushed while we were away,
+  // then refresh the UI. Debounced so the burst of focus events some
+  // platforms fire (e.g. clicking through to a child window and back)
+  // doesn't spam the backend. Only runs when backup is enabled + a token
+  // and repo are configured; everything is best-effort and silent.
+  useEffect(() => {
+    if (!project) return
+    let debounce: ReturnType<typeof setTimeout> | null = null
+    let inFlight = false
+    const onFocus = () => {
+      if (debounce) clearTimeout(debounce)
+      debounce = setTimeout(async () => {
+        if (inFlight) return
+        inFlight = true
+        try {
+          const { loadGithubBackupConfig, githubTokenStatus, pullAndApply } = await import(
+            "@/lib/github-backup"
+          )
+          const cfg = await loadGithubBackupConfig(project.path)
+          if (!cfg.enabled || !cfg.owner || !cfg.repo) return
+          const status = await githubTokenStatus().catch(() => ({ hasToken: false }))
+          if (!status.hasToken) return
+          const res = await pullAndApply(project, cfg)
+          await refreshAfterGithubSync(project, [...res.changedFiles, ...res.deletedFiles])
+        } catch (err) {
+          console.error("[github-backup] focus pull failed:", err)
+        } finally {
+          inFlight = false
+        }
+      }, 1500)
+    }
+    window.addEventListener("focus", onFocus)
+    return () => {
+      if (debounce) clearTimeout(debounce)
+      window.removeEventListener("focus", onFocus)
+    }
+  }, [project])
 
   // Dev-only helper for visually testing the update-banner UX.
   // Open dev tools and run:
@@ -541,6 +612,26 @@ function App() {
         )
       }
 
+      // Start GitHub backup/sync scheduler if enabled + a token exists.
+      // Loaded per-device from .llm-wiki-local/github-backup.json. The
+      // scheduler does an immediate catch-up pull then periodic backups;
+      // onSynced reuses the same refresh path as project-open.
+      import("@/lib/github-backup").then(async ({ loadGithubBackupConfig, githubTokenStatus, startGithubBackup, stopGithubBackup }) => {
+        const ghCfg = await loadGithubBackupConfig(proj.path)
+        if (!ghCfg.enabled) {
+          stopGithubBackup()
+          return
+        }
+        const status = await githubTokenStatus().catch(() => ({ hasToken: false }))
+        if (status.hasToken && ghCfg.owner && ghCfg.repo) {
+          startGithubBackup(proj, ghCfg, (res) => {
+            void refreshAfterGithubSync(proj, res.pushedFiles)
+          })
+        } else {
+          stopGithubBackup()
+        }
+      }).catch((err) => console.error("Failed to start GitHub backup:", err))
+
       // Start project source watch if enabled
       import("@/lib/project-file-sync").then(async ({ startProjectFileSync, stopProjectFileSync }) => {
         const config = await loadSourceWatchConfig(proj.id)
@@ -660,6 +751,12 @@ function App() {
     // Stop scheduled import before switching projects
     import("@/lib/scheduled-import").then(({ stopScheduledImport }) => {
       stopScheduledImport()
+    }).catch(() => {})
+
+    // Stop the GitHub backup scheduler too — the new project (if any)
+    // re-evaluates and restarts it in handleProjectOpened.
+    import("@/lib/github-backup").then(({ stopGithubBackup }) => {
+      stopGithubBackup()
     }).catch(() => {})
 
     // Save current project's scheduled import config before clearing
