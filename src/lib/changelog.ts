@@ -26,6 +26,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.47",
+    date: "2026-06-24",
+    highlights: {
+      en: [
+        "GitHub Backup now handles large projects: the backup is committed incrementally instead of in one giant request, fixing the 'request timed out / input too large' error on big wikis.",
+        "If a file can't be uploaded (e.g. a large source file over a slow connection), it's now skipped and the backup continues with everything else — the result tells you which files were skipped.",
+        "Backup progress and result no longer disappear when you switch to another settings page and back — the live status follows the running backup.",
+      ],
+      zh: [
+        "GitHub 备份现在能处理大项目:改为增量提交,不再一次性发送整棵文件树,修复了大型 wiki 上「请求超时 / 输入过大」的报错。",
+        "若某个文件无法上传(例如弱网下的大原始文件),会自动跳过并继续备份其余内容——结果会告诉你跳过了哪些文件。",
+        "切到别的设置页再切回来,备份进度和结果不再消失——实时状态会跟随正在进行的备份。",
+      ],
+    },
+  },
+  {
     version: "0.4.46",
     date: "2026-06-24",
     highlights: {
