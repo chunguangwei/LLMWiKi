@@ -342,6 +342,15 @@ export function GithubBackupSection() {
       }
       if (notices.length > 0) {
         setResult({ kind: "warn", message: `${base} ${notices.join(" ")}` })
+      } else if (r.pushedFiles.length === 0) {
+        // Nothing changed since the last backup — reassure the user instead of
+        // the confusing "Backed up 0 file(s)."
+        setResult({
+          kind: "ok",
+          message: t("settings.sections.githubBackup.alreadyUpToDate", {
+            defaultValue: "Already up to date — your knowledge is fully backed up.",
+          }),
+        })
       } else {
         setResult({ kind: "ok", message: base })
       }
