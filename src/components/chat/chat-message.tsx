@@ -7,7 +7,7 @@ import "katex/dist/katex.min.css"
 import {
   Bot, User, FileText, BookmarkPlus, ChevronDown, ChevronRight, RefreshCw, Copy, Check,
   Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, Layout, Globe,
-  TrendingUp, Target, Image as ImageIcon, Search,
+  TrendingUp, Target, Sparkles, Image as ImageIcon, Search, FileSearch,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -27,6 +27,7 @@ import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
+import type { ChatAgentEvent, ChatAgentEventStage } from "@/lib/chat-agent"
 import { parseFileBlocks, isSafeIngestPath } from "@/lib/ingest"
 import { applyPageEdit } from "@/lib/apply-page-edit"
 import { diffLines, diffStats, isUnchanged } from "@/lib/text-diff"
@@ -906,9 +907,19 @@ function extractCitedPages(text: string): CitedPage[] {
 
 interface StreamingMessageProps {
   content: string
+  /**
+   * Live chat-agent activity feed (ported from upstream cea0029). The
+   * agent emits stage events (understanding → routing → tool calls →
+   * writing) while it builds context; AgentActivity renders them as a
+   * compact, de-duplicated trace above the streaming answer so the user
+   * sees what the agent is doing during the otherwise-silent retrieval
+   * phase. Empty array = nothing rendered (e.g. a classic fallback that
+   * doesn't run the agent loop).
+   */
+  agentEvents?: ChatAgentEvent[]
 }
 
-export function StreamingMessage({ content }: StreamingMessageProps) {
+export function StreamingMessage({ content, agentEvents = [] }: StreamingMessageProps) {
   const { thinking, answer } = useMemo(() => separateThinking(content), [content])
   const isThinking = thinking !== null && answer.length === 0
 
@@ -918,6 +929,7 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
         <Bot className="h-4 w-4" />
       </div>
       <div className="max-w-[80%] rounded-lg px-3 py-2 text-sm bg-muted text-foreground">
+        <AgentActivity events={agentEvents} />
         {isThinking ? (
           <StreamingThinkingBlock content={thinking} />
         ) : (
@@ -930,6 +942,85 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
       </div>
     </div>
   )
+}
+
+/**
+ * Compact live trace of the chat-agent's reasoning/retrieval stages
+ * (ported verbatim from upstream cea0029). Consecutive duplicate stages
+ * are collapsed so a multi-query tool round doesn't spam the feed; only
+ * the last visible row is "active" (pulsing, foreground colour).
+ */
+function AgentActivity({ events }: { events: ChatAgentEvent[] }) {
+  const { t } = useTranslation()
+  const visible = events.filter((event, index, arr) => {
+    const prev = arr[index - 1]
+    return !prev
+      || prev.stage !== event.stage
+      || prev.query !== event.query
+      || prev.tool !== event.tool
+      || prev.message !== event.message
+  })
+  if (visible.length === 0) return null
+
+  return (
+    <div className="mb-2 flex flex-col gap-1.5 border-b border-border/40 pb-2">
+      {visible.map((event, index) => {
+        const active = index === visible.length - 1
+        const Icon = agentStageIcon(event.stage)
+        return (
+          <div
+            key={`${event.stage}-${event.query ?? ""}-${index}`}
+            className={`flex min-w-0 items-center gap-2 text-xs ${
+              active ? "text-foreground" : "text-muted-foreground"
+            }`}
+          >
+            <span
+              className={`flex h-4 w-4 shrink-0 items-center justify-center ${
+                active
+                  ? "text-primary/70"
+                  : "text-muted-foreground/60"
+              }`}
+            >
+              <Icon className={`h-3.5 w-3.5 ${active ? "animate-pulse" : ""}`} />
+            </span>
+            <span className="truncate">
+              {event.message || t(`chat.agent.${event.stage}`)}
+              {event.query ? <span className="text-muted-foreground"> · {event.query}</span> : null}
+              {typeof event.count === "number" ? (
+                <span className="text-muted-foreground"> · {t("chat.agent.resultCount", { count: event.count })}</span>
+              ) : null}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function agentStageIcon(stage: ChatAgentEventStage) {
+  switch (stage) {
+    case "understanding":
+      return Target
+    case "tool_call":
+      return Sparkles
+    case "tool_result":
+      return Check
+    case "searching_wiki":
+      return BookOpen
+    case "searching_graph":
+      return GitMerge
+    case "searching_web":
+      return Globe
+    case "searching_anytxt":
+      return FileSearch
+    case "reading_context":
+      return Layout
+    case "writing":
+      return Bot
+    case "routing":
+    default:
+      return Sparkles
+  }
 }
 
 // ── Proposed wiki edits surfaced from the chat answer ─────────────

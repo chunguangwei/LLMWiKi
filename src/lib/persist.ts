@@ -86,6 +86,22 @@ interface PersistedChatData {
 }
 
 /**
+ * Per-project chat-agent search toggles (ported from upstream cea0029's
+ * chat-agent routing). These are user preferences, not project data —
+ * so like chat history they live under `.llm-wiki-local/` and MUST NOT
+ * be synced to cloud (upstream parked them in `.llm-wiki/`, but our fork
+ * keeps all per-user chat state local; see the dir comment at the top).
+ */
+export interface ChatPreferences {
+  useWebSearch: boolean
+  useAnyTxtSearch: boolean
+}
+
+function chatPreferencesFile(pp: string) {
+  return `${localDir(pp)}/chat-preferences.json`
+}
+
+/**
  * Activity items persist to .llm-wiki-local/ — per-user, not shared.
  * The reasoning: an activity log is "what I just did", not project
  * history; teammates don't need to see each other's ingest spinners.
@@ -270,5 +286,36 @@ export async function loadChatHistory(projectPath: string): Promise<PersistedCha
     } catch {
       return { conversations: [], messages: [] }
     }
+  }
+}
+
+/**
+ * Persist the chat-agent search toggles. Written into `.llm-wiki-local/`
+ * (per-user, never cloud-synced) — see ChatPreferences above.
+ */
+export async function saveChatPreferences(
+  projectPath: string,
+  preferences: ChatPreferences,
+): Promise<void> {
+  const pp = normalizePath(projectPath)
+  await ensureLocalDir(pp)
+  await writeFile(chatPreferencesFile(pp), JSON.stringify(preferences, null, 2))
+}
+
+/**
+ * Load the chat-agent search toggles. Missing / malformed file → both
+ * toggles default off (matches upstream's defensive `=== true` coercion).
+ */
+export async function loadChatPreferences(projectPath: string): Promise<ChatPreferences> {
+  const pp = normalizePath(projectPath)
+  try {
+    const content = await readFile(chatPreferencesFile(pp))
+    const parsed = JSON.parse(content) as Partial<ChatPreferences>
+    return {
+      useWebSearch: parsed.useWebSearch === true,
+      useAnyTxtSearch: parsed.useAnyTxtSearch === true,
+    }
+  } catch {
+    return { useWebSearch: false, useAnyTxtSearch: false }
   }
 }

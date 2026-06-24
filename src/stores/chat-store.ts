@@ -12,6 +12,20 @@ export interface Conversation {
 export interface MessageReference {
   title: string
   path: string
+  /**
+   * Origin of this reference (ported from upstream cea0029's chat-agent
+   * routing). "wiki" = a local wiki page (default when omitted, for
+   * backward-compat with references saved before this field existed);
+   * "external" = a web / AnyTXT result. Drives icon + preview routing
+   * and dedup keys when threading retrieval history across turns.
+   */
+  kind?: "wiki" | "external"
+  /** For external refs: provider label (e.g. "Tavily", "AnyTXT", "Web"). */
+  source?: string
+  /** For external refs: the source URL (used as the dedup key + open target). */
+  url?: string
+  /** For external refs: the matched fragment shown in the reference preview. */
+  snippet?: string
 }
 
 export interface DisplayMessage {
@@ -106,6 +120,19 @@ interface ChatState {
   mode: "chat" | "ingest"
   ingestSource: string | null
   maxHistoryMessages: number
+  /**
+   * Whether the chat-agent is allowed to reach out to the web search
+   * tool this turn. Ported from upstream's chat-agent routing (cea0029).
+   * Lifted out of chat-input's local state so it can be persisted per
+   * project (chat-preferences.json) and restored on reopen.
+   */
+  useWebSearch: boolean
+  /**
+   * Whether the chat-agent is allowed to query the local AnyTXT index
+   * this turn. Same persistence story as `useWebSearch`. Only meaningful
+   * when AnyTXT is actually available on this machine.
+   */
+  useAnyTxtSearch: boolean
 
   // Conversation management
   createConversation: () => string
@@ -161,6 +188,8 @@ interface ChatState {
   setIngestSource: (path: string | null) => void
   clearMessages: () => void
   setMaxHistoryMessages: (n: number) => void
+  setUseWebSearch: (enabled: boolean) => void
+  setUseAnyTxtSearch: (enabled: boolean) => void
   removeLastAssistantMessage: () => void  // for regenerate: remove last assistant reply
 
   // Helpers
@@ -207,6 +236,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   mode: "chat",
   ingestSource: null,
   maxHistoryMessages: 10,
+  useWebSearch: false,
+  useAnyTxtSearch: false,
 
   createConversation: () => {
     const id = generateConversationId()
@@ -387,6 +418,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
 
   setMaxHistoryMessages: (maxHistoryMessages) => set({ maxHistoryMessages }),
+
+  setUseWebSearch: (useWebSearch) => set({ useWebSearch }),
+
+  setUseAnyTxtSearch: (useAnyTxtSearch) => set({ useAnyTxtSearch }),
 
   removeLastAssistantMessage: () =>
     set((state) => {

@@ -248,30 +248,6 @@ export async function loadExperimentalAiLintFix(): Promise<boolean> {
   return (await store.get<boolean>(AI_LINT_FIX_FLAG_KEY)) ?? false
 }
 
-const CHAT_AGENT_FLAG_KEY = "experimentalChatAgent"
-
-export async function saveExperimentalChatAgent(enabled: boolean): Promise<void> {
-  const store = await getStore()
-  await store.set(CHAT_AGENT_FLAG_KEY, enabled)
-}
-
-export async function loadExperimentalChatAgent(): Promise<boolean> {
-  const store = await getStore()
-  return (await store.get<boolean>(CHAT_AGENT_FLAG_KEY)) ?? false
-}
-
-const CHAT_AGENT_CAN_WRITE_FLAG_KEY = "experimentalChatAgentCanWrite"
-
-export async function saveExperimentalChatAgentCanWrite(enabled: boolean): Promise<void> {
-  const store = await getStore()
-  await store.set(CHAT_AGENT_CAN_WRITE_FLAG_KEY, enabled)
-}
-
-export async function loadExperimentalChatAgentCanWrite(): Promise<boolean> {
-  const store = await getStore()
-  return (await store.get<boolean>(CHAT_AGENT_CAN_WRITE_FLAG_KEY)) ?? false
-}
-
 const RAW_SAVE_TO_WIKI_FLAG_KEY = "experimentalRawSaveToWiki"
 
 export async function saveExperimentalRawSaveToWiki(enabled: boolean): Promise<void> {

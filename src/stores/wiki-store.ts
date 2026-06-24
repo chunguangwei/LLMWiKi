@@ -66,6 +66,22 @@ export interface SearchProviderOverride {
 
 export type SearchProviderConfigs = Partial<Record<Exclude<SearchProvider, "none">, SearchProviderOverride>>
 
+/**
+ * Local AnyTXT desktop-search integration (ported from upstream alongside
+ * the chat-agent routing in cea0029). The fork forked before AnyTXT
+ * existed, so this type is brought in purely to let the chat-agent's
+ * `anytxt_search` tool typecheck. There is no settings UI to populate it
+ * yet — `anyTxt` stays undefined, so `normalizeAnyTxtConfig` resolves
+ * `enabled: false` and the tool is filtered out of the agent's toolset.
+ */
+export interface AnyTxtConfig {
+  enabled?: boolean
+  endpoint?: string
+  filterDir?: string
+  filterExt?: string
+  limit?: number
+}
+
 interface SearchApiConfig {
   provider: SearchProvider
   apiKey: string
@@ -74,6 +90,8 @@ interface SearchApiConfig {
   searXngCategories?: SearXngCategory[]
   ollamaUrl?: string
   providerConfigs?: SearchProviderConfigs
+  /** Local AnyTXT desktop-search config; see AnyTxtConfig above. */
+  anyTxt?: AnyTxtConfig
 }
 
 interface EmbeddingConfig {
@@ -377,35 +395,6 @@ interface WikiState {
    */
   experimentalAiLintFix: boolean
   /**
-   * **Labs / experimental** — upgrade chat from a single-turn stream
-   * to a tool-calling agent loop. When the LLM decides it needs
-   * external information (wiki page lookup, web fetch, local file
-   * search), it emits tool_use blocks and the runner drives the loop
-   * until the model has enough context to answer. Costs more tokens
-   * per turn AND drops the streaming UX in agent mode (the first
-   * response arrives as a complete block, not token-by-token). Off
-   * by default. See `src/lib/chat-agent/` for the implementation.
-   *
-   * Persisted via `saveExperimentalChatAgent` (project-store.ts).
-   */
-  experimentalChatAgent: boolean
-  /**
-   * **Labs / experimental — REQUIRES `experimentalChatAgent`**.
-   *
-   * When set, the chat-agent tool catalogue includes write_wiki_page
-   * and update_wiki_page in addition to the read-only set. This lets
-   * the agent directly write to the wiki on the user's behalf
-   * ("create a page about X", "update concepts/foo with this"). The
-   * system prompt instructs the agent to use these tools ONLY when
-   * the user explicitly asks for a wiki mutation — pure-answer
-   * questions still get plain text replies.
-   *
-   * Deliberately omits delete_wiki_page and link_pages — those are
-   * higher-blast-radius and should stay in agent-ingest / agent-lint-fix
-   * mode for now. Off by default.
-   */
-  experimentalChatAgentCanWrite: boolean
-  /**
    * **Labs / experimental** — when ON, SaveToWiki SKIPS the wikify LLM
    * rewrite pass and persists the chat content verbatim. Default OFF
    * (wikify runs, stripping chat tone). Useful when you want the
@@ -490,8 +479,6 @@ interface WikiState {
   setGeneralConfig: (config: GeneralConfig) => void
   setExperimentalAgentIngest: (enabled: boolean) => void
   setExperimentalAiLintFix: (enabled: boolean) => void
-  setExperimentalChatAgent: (enabled: boolean) => void
-  setExperimentalChatAgentCanWrite: (enabled: boolean) => void
   setExperimentalRawSaveToWiki: (enabled: boolean) => void
   setExperimentalIndexAnnotations: (enabled: boolean) => void
   setExperimentalIngestPreview: (enabled: boolean) => void
@@ -635,8 +622,6 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   experimentalAgentIngest: false,
   experimentalAiLintFix: false,
-  experimentalChatAgent: false,
-  experimentalChatAgentCanWrite: false,
   experimentalRawSaveToWiki: false,
   experimentalIndexAnnotations: false,
   experimentalIngestPreview: false,
@@ -659,10 +644,6 @@ export const useWikiStore = create<WikiState>((set) => ({
     set({ experimentalAgentIngest }),
   setExperimentalAiLintFix: (experimentalAiLintFix) =>
     set({ experimentalAiLintFix }),
-  setExperimentalChatAgent: (experimentalChatAgent) =>
-    set({ experimentalChatAgent }),
-  setExperimentalChatAgentCanWrite: (experimentalChatAgentCanWrite) =>
-    set({ experimentalChatAgentCanWrite }),
   setExperimentalRawSaveToWiki: (experimentalRawSaveToWiki) =>
     set({ experimentalRawSaveToWiki }),
   setExperimentalIndexAnnotations: (experimentalIndexAnnotations) =>

@@ -189,7 +189,28 @@
     "renameConversation": "重命名对话",
     "renamePlaceholder": "对话名称",
     "deleteConversationTooltip": "删除对话",
-    "classicSearchBadge": "普通搜索"
+    "classicSearchBadge": "普通搜索",
+    "searchToggle": {
+      "web": "联网",
+      "anytxt": "AnyTXT"
+    },
+    "referencePreview": "引用预览",
+    "closeReferencePreview": "关闭引用预览",
+    "resizeReferencePreview": "调整引用预览宽度",
+    "noReferencePreviewFragment": "没有返回可预览的片段。",
+    "agent": {
+      "understanding": "理解问题",
+      "routing": "规划下一步",
+      "tool_call": "调用工具",
+      "tool_result": "工具结果",
+      "searching_wiki": "搜索 Wiki",
+      "searching_graph": "探索知识图谱",
+      "searching_web": "搜索网页",
+      "searching_anytxt": "搜索 AnyTXT",
+      "reading_context": "读取上下文",
+      "writing": "生成回答",
+      "resultCount": "{{count}} 条结果"
+    }
   },
   "chatSearch": {
     "headerPrefix": "搜索：",

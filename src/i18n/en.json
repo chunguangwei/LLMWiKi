@@ -189,7 +189,28 @@
     "renameConversation": "Rename conversation",
     "renamePlaceholder": "Conversation title",
     "deleteConversationTooltip": "Delete conversation",
-    "classicSearchBadge": "Classic search"
+    "classicSearchBadge": "Classic search",
+    "searchToggle": {
+      "web": "Web",
+      "anytxt": "AnyTXT"
+    },
+    "referencePreview": "Reference preview",
+    "closeReferencePreview": "Close reference preview",
+    "resizeReferencePreview": "Resize reference preview",
+    "noReferencePreviewFragment": "No preview fragment returned.",
+    "agent": {
+      "understanding": "Understanding request",
+      "routing": "Planning next step",
+      "tool_call": "Calling tool",
+      "tool_result": "Tool result",
+      "searching_wiki": "Searching wiki",
+      "searching_graph": "Exploring knowledge graph",
+      "searching_web": "Searching web",
+      "searching_anytxt": "Searching AnyTXT",
+      "reading_context": "Reading context",
+      "writing": "Writing answer",
+      "resultCount": "results: {{count}}"
+    }
   },
   "chatSearch": {
     "headerPrefix": "Search:",

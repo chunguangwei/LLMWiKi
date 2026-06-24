@@ -9,10 +9,10 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { listDirectory, openProject, readFile } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalChatAgent, loadExperimentalChatAgentCanWrite, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadExperimentalIngestPreview, loadTheme, loadZoomLevel } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadExperimentalAgentIngest, loadExperimentalAiLintFix, loadExperimentalRawSaveToWiki, loadExperimentalIndexAnnotations, loadExperimentalIngestPreview, loadTheme, loadZoomLevel } from "@/lib/project-store"
 import { applyTheme, subscribeToSystemThemeChanges, type Theme } from "@/lib/theme"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
-import { loadReviewItems, loadLintItems, loadChatHistory, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
+import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
 import { AppLayout } from "@/components/layout/app-layout"
@@ -490,18 +490,6 @@ function App() {
           // missing or corrupt → keep default false
         }
         try {
-          const flag = await loadExperimentalChatAgent()
-          useWikiStore.getState().setExperimentalChatAgent(flag)
-        } catch {
-          // missing or corrupt → keep default false
-        }
-        try {
-          const flag = await loadExperimentalChatAgentCanWrite()
-          useWikiStore.getState().setExperimentalChatAgentCanWrite(flag)
-        } catch {
-          // missing or corrupt → keep default false
-        }
-        try {
           const flag = await loadExperimentalRawSaveToWiki()
           useWikiStore.getState().setExperimentalRawSaveToWiki(flag)
         } catch {
@@ -685,6 +673,12 @@ function App() {
       }
       // Load persisted chat history
       try {
+        // Restore the chat-agent search toggles first (ported from
+        // upstream cea0029) so the input reflects the user's last choice
+        // before any conversation is shown.
+        const savedChatPreferences = await loadChatPreferences(proj.path)
+        useChatStore.getState().setUseWebSearch(savedChatPreferences.useWebSearch)
+        useChatStore.getState().setUseAnyTxtSearch(savedChatPreferences.useAnyTxtSearch)
         const savedChat = await loadChatHistory(proj.path)
         if (savedChat.conversations.length > 0) {
           useChatStore.getState().setConversations(savedChat.conversations)

@@ -3,8 +3,6 @@ import { useWikiStore } from "@/stores/wiki-store"
 import {
   saveExperimentalAgentIngest,
   saveExperimentalAiLintFix,
-  saveExperimentalChatAgent,
-  saveExperimentalChatAgentCanWrite,
   saveExperimentalRawSaveToWiki,
   saveExperimentalIndexAnnotations,
   saveExperimentalIngestPreview,
@@ -30,10 +28,6 @@ export function LabsSection() {
   const setAgentIngest = useWikiStore((s) => s.setExperimentalAgentIngest)
   const aiLintFix = useWikiStore((s) => s.experimentalAiLintFix)
   const setAiLintFix = useWikiStore((s) => s.setExperimentalAiLintFix)
-  const chatAgent = useWikiStore((s) => s.experimentalChatAgent)
-  const chatAgentCanWrite = useWikiStore((s) => s.experimentalChatAgentCanWrite)
-  const setChatAgentCanWrite = useWikiStore((s) => s.setExperimentalChatAgentCanWrite)
-  const setChatAgent = useWikiStore((s) => s.setExperimentalChatAgent)
   const rawSaveToWiki = useWikiStore((s) => s.experimentalRawSaveToWiki)
   const indexAnnotations = useWikiStore((s) => s.experimentalIndexAnnotations)
   const setIndexAnnotations = useWikiStore((s) => s.setExperimentalIndexAnnotations)
@@ -57,34 +51,6 @@ export function LabsSection() {
     const next = !aiLintFix
     setAiLintFix(next)
     saveExperimentalAiLintFix(next).catch((err) =>
-      console.warn("[labs] save failed:", err),
-    )
-  }
-
-  function toggleChatAgent() {
-    const next = !chatAgent
-    setChatAgent(next)
-    saveExperimentalChatAgent(next).catch((err) =>
-      console.warn("[labs] save failed:", err),
-    )
-    // Turning off the parent flag also implicitly disables the
-    // write-tool sub-flag in memory + on disk. Avoids a stale state
-    // where chat is back to streaming mode but the agent still
-    // technically has write tools "queued" — which would only matter
-    // if the user re-enables chat-agent later but is easier to reason
-    // about if we just clear both.
-    if (!next && chatAgentCanWrite) {
-      setChatAgentCanWrite(false)
-      saveExperimentalChatAgentCanWrite(false).catch((err) =>
-        console.warn("[labs] save failed:", err),
-      )
-    }
-  }
-
-  function toggleChatAgentCanWrite() {
-    const next = !chatAgentCanWrite
-    setChatAgentCanWrite(next)
-    saveExperimentalChatAgentCanWrite(next).catch((err) =>
       console.warn("[labs] save failed:", err),
     )
   }
@@ -235,134 +201,6 @@ export function LabsSection() {
             <span
               className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
                 aiLintFix ? "translate-x-4.5" : "translate-x-0.5"
-              }`}
-            />
-          </span>
-        </button>
-      </div>
-
-      {/* Chat agent toggle. Same emerald accent as the other Labs toggles. */}
-      <div
-        className={`flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
-          chatAgent
-            ? "border-emerald-500/60 bg-emerald-500/10 dark:border-emerald-400/50 dark:bg-emerald-400/10"
-            : "border-border bg-background"
-        }`}
-      >
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">
-            {t("settings.sections.labs.chatAgentLabel", {
-              defaultValue: "Chat agent (experimental)",
-            })}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {t("settings.sections.labs.chatAgentHint", {
-              defaultValue:
-                "Upgrades chat from a single-turn stream into a tool-calling agent. When the LLM needs info it can call web_fetch (any URL, zero config), web_search (your configured Tavily / SerpApi / SearXNG / Ollama), search_local_files (project-scoped), and wiki inspection tools. Costs more tokens and drops the per-token streaming UX in agent mode — the first response arrives as a complete block once the agent finishes its tool calls.",
-            })}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={toggleChatAgent}
-          role="switch"
-          aria-checked={chatAgent}
-          aria-label={t("settings.sections.labs.chatAgentLabel", {
-            defaultValue: "Chat agent (experimental)",
-          })}
-          className="ml-3 flex shrink-0 items-center gap-2"
-        >
-          <span
-            className={`inline-block w-6 text-right text-xs font-semibold ${
-              chatAgent
-                ? "text-emerald-700 dark:text-emerald-300"
-                : "text-muted-foreground"
-            }`}
-          >
-            {chatAgent
-              ? t("settings.sections.labs.stateOn", { defaultValue: "ON" })
-              : t("settings.sections.labs.stateOff", { defaultValue: "OFF" })}
-          </span>
-          <span
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-              chatAgent ? "bg-emerald-500 dark:bg-emerald-400" : "bg-muted"
-            }`}
-          >
-            <span
-              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-                chatAgent ? "translate-x-4.5" : "translate-x-0.5"
-              }`}
-            />
-          </span>
-        </button>
-      </div>
-
-      {/* Chat-agent write tools — depends on the Chat agent flag.
-          Kept at the same horizontal alignment as sibling cards
-          (no `ml-6` indent) so the toggle column stays a clean
-          vertical line; the dependency is signalled inline with a
-          "↳" prefix on the label + dashed border + opacity when the
-          parent flag is off. */}
-      <div
-        className={`flex items-center justify-between rounded-md border-2 p-3 transition-colors ${
-          !chatAgent
-            ? "border-dashed border-border bg-muted/20 opacity-60"
-            : chatAgentCanWrite
-              ? "border-emerald-500/60 bg-emerald-500/10 dark:border-emerald-400/50 dark:bg-emerald-400/10"
-              : "border-border bg-background"
-        }`}
-      >
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">
-            <span className="mr-1 text-muted-foreground">↳</span>
-            {t("settings.sections.labs.chatAgentCanWriteLabel", {
-              defaultValue: "Chat agent can write wiki pages (experimental)",
-            })}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {t("settings.sections.labs.chatAgentCanWriteHint", {
-              defaultValue:
-                "Adds write_wiki_page + update_wiki_page to the chat agent's tools. Use this when you want the agent to create / update pages directly from chat (\"save this as a wiki page\", \"update concepts/foo with this\"). The prompt rails it to write ONLY when you explicitly ask. delete + link tools are NOT included — those stay in ingest / lint-fix paths. Requires Chat agent ON.",
-            })}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={toggleChatAgentCanWrite}
-          role="switch"
-          aria-checked={chatAgentCanWrite}
-          disabled={!chatAgent}
-          aria-label={t("settings.sections.labs.chatAgentCanWriteLabel", {
-            defaultValue: "Chat agent can write wiki pages (experimental)",
-          })}
-          className="ml-3 flex shrink-0 items-center gap-2 disabled:cursor-not-allowed"
-          title={
-            !chatAgent
-              ? t("settings.sections.labs.chatAgentCanWriteParentOff", {
-                  defaultValue: "Enable Chat agent first to use this sub-flag.",
-                })
-              : undefined
-          }
-        >
-          <span
-            className={`inline-block w-6 text-right text-xs font-semibold ${
-              chatAgentCanWrite
-                ? "text-emerald-700 dark:text-emerald-300"
-                : "text-muted-foreground"
-            }`}
-          >
-            {chatAgentCanWrite
-              ? t("settings.sections.labs.stateOn", { defaultValue: "ON" })
-              : t("settings.sections.labs.stateOff", { defaultValue: "OFF" })}
-          </span>
-          <span
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-              chatAgentCanWrite ? "bg-emerald-500 dark:bg-emerald-400" : "bg-muted"
-            }`}
-          >
-            <span
-              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-                chatAgentCanWrite ? "translate-x-4.5" : "translate-x-0.5"
               }`}
             />
           </span>

@@ -7,6 +7,7 @@ import {
   saveReviewItems,
   saveLintItems,
   saveChatHistory,
+  saveChatPreferences,
   saveActivityItems,
 } from "./persist"
 
@@ -49,6 +50,12 @@ export async function flushAndSuspendAutoSave(): Promise<void> {
   await Promise.allSettled([
     saveReviewItems(projectPath, review),
     saveLintItems(projectPath, lint),
+    // Chat search toggles persist even mid-stream — they're tiny prefs,
+    // unrelated to the streaming-skip that protects in-flight messages.
+    saveChatPreferences(projectPath, {
+      useWebSearch: chat.useWebSearch,
+      useAnyTxtSearch: chat.useAnyTxtSearch,
+    }),
     chat.isStreaming
       ? Promise.resolve()
       : saveChatHistory(projectPath, chat.conversations, chat.messages),
@@ -124,7 +131,13 @@ export function setupAutoSave(): void {
     chatTimer = setTimeout(() => {
       const project = useWikiStore.getState().project
       if (project) {
-        saveChatHistory(project.path, state.conversations, state.messages).catch(() => {})
+        Promise.allSettled([
+          saveChatPreferences(project.path, {
+            useWebSearch: state.useWebSearch,
+            useAnyTxtSearch: state.useAnyTxtSearch,
+          }),
+          saveChatHistory(project.path, state.conversations, state.messages),
+        ]).catch(() => {})
       }
     }, 2000)
   })

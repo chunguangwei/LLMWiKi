@@ -4,21 +4,15 @@ import { BookOpen, Plus, Trash2, MessageSquare, Pencil, Check, X } from "lucide-
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles } from "./chat-message"
 import { ChatInput } from "./chat-input"
-import { useChatStore, chatMessagesToLLM } from "@/stores/chat-store"
+import { useChatStore, chatMessagesToLLM, type MessageReference } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
-import { runChatAgent } from "@/lib/chat-agent"
-import { hasUsableLlm, providerSupportsToolAgent } from "@/lib/has-usable-llm"
+import { streamChat } from "@/lib/llm-client"
+import { buildChatAgentMessages, type ChatAgentEvent } from "@/lib/chat-agent"
+import { hasConfiguredAnyTxt } from "@/lib/anytxt-search"
 import { executeIngestWrites } from "@/lib/ingest"
-import { listDirectory, readFile } from "@/commands/fs"
+import { listDirectory } from "@/commands/fs"
 import { deleteChatConversation } from "@/lib/persist"
-import { searchWiki } from "@/lib/search"
-import { buildRetrievalGraph, getRelatedNodes } from "@/lib/graph-relevance"
-import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
-import { buildLanguageDirective, buildLanguageReminder } from "@/lib/output-language"
-import { isGreeting } from "@/lib/greeting-detector"
-import { computeContextBudget } from "@/lib/context-budget"
-import { estimateTokens, trimToTokenBudget } from "@/lib/token-estimate"
+import { normalizePath, getFileName } from "@/lib/path-utils"
 import {
   addFilesToRawWithContext,
   addImagesToRawWithContext,
@@ -399,13 +393,19 @@ export function ChatPanel() {
   const streamingContent = useChatStore((s) => s.streamingContent)
   const mode = useChatStore((s) => s.mode)
   const addMessage = useChatStore((s) => s.addMessage)
-  const addAssistantTurn = useChatStore((s) => s.addAssistantTurn)
   const setStreaming = useChatStore((s) => s.setStreaming)
   const appendStreamToken = useChatStore((s) => s.appendStreamToken)
   const finalizeStream = useChatStore((s) => s.finalizeStream)
   const createConversation = useChatStore((s) => s.createConversation)
   const removeLastAssistantMessage = useChatStore((s) => s.removeLastAssistantMessage)
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
+  // Chat-agent search toggles (ported from upstream cea0029). Lifted into
+  // the store so they persist per project; passed down to ChatInput as
+  // controlled props and read in handleSend to gate web/anytxt tools.
+  const useWebSearch = useChatStore((s) => s.useWebSearch)
+  const useAnyTxtSearch = useChatStore((s) => s.useAnyTxtSearch)
+  const setUseWebSearch = useChatStore((s) => s.setUseWebSearch)
+  const setUseAnyTxtSearch = useChatStore((s) => s.setUseAnyTxtSearch)
 
   // Derive active messages via selector to re-render on message changes
   const allMessages = useChatStore((s) => s.messages)
@@ -418,9 +418,14 @@ export function ChatPanel() {
   const setFileTree = useWikiStore((s) => s.setFileTree)
 
   const abortRef = useRef<AbortController | null>(null)
+  // Monotonic id for the active send. Bumped on stop / new send so a
+  // stale agent run can detect it's no longer current and skip committing.
+  const runIdRef = useRef(0)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const dropTargetRef = useRef<HTMLDivElement>(null)
+  // Live chat-agent activity feed shown above the streaming reply.
+  const [agentEvents, setAgentEvents] = useState<ChatAgentEvent[]>([])
 
   // OS files dragged into the chat — accumulate paths until the user hits
   // send, at which point we copy them to raw/sources/ with the typed message
@@ -451,6 +456,11 @@ export function ChatPanel() {
   // so the user sees exactly what'll be recorded.
   const [searchIntent, setSearchIntent] = useState<string | null>(null)
   const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
+  // AnyTXT desktop search is only offered when a usable AnyTXT config
+  // exists. The fork ships no AnyTXT settings UI yet, so this stays false
+  // and the toggle renders disabled — the plumbing is here for parity with
+  // upstream and a future settings panel.
+  const anyTxtAvailable = hasConfiguredAnyTxt(searchApiConfig.anyTxt)
 
   useEffect(() => {
     const w = getCurrentWebviewWindow()
@@ -644,6 +654,19 @@ export function ChatPanel() {
 
   const handleSend = useCallback(
     async (text: string) => {
+      // ── Chat-agent routing (ported from upstream cea0029) ────────
+      // Every chat turn now flows through the multi-tool chat agent
+      // (`buildChatAgentMessages`): it does query understanding, decides
+      // which tools to call (wiki / graph / web / anytxt), runs them,
+      // assembles the context, and hands back the final LLM message list
+      // which we then stream. This REPLACES the fork's old experimental
+      // chat-agent + the classic graph-retrieval system-prompt assembly
+      // — "stop ours, use theirs". The web/anytxt toggles come from the
+      // chat-store (persisted per project).
+      const sendOptions = {
+        useWebSearch: useChatStore.getState().useWebSearch,
+        useAnyTxtSearch: useChatStore.getState().useAnyTxtSearch,
+      }
       // Auto-create a conversation if none is active
       let convId = useChatStore.getState().activeConversationId
       if (!convId) {
@@ -651,412 +674,137 @@ export function ChatPanel() {
       }
 
       addMessage("user", text)
+      setStreaming(true)
+      setAgentEvents([])
+      let finalized = false
+      // runId guards against a stale agent run committing tokens after the
+      // user has hit Stop or fired a newer send (handleStop bumps runId).
+      const runId = ++runIdRef.current
 
-      // Chat-agent path (Phase G2.2). Gated on the Labs flag + a
-      // usable LLM + an open project (the agent uses wiki tools which
-      // need a project root). Skips the rest of handleSend — the
-      // agent loop builds its own context via tools rather than the
-      // retrieval-graph + system-prompt assembly below.
-      //
-      // Falls through to classic streaming when:
-      //   - flag is off (default)
-      //   - no usable LLM (offline / unconfigured)
-      //   - no project open
-      //   - provider is a subprocess CLI (claude-code / codex-cli) with
-      //     no tool-calling channel — the agent loop can't run on it, so
-      //     we fall back to classic streaming (which DOES support these
-      //     providers) instead of throwing "doesn't support provider".
-      //   - agent loop throws — caller sees the error in the chat
-      const chatAgentEnabled = useWikiStore.getState().experimentalChatAgent
-      const agentCapable =
-        chatAgentEnabled &&
-        hasUsableLlm(llmConfig) &&
-        providerSupportsToolAgent(llmConfig.provider) &&
-        !!project
-
-      // Badge the eventual classic answer with "Classic search" whenever the
-      // user has agent mode ON but we end up answering with classic
-      // retrieval — either the provider can't run the agent loop (subprocess
-      // CLI), or the agent attempt below was unsatisfactory and we fell back.
-      // Agent-off chats get no badge (classic is the only mode they expect).
-      let markClassic =
-        chatAgentEnabled &&
-        hasUsableLlm(llmConfig) &&
-        !!project &&
-        !providerSupportsToolAgent(llmConfig.provider)
-
-      // Agent-first: on a tool-calling provider, try the agent loop. If it
-      // comes back unsatisfactory (ran out of budget, empty text, or threw)
-      // we fall through to classic search below instead of committing a
-      // partial reply. A clean agent answer is committed and we return.
-      if (agentCapable) {
-        // Lock the input + wire abort. Agent mode doesn't stream tokens, but
-        // `isStreaming` also disables send + drives Stop. Same AbortController
-        // shape as classic streaming so handleStop is reused unchanged.
+      try {
         const controller = new AbortController()
         abortRef.current = controller
-        setStreaming(true)
-        let fallToClassic = false
-        try {
-          const searchApiConfig = useWikiStore.getState().searchApiConfig
-          const outputLanguage = useWikiStore.getState().outputLanguage
-          const allMessages = useChatStore.getState().messages
-          const history = allMessages.filter((m) => m.conversationId === convId)
-          // canWrite sub-flag: when on, runChatAgent exposes
-          // write_wiki_page + update_wiki_page to the LLM. The prompt
-          // teaches the agent to use those tools only when the user
-          // explicitly asks for a wiki mutation.
-          const canWrite = useWikiStore.getState().experimentalChatAgentCanWrite
-          const result = await runChatAgent({
-            userMessage: text,
-            history: history.slice(0, -1),  // exclude the user message we just added
-            project,
-            llmConfig,
-            searchApiConfig,
-            outputLanguage,
-            signal: controller.signal,
-            canWrite,
-          })
-          // "Unsatisfactory" per the agreed rule: ran out of budget
-          // (max_turns / max_tokens) or produced no substantive text → fall
-          // back to classic search rather than commit a partial/empty reply.
-          if (result.incomplete || result.text.trim().length === 0) {
-            fallToClassic = true
-          } else {
-            addAssistantTurn(result.text, {
-              toolCalls: result.toolCalls,
-              fetchedSources: result.fetchedSources,
-            })
-          }
-        } catch (err) {
-          // A user Stop click is intentional — surface "(stopped)" and bail.
-          // Any other error: fall back to classic rather than dead-ending on
-          // "Chat-agent failed".
-          if (controller.signal.aborted) {
-            addMessage("assistant", `_(stopped)_`)
-          } else {
-            fallToClassic = true
-          }
-        } finally {
-          if (abortRef.current === controller) abortRef.current = null
-        }
-        if (!fallToClassic) {
-          setStreaming(false)
-          return
-        }
-        // Fall through to the classic path below and badge its answer.
-        markClassic = true
-      }
+        const isCurrentRun = () => runIdRef.current === runId && !controller.signal.aborted
 
-      setStreaming(true)
+        // ── Conversation history with count limit ────────────────
+        // Only include messages from the active conversation, last N
+        // messages. The agent uses this for follow-up understanding and
+        // to thread retrieval history across turns.
+        const activeConvMessages = useChatStore.getState().getActiveMessages()
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .slice(-maxHistoryMessages)
+        const historyMessages = chatMessagesToLLM(activeConvMessages)
+        const retrievalHistory = collectRecentRetrievalHistory(activeConvMessages)
 
-      // Build system prompt with wiki context using graph-enhanced retrieval
-      const systemMessages: LLMMessage[] = []
-      let queryRefs: { title: string; path: string }[] = []
-      let langReminder: string | undefined
-      // Pure greetings ("hi", "你好", "嗨") don't warrant running the whole
-      // retrieval pipeline — it's slow, costs context, and drags in random
-      // wiki pages the user clearly didn't ask about. Short-circuit with a
-      // minimal system prompt and let the model reply conversationally.
-      const greetingOnly = isGreeting(text)
-      if (project && greetingOnly) {
-        systemMessages.push({
-          role: "system",
-          content: [
-            `You are a wiki assistant for the project "${project.name}".`,
-            "The user sent a casual greeting — reply briefly and naturally, in one or two sentences.",
-            "Do NOT invent wiki content or pretend to have retrieved pages. Invite the user to ask a concrete question if they want information from the wiki.",
-            "",
-            buildLanguageReminder(text),
-          ].join("\n"),
+        const agentResult = await buildChatAgentMessages({
+          project: project ? { name: project.name, path: project.path } : null,
+          llmConfig,
+          searchApiConfig,
+          text,
+          historyMessages,
+          retrievalHistory,
+          dataVersion: useWikiStore.getState().dataVersion,
+          options: sendOptions,
+          signal: controller.signal,
+          onEvent: (event) => {
+            if (!isCurrentRun()) return
+            // Keep only the most recent handful so the activity feed
+            // doesn't grow unbounded on a long multi-round retrieval.
+            setAgentEvents((prev) => [...prev, event].slice(-6))
+          },
         })
-        // Skip retrieval; queryRefs stays empty so no "Sources" chip is shown.
-      } else if (project) {
-        const pp = normalizePath(project.path)
-        const dataVersion = useWikiStore.getState().dataVersion
+        if (!isCurrentRun()) return
+        // Expose the cited pages for SourceFilesBar (legacy module global).
+        lastQueryPages = agentResult.queryPages
 
-        // ── Budget allocation (see context-budget.ts) ─────────
-        // Page budget scales with the LLM's context window; we now
-        // also reserve ~15% as headroom for the response so the
-        // model isn't truncated mid-sentence on a packed prompt.
-        const {
-          indexBudget: INDEX_BUDGET,
-          pageBudget: PAGE_BUDGET,
-          maxPageSize: MAX_PAGE_SIZE,
-        } = computeContextBudget(llmConfig.maxContextSize)
+        let accumulated = ""
+        let thinkingOpen = false
 
-        const [rawIndex, purpose] = await Promise.all([
-          readFile(`${pp}/wiki/index.md`).catch(() => ""),
-          readFile(`${pp}/purpose.md`).catch(() => ""),
-        ])
+        const appendReasoning = (token: string) => {
+          if (!token) return
+          if (!thinkingOpen) {
+            thinkingOpen = true
+            accumulated += "<think>"
+            appendStreamToken("<think>")
+          }
+          accumulated += token
+          appendStreamToken(token)
+        }
 
-        // ── Phase 1: Tokenized search → top 10 ────────────────
-        const searchResults = await searchWiki(pp, text)
-        const topSearchResults = searchResults.slice(0, 10)
+        const closeReasoning = () => {
+          if (!thinkingOpen) return
+          thinkingOpen = false
+          accumulated += "</think>"
+          appendStreamToken("</think>")
+        }
 
-        // ── Trim index by relevance if over budget ─────────────
-        // Budgets are TOKENS (see token-estimate.ts) — measure with
-        // estimateTokens, not raw char length, so a CJK index isn't
-        // wrongly judged to "fit" when it actually exceeds the window.
-        let index = rawIndex
-        if (estimateTokens(rawIndex) > INDEX_BUDGET) {
-          const { tokenizeQuery } = await import("@/lib/search")
-          const tokens = tokenizeQuery(text)
-          const lines = rawIndex.split("\n")
-          const keptLines: string[] = []
-          let keptTokens = 0
-
-          for (const line of lines) {
-            const isHeader = line.startsWith("##")
-            const lower = line.toLowerCase()
-            const isRelevant = tokens.some((t) => lower.includes(t))
-
-            if (isHeader || isRelevant) {
-              const lineTokens = estimateTokens(line) + 1
-              if (keptTokens + lineTokens <= INDEX_BUDGET) {
-                keptLines.push(line)
-                keptTokens += lineTokens
+        await streamChat(
+          llmConfig,
+          agentResult.messages,
+          {
+            onToken: (token) => {
+              if (!isCurrentRun()) return
+              closeReasoning()
+              accumulated += token
+              appendStreamToken(token)
+            },
+            onReasoningToken: (token) => {
+              if (!isCurrentRun()) return
+              appendReasoning(token)
+            },
+            onDone: () => {
+              if (!isCurrentRun()) return
+              closeReasoning()
+              finalized = true
+              finalizeStream(accumulated, agentResult.references)
+              setAgentEvents([])
+              abortRef.current = null
+              // save-worthy detection removed — user has direct "Save to Wiki" button on each message
+            },
+            onError: (err) => {
+              if (!isCurrentRun()) return
+              if (controller.signal.aborted || isAbortLikeError(err)) {
+                finalized = true
+                setStreaming(false)
+                setAgentEvents([])
+                abortRef.current = null
+                return
               }
-            }
-          }
-          index = keptLines.join("\n")
-          if (index.length < rawIndex.length) {
-            index += "\n\n[...index trimmed to relevant entries...]"
-          }
-        }
-
-        // ── Phase 2: Graph 1-level expansion ───────────────────
-        // Note: Vector search (if enabled) is already merged into searchResults
-        // by searchWiki() in search.ts — no duplicate code needed here.
-        const graph = await buildRetrievalGraph(pp, dataVersion)
-        const expandedIds = new Set<string>()
-        const searchHitPaths = new Set(topSearchResults.map((r) => r.path))
-        const graphExpansions: { title: string; path: string; relevance: number }[] = []
-
-        for (const result of topSearchResults) {
-          const fileName = getFileName(result.path)
-          const nodeId = fileName.replace(/\.md$/, "")
-          const related = getRelatedNodes(nodeId, graph, 3)
-          for (const { node, relevance } of related) {
-            if (relevance < 2.0) continue
-            if (searchHitPaths.has(node.path)) continue
-            if (expandedIds.has(node.id)) continue
-            expandedIds.add(node.id)
-            graphExpansions.push({ title: node.title, path: node.path, relevance })
-          }
-        }
-        graphExpansions.sort((a, b) => b.relevance - a.relevance)
-
-        // ── Phase 3 & 4: Page budget control ───────────────────
-        // Budgets/measurements are in TOKENS so the packed prompt actually
-        // fits the model's window regardless of script (a char count would
-        // over-pack CJK pages by ~4×).
-        let usedTokens = 0
-        type PageEntry = { title: string; path: string; content: string; priority: number }
-        const relevantPages: PageEntry[] = []
-        const addedPaths = new Set<string>()
-
-        const tryAddPage = async (title: string, filePath: string, priority: number): Promise<boolean> => {
-          if (usedTokens >= PAGE_BUDGET) return false
-          try {
-            const raw = await readFile(filePath)
-            const relativePath = getRelativePath(filePath, pp)
-            if (addedPaths.has(relativePath)) return false
-            const truncated = estimateTokens(raw) > MAX_PAGE_SIZE
-              ? trimToTokenBudget(raw, MAX_PAGE_SIZE)
-              : raw
-            const pageTokens = estimateTokens(truncated)
-            if (usedTokens + pageTokens > PAGE_BUDGET) return false
-            usedTokens += pageTokens
-            addedPaths.add(relativePath)
-            relevantPages.push({ title, path: relativePath, content: truncated, priority })
-            return true
-          } catch { return false }
-        }
-
-        // P-1: The page the user currently has open in the preview.
-        // Injecting it (highest priority) lets "fix this page" / "correct
-        // X here" work, and gives the LLM the exact target path to edit.
-        let currentPageRel = ""
-        const openFile = useWikiStore.getState().selectedFile
-        if (openFile && /\/wiki\/.+\.md$/i.test(normalizePath(openFile))) {
-          const base = getFileName(openFile)
-          if (base !== "index.md" && base !== "log.md") {
-            if (await tryAddPage("Currently open page", openFile, -1)) {
-              currentPageRel = getRelativePath(openFile, pp)
-            }
-          }
-        }
-
-        // P0: Title matches
-        for (const r of topSearchResults.filter((r) => r.titleMatch)) {
-          await tryAddPage(r.title, r.path, 0)
-        }
-        // P1: Content matches
-        for (const r of topSearchResults.filter((r) => !r.titleMatch)) {
-          await tryAddPage(r.title, r.path, 1)
-        }
-        // P2: Graph expansions
-        for (const exp of graphExpansions) {
-          await tryAddPage(exp.title, exp.path, 2)
-        }
-        // P3: Overview fallback
-        if (relevantPages.length === 0) {
-          await tryAddPage("Overview", `${pp}/wiki/overview.md`, 3)
-        }
-
-        const pagesContext = relevantPages.length > 0
-          ? relevantPages.map((p, i) =>
-              `### [${i + 1}] ${p.title}\nPath: ${p.path}\n\n${p.content}`
-            ).join("\n\n---\n\n")
-          : "(No wiki pages found)"
-
-        const pageList = relevantPages.map((p, i) =>
-          `[${i + 1}] ${p.title} (${p.path})`
-        ).join("\n")
-
-        systemMessages.push({
-          role: "system",
-          content: [
-            "You are a knowledgeable wiki assistant. Answer questions based on the wiki content provided below.",
-            "",
-            "## Rules",
-            "- Answer based ONLY on the numbered wiki pages provided below.",
-            "- If the provided pages don't contain enough information, say so honestly.",
-            "- Keep subject boundaries strict: do not apply a claim, limitation, evaluation, benchmark result, or recommendation about one entity/model/product/method to another subject just because they share keywords.",
-            "- If pages or external sources discuss multiple subjects, attribute each claim to the exact subject named in that page or source; when uncertain, state the uncertainty instead of generalizing.",
-            "- Use [[wikilink]] syntax to reference wiki pages.",
-            "- When citing information, use the page number in brackets, e.g. [1], [2].",
-            "- At the VERY END of your response, add a hidden comment listing which page numbers you used:",
-            "  <!-- cited: 1, 3, 5 -->",
-            "",
-            "Use markdown formatting for clarity.",
-            "",
-            purpose ? `## Wiki Purpose\n${purpose}` : "",
-            index ? `## Wiki Index\n${index}` : "",
-            relevantPages.length > 0 ? `## Page List\n${pageList}` : "",
-            `## Wiki Pages\n\n${pagesContext}`,
-            "",
-            relevantPages.length > 0
-              ? [
-                  "## Editing wiki pages",
-                  "If — and ONLY if — the user explicitly asks you to correct, fix, update, rewrite, or patch wiki content, propose the change as a FILE block AFTER your normal explanation:",
-                  "",
-                  "```",
-                  "---FILE: <exact wiki/...md path from the Page List above>---",
-                  "<the COMPLETE corrected page, including frontmatter>",
-                  "---END FILE---",
-                  "```",
-                  "",
-                  "Rules for the FILE block:",
-                  "- Target ONE existing page by its exact `Path` shown above. Never invent a path that isn't listed.",
-                  "- Output the WHOLE page, not a fragment or diff. Keep everything you are not changing; preserve the frontmatter `type`, `title`, and `created`.",
-                  currentPageRel ? `- The user is currently viewing \`${currentPageRel}\` — prefer it when the request is about \"this page\".` : "",
-                  "- At most ONE FILE block per response.",
-                  "- If you CANNOT confidently pick one existing target page (the request is ambiguous, spans multiple pages, or no matching page exists), DO NOT emit a FILE block. Instead emit a REVIEW block so a human can decide:",
-                  "  ---REVIEW: suggestion | <short title>---",
-                  "  <what should change and why; name candidate pages>",
-                  "  ---END REVIEW---",
-                  "- For ordinary questions where no edit was requested, do NOT emit FILE or REVIEW blocks.",
-                ].filter(Boolean).join("\n")
-              : "",
-            "",
-            "---",
-            "",
-            buildLanguageDirective(text),
-          ].filter(Boolean).join("\n"),
-        })
-
-        // Reminder injected later, right before the user's current message
-        // (after history so it's the last system instruction the LLM sees).
-        langReminder = buildLanguageReminder(text)
-
-        lastQueryPages = relevantPages.map((p) => ({ title: p.title, path: p.path }))
-        queryRefs = [...lastQueryPages]
-      }
-
-      // ── Conversation history with count limit ────────────────
-      // Only include messages from the active conversation, last N messages
-      const activeConvMessages = useChatStore.getState().getActiveMessages()
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .slice(-maxHistoryMessages)
-
-      // Prepend the language reminder onto the final user turn rather than
-      // inserting a second {role:"system"} between history and the final
-      // user message. vLLM / llama.cpp / Ollama drive their chat templates
-      // from HF Jinja, and Qwen3-family templates enforce "system only at
-      // index 0" — a mid-conversation system message gets rejected with
-      // "System message must be at the beginning." (HTTP 400). OpenAI and
-      // Anthropic are more lenient, but keeping a single system at the top
-      // is the safest shape across every OpenAI-compatible backend.
-      const historyMessages = chatMessagesToLLM(activeConvMessages)
-      let llmMessages: LLMMessage[] = [...systemMessages, ...historyMessages]
-      if (langReminder && historyMessages.length > 0) {
-        const lastIdx = llmMessages.length - 1
-        const last = llmMessages[lastIdx]
-        if (last && last.role === "user") {
-          llmMessages = [
-            ...llmMessages.slice(0, lastIdx),
-            { role: "user", content: `[${langReminder}]\n\n${last.content}` },
-          ]
-        }
-      }
-
-      const controller = new AbortController()
-      abortRef.current = controller
-
-      let accumulated = ""
-      let thinkingOpen = false
-
-      const appendReasoning = (token: string) => {
-        if (!token) return
-        if (!thinkingOpen) {
-          thinkingOpen = true
-          accumulated += "<think>"
-          appendStreamToken("<think>")
-        }
-        accumulated += token
-        appendStreamToken(token)
-      }
-
-      const closeReasoning = () => {
-        if (!thinkingOpen) return
-        thinkingOpen = false
-        accumulated += "</think>"
-        appendStreamToken("</think>")
-      }
-
-      await streamChat(
-        llmConfig,
-        llmMessages,
-        {
-          onToken: (token) => {
-            closeReasoning()
-            accumulated += token
-            appendStreamToken(token)
+              finalized = true
+              finalizeStream(`Error: ${err.message}`, undefined)
+              setAgentEvents([])
+              abortRef.current = null
+            },
           },
-          onReasoningToken: appendReasoning,
-          onDone: () => {
-            closeReasoning()
-            finalizeStream(accumulated, queryRefs, markClassic ? { retrieval: "classic" } : undefined)
+          controller.signal,
+        )
+      } catch (err) {
+        if (!finalized) {
+          if (isAbortLikeError(err) || runIdRef.current !== runId) {
+            setStreaming(false)
+            setAgentEvents([])
             abortRef.current = null
-            // save-worthy detection removed — user has direct "Save to Wiki" button on each message
-          },
-          onError: (err) => {
-            finalizeStream(`Error: ${err.message}`, undefined)
-            abortRef.current = null
-          },
-        },
-        controller.signal,
-      )
+            return
+          }
+          const message = err instanceof Error ? err.message : String(err)
+          finalizeStream(`Error: ${message}`, undefined)
+          setAgentEvents([])
+        }
+        abortRef.current = null
+      }
     },
-    [llmConfig, addMessage, setStreaming, appendStreamToken, finalizeStream, createConversation, maxHistoryMessages],
+    [project, llmConfig, searchApiConfig, addMessage, setStreaming, appendStreamToken, finalizeStream, createConversation, maxHistoryMessages],
   )
 
   const handleStop = useCallback(() => {
+    // Bump runId first so any in-flight agent run / stream callback that
+    // fires after this is treated as stale (isCurrentRun() → false).
+    runIdRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
-  }, [])
+    setStreaming(false)
+    setAgentEvents([])
+  }, [setStreaming])
 
   // Drag-drop / URL-paste submit path: when the user hits send with staged
   // OS files OR staged URLs, copy them into raw/sources/ using the typed
@@ -1306,7 +1054,7 @@ export function ChatPanel() {
                     />
                   )
                 })}
-                {isStreaming && <StreamingMessage content={streamingContent} />}
+                {isStreaming && <StreamingMessage content={streamingContent} agentEvents={agentEvents} />}
                 <div ref={bottomRef} />
               </div>
             </div>
@@ -1340,6 +1088,11 @@ export function ChatPanel() {
           onSend={handleSubmit}
           onStop={handleStop}
           isStreaming={isStreaming}
+          useWebSearch={useWebSearch}
+          useAnyTxtSearch={useAnyTxtSearch}
+          onUseWebSearchChange={setUseWebSearch}
+          onUseAnyTxtSearchChange={setUseAnyTxtSearch}
+          anyTxtAvailable={anyTxtAvailable}
           placeholder={
             mode === "ingest"
               ? t("chat.ingestPlaceholder")
@@ -1360,4 +1113,40 @@ export function ChatPanel() {
       </div>
     </div>
   )
+}
+
+/**
+ * Treat user-Stop aborts (and AbortController cancellations) as benign so
+ * we silence them instead of surfacing "Error: aborted" in the chat.
+ * Ported from upstream cea0029's chat-agent routing.
+ */
+function isAbortLikeError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === "AbortError") return true
+  if (!(err instanceof Error)) return false
+  return err.name === "AbortError" || /abort|cancel/i.test(err.message)
+}
+
+/**
+ * Thread retrieval context across turns: gather the references the
+ * assistant cited in recent replies (most-recent-first, deduped by
+ * kind+url/path) so the agent's follow-up understanding can reuse what
+ * was already found instead of re-searching from scratch. Capped at 10.
+ * Ported from upstream cea0029.
+ */
+function collectRecentRetrievalHistory(
+  messages: ReturnType<typeof useChatStore.getState>["messages"],
+): MessageReference[] {
+  const refs: MessageReference[] = []
+  const seen = new Set<string>()
+  for (const msg of [...messages].reverse()) {
+    if (msg.role !== "assistant" || !msg.references) continue
+    for (const ref of msg.references) {
+      const key = `${ref.kind ?? "wiki"}:${ref.url ?? ref.path}`.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      refs.push(ref)
+      if (refs.length >= 10) return refs
+    }
+  }
+  return refs
 }

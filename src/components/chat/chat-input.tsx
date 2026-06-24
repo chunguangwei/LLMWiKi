@@ -1,5 +1,6 @@
-import { useRef, useState, useCallback } from "react"
-import { Send, Square, X, Paperclip, Link as LinkIcon, Search, Image as ImageIcon } from "lucide-react"
+import { useRef, useState, useCallback, useEffect } from "react"
+import { Send, Square, X, Paperclip, Link as LinkIcon, Search, Image as ImageIcon, Globe, FileSearch } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import { getFileName } from "@/lib/path-utils"
@@ -18,6 +19,19 @@ interface ChatInputProps {
   onSend: (text: string) => void
   onStop: () => void
   isStreaming: boolean
+  /**
+   * Chat-agent search toggles (ported from upstream cea0029). Controlled
+   * by the chat-store (persisted per project) — the buttons here just
+   * flip the store value via the change callbacks. `anyTxtAvailable`
+   * gates the AnyTXT toggle: when no AnyTXT config exists it renders
+   * disabled (the fork has no AnyTXT settings UI yet, so it's effectively
+   * always off, but the control is wired for parity + future use).
+   */
+  useWebSearch: boolean
+  useAnyTxtSearch: boolean
+  onUseWebSearchChange: (enabled: boolean) => void
+  onUseAnyTxtSearchChange: (enabled: boolean) => void
+  anyTxtAvailable?: boolean
   placeholder?: string
   stagedFiles?: string[]
   onRemoveFile?: (path: string) => void
@@ -69,6 +83,16 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary)
 }
 
+/** Pill styling for the chat-agent search toggles, on vs off. */
+function searchToggleClass(active: boolean): string {
+  return [
+    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+    active
+      ? "border-primary/40 bg-primary/10 text-primary"
+      : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground",
+  ].join(" ")
+}
+
 function hostnameOf(url: string): string {
   try {
     return new URL(url).hostname
@@ -81,6 +105,11 @@ export function ChatInput({
   onSend,
   onStop,
   isStreaming,
+  useWebSearch,
+  useAnyTxtSearch,
+  onUseWebSearchChange,
+  onUseAnyTxtSearchChange,
+  anyTxtAvailable = true,
   placeholder,
   stagedFiles,
   onRemoveFile,
@@ -94,8 +123,16 @@ export function ChatInput({
   searchIntent,
   onClearSearchIntent,
 }: ChatInputProps) {
+  const { t } = useTranslation()
   const [value, setValue] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // If AnyTXT becomes unavailable while its toggle is on, switch it back
+  // off (ported from upstream cea0029) so we never ask the agent to use a
+  // tool that isn't configured.
+  useEffect(() => {
+    if (!anyTxtAvailable && useAnyTxtSearch) onUseAnyTxtSearchChange(false)
+  }, [anyTxtAvailable, onUseAnyTxtSearchChange, useAnyTxtSearch])
 
   const isSearching = looksLikeSearchTrigger(value)
   const hasSearchIntent = Boolean(searchIntent && searchIntent.length > 0)
@@ -297,6 +334,36 @@ export function ChatInput({
           ))}
         </div>
       )}
+      {/*
+        Chat-agent search toggles (ported from upstream cea0029). When on,
+        the agent is allowed to call the corresponding tool (web / AnyTXT)
+        while building context. State is owned by the chat-store and
+        persisted per project; these buttons just flip it.
+      */}
+      <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2">
+        <button
+          type="button"
+          aria-pressed={useWebSearch}
+          onClick={() => onUseWebSearchChange(!useWebSearch)}
+          disabled={isStreaming}
+          className={searchToggleClass(useWebSearch)}
+        >
+          <Globe className="h-3 w-3" />
+          {t("chat.searchToggle.web")}
+        </button>
+        {anyTxtAvailable && (
+          <button
+            type="button"
+            aria-pressed={useAnyTxtSearch}
+            onClick={() => onUseAnyTxtSearchChange(!useAnyTxtSearch)}
+            disabled={isStreaming || !anyTxtAvailable}
+            className={searchToggleClass(useAnyTxtSearch)}
+          >
+            <FileSearch className="h-3 w-3" />
+            {t("chat.searchToggle.anytxt")}
+          </button>
+        )}
+      </div>
       <div className="flex items-end gap-2 p-3 pt-2">
         <textarea
           ref={textareaRef}
