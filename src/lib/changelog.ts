@@ -26,6 +26,24 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.45",
+    date: "2026-06-24",
+    highlights: {
+      en: [
+        "New: GitHub versioned backup & multi-device sync (Settings → GitHub Backup). Continuously back up your whole wiki to your own private GitHub repo, restore any earlier version, and sync across computers.",
+        "Beginner-friendly setup: one button opens GitHub with the right permission pre-selected to create a token, then paste it back and connect — the token is stored only in your OS keychain, never uploaded.",
+        "Choose a backup interval; pulls also run on startup and when the window regains focus, so a second computer picks up changes near-real-time. Conflicts on the same file resolve by latest-modified-wins.",
+        "Backs up raw sources too by default (toggle off to keep the repo small); files over 50 MB are skipped with a notice.",
+      ],
+      zh: [
+        "新增:GitHub 版本化备份与多设备同步(设置 → GitHub 备份)。把整个 wiki 持续备份到你自己的私有 GitHub 仓库,可回滚到任意历史版本,并在多台电脑间同步。",
+        "对新手友好的配置:一个按钮直接打开 GitHub(所需权限已自动勾选)创建令牌,复制粘贴回来点连接即可——令牌只存于本机系统钥匙串,绝不上传。",
+        "可设置备份周期;启动时和窗口重新聚焦时也会自动拉取,另一台电脑近实时同步到变更。同一文件冲突按「最新修改优先」自动处理。",
+        "默认也会备份原始资料(可关闭以保持仓库精简);超过 50MB 的文件会被跳过并提示。",
+      ],
+    },
+  },
+  {
     version: "0.4.44",
     date: "2026-06-23",
     highlights: {
