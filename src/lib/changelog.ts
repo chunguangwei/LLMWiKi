@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.48",
+    date: "2026-06-24",
+    highlights: {
+      en: [
+        "GitHub Backup is now resumable: instead of one commit at the very end, it saves progress to GitHub in batches as it uploads. If a big backup is interrupted (network drop, app close), the next run skips what was already saved and continues — no more starting over from scratch.",
+      ],
+      zh: [
+        "GitHub 备份现在支持断点续传:不再等全部上传完才提交,而是边上传边分批保存到 GitHub。大备份中途断了(断网、关应用),下次会跳过已保存的部分继续传——不用再从头开始。",
+      ],
+    },
+  },
+  {
     version: "0.4.47",
     date: "2026-06-24",
     highlights: {
