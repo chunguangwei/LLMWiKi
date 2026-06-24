@@ -330,8 +330,6 @@ pub fn run() {
             commands::github_backup::github_list_versions,
             commands::github_backup::github_restore_version,
             commands::github_backup::github_validate_and_prepare,
-            commands::github_backup::github_oauth_device_start,
-            commands::github_backup::github_oauth_device_poll,
             commands::github_backup::github_save_token,
             commands::github_backup::github_token_status,
             commands::github_backup::github_clear_token,

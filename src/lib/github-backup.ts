@@ -7,10 +7,10 @@ import type { FileNode, WikiProject } from "@/types/wiki"
  * GitHub versioned-backup & multi-device-sync — frontend glue.
  *
  * The heavy lifting (git tree diffing, push/pull, oversize skipping,
- * OAuth device flow, token storage in the OS keychain) lives entirely on
- * the Rust side; this module is three thin layers:
+ * token storage in the OS keychain) lives entirely on the Rust side; this
+ * module is three thin layers:
  *
- *   1. Typed `invoke` wrappers for the 10 backend commands. Tauri
+ *   1. Typed `invoke` wrappers for the backend commands. Tauri
  *      snake_cases our camelCase arg keys automatically, so we pass the
  *      camelCase names the Rust handlers expect post-conversion and the
  *      responses come back already camelCased.
@@ -34,9 +34,6 @@ export interface GithubBackupConfig {
   owner: string
   repo: string
   branch: string
-  /** Which credential the backend should use. PAT is always available;
-   *  OAuth device-login only when GITHUB_OAUTH_CLIENT_ID is filled in. */
-  authMethod: "pat" | "oauth"
   /** Scheduler period in minutes; clamped to [1, 1440] before use. */
   intervalMinutes: number
   /** Whether to push raw/ + sources/ too (repo can grow large). */
@@ -54,7 +51,6 @@ export const DEFAULT_GITHUB_BACKUP_CONFIG: GithubBackupConfig = {
   owner: "",
   repo: "",
   branch: "main",
-  authMethod: "pat",
   intervalMinutes: 30,
   includeRawSources: true,
   enabled: false,
@@ -92,19 +88,6 @@ export interface GithubRestoreResult {
 export interface GithubValidateResult {
   login: string
   created: boolean
-}
-
-export interface GithubOAuthStart {
-  deviceCode: string
-  userCode: string
-  verificationUri: string
-  interval: number
-  expiresIn: number
-}
-
-export interface GithubOAuthPoll {
-  status: "pending" | "slow_down" | "authorized" | "error"
-  token?: string
 }
 
 export interface GithubTokenStatus {
@@ -164,20 +147,6 @@ export async function githubValidateAndPrepare(args: {
   private: boolean
 }): Promise<GithubValidateResult> {
   return invoke<GithubValidateResult>("github_validate_and_prepare", args)
-}
-
-export async function githubOAuthDeviceStart(args: {
-  clientId: string
-  scope: string
-}): Promise<GithubOAuthStart> {
-  return invoke<GithubOAuthStart>("github_oauth_device_start", args)
-}
-
-export async function githubOAuthDevicePoll(args: {
-  clientId: string
-  deviceCode: string
-}): Promise<GithubOAuthPoll> {
-  return invoke<GithubOAuthPoll>("github_oauth_device_poll", args)
 }
 
 export async function githubSaveToken(args: { token: string }): Promise<void> {

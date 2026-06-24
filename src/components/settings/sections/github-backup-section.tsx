@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import {
@@ -13,12 +13,13 @@ import {
   CloudUpload,
   CloudDownload,
   LogOut,
+  ExternalLink,
+  KeyRound,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useWikiStore } from "@/stores/wiki-store"
-import { GITHUB_OAUTH_CLIENT_ID } from "@/lib/app-repo"
 import { listDirectory, readFile } from "@/commands/fs"
 import {
   DEFAULT_GITHUB_BACKUP_CONFIG,
@@ -27,8 +28,6 @@ import {
   githubTokenStatus,
   githubSaveToken,
   githubClearToken,
-  githubOAuthDeviceStart,
-  githubOAuthDevicePoll,
   githubValidateAndPrepare,
   githubBackupNow,
   githubListVersions,
@@ -60,8 +59,6 @@ export function GithubBackupSection() {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
 
-  const oauthEnabled = GITHUB_OAUTH_CLIENT_ID.length > 0
-
   // ── Config (persisted per-device) ──────────────────────────────────
   const [cfg, setCfg] = useState<GithubBackupConfig>(DEFAULT_GITHUB_BACKUP_CONFIG)
   const [cfgLoaded, setCfgLoaded] = useState(false)
@@ -71,13 +68,6 @@ export function GithubBackupSection() {
   const [pat, setPat] = useState("")
   const [showPat, setShowPat] = useState(false)
 
-  // ── OAuth device flow ──────────────────────────────────────────────
-  const [oauth, setOauth] = useState<{
-    userCode: string
-    verificationUri: string
-  } | null>(null)
-  const oauthTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
   // ── Versions list ──────────────────────────────────────────────────
   const [versions, setVersions] = useState<GithubVersion[] | null>(null)
 
@@ -85,7 +75,6 @@ export function GithubBackupSection() {
   const [busy, setBusy] = useState<
     | "savePat"
     | "disconnect"
-    | "oauth"
     | "verifyRepo"
     | "backup"
     | "pull"
@@ -130,13 +119,6 @@ export function GithubBackupSection() {
       cancelled = true
     }
   }, [project, refreshTokenStatus])
-
-  // Stop any pending OAuth poll loop when the component unmounts.
-  useEffect(() => {
-    return () => {
-      if (oauthTimer.current) clearTimeout(oauthTimer.current)
-    }
-  }, [])
 
   // Persist a config patch and reflect it in local state. Returns the
   // merged config so callers can act on the fresh value synchronously.
@@ -223,83 +205,18 @@ export function GithubBackupSection() {
     }
   }, [busy, refreshTokenStatus, t])
 
-  // ── Auth: OAuth device flow ─────────────────────────────────────────
-  const handleOAuthSignIn = useCallback(async () => {
-    if (!oauthEnabled || busy) return
-    setBusy("oauth")
-    setResult(null)
-    setOauth(null)
-    try {
-      const start = await githubOAuthDeviceStart({
-        clientId: GITHUB_OAUTH_CLIENT_ID,
-        scope: "repo",
-      })
-      setOauth({ userCode: start.userCode, verificationUri: start.verificationUri })
-      // Open the verification page in the system browser so the user can
-      // paste the code GitHub shows us.
-      void openUrl(start.verificationUri).catch((err) =>
-        console.error("[github-backup] openUrl failed:", err),
-      )
-
-      const deadline = Date.now() + start.expiresIn * 1000
-      // GitHub asks us to honor `interval` (and back off on slow_down).
-      let pollMs = Math.max(1, start.interval) * 1000
-
-      const poll = async () => {
-        if (Date.now() > deadline) {
-          setBusy(null)
-          setOauth(null)
-          setResult({
-            kind: "err",
-            message: t("settings.sections.githubBackup.oauthExpired", {
-              defaultValue: "Sign-in code expired. Try again.",
-            }),
-          })
-          return
-        }
-        try {
-          const p = await githubOAuthDevicePoll({
-            clientId: GITHUB_OAUTH_CLIENT_ID,
-            deviceCode: start.deviceCode,
-          })
-          if (p.status === "authorized") {
-            if (p.token) await githubSaveToken({ token: p.token })
-            setOauth(null)
-            setBusy(null)
-            await refreshTokenStatus()
-            await persistCfg({ authMethod: "oauth" })
-            setResult({
-              kind: "ok",
-              message: t("settings.sections.githubBackup.oauthOk", {
-                defaultValue: "Signed in with GitHub.",
-              }),
-            })
-            return
-          }
-          if (p.status === "error") {
-            setBusy(null)
-            setOauth(null)
-            setResult({
-              kind: "err",
-              message: t("settings.sections.githubBackup.oauthFailed", {
-                defaultValue: "GitHub sign-in failed.",
-              }),
-            })
-            return
-          }
-          // slow_down → back off an extra 5s per GitHub's guidance.
-          if (p.status === "slow_down") pollMs += 5000
-        } catch (e) {
-          console.error("[github-backup] oauth poll error:", e)
-        }
-        oauthTimer.current = setTimeout(() => void poll(), pollMs)
-      }
-      oauthTimer.current = setTimeout(() => void poll(), pollMs)
-    } catch (e) {
-      setBusy(null)
-      setResult({ kind: "err", message: String(e) })
-    }
-  }, [oauthEnabled, busy, refreshTokenStatus, persistCfg, t])
+  // ── Open GitHub's token-creation page with scope pre-selected ───────
+  //
+  // Industry-standard "app password" onboarding: deep-link to GitHub's
+  // new-classic-token form with the `repo` scope and a description
+  // pre-filled, so a non-technical user only has to click "Generate
+  // token" and copy. (Fine-grained tokens have no pre-fill URL; classic
+  // + repo scope is the friendliest one-click path.)
+  const handleCreateToken = useCallback(() => {
+    void openUrl(
+      "https://github.com/settings/tokens/new?description=LLM+Wiki+Backup&scopes=repo",
+    ).catch((err) => console.error("[github-backup] openUrl failed:", err))
+  }, [])
 
   // ── Repo: create / verify ───────────────────────────────────────────
   const handleVerifyRepo = useCallback(async () => {
@@ -546,45 +463,14 @@ export function GithubBackupSection() {
         </div>
       )}
 
-      {/* ── Auth ───────────────────────────────────────────────── */}
+      {/* ── Connect to GitHub (PAT, guided) ─────────────────────── */}
       <div className="space-y-3">
-        <Label>{t("settings.sections.githubBackup.auth", { defaultValue: "Authentication" })}</Label>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => void persistCfg({ authMethod: "pat" })}
-            className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
-              cfg.authMethod === "pat"
-                ? "border-primary bg-primary/10 font-medium text-foreground"
-                : "border-border text-muted-foreground hover:bg-accent/50"
-            }`}
-          >
-            {t("settings.sections.githubBackup.authPat", { defaultValue: "Personal Access Token" })}
-          </button>
-          <button
-            type="button"
-            disabled={!oauthEnabled}
-            onClick={() => oauthEnabled && void persistCfg({ authMethod: "oauth" })}
-            className={`rounded-md border px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-              cfg.authMethod === "oauth" && oauthEnabled
-                ? "border-primary bg-primary/10 font-medium text-foreground"
-                : "border-border text-muted-foreground hover:bg-accent/50"
-            }`}
-          >
-            {t("settings.sections.githubBackup.authOauth", { defaultValue: "OAuth device login" })}
-          </button>
-        </div>
-        {!oauthEnabled && (
-          <p className="text-xs text-amber-600 dark:text-amber-400">
-            {t("settings.sections.githubBackup.oauthNeedsSetup", {
-              defaultValue:
-                "OAuth login needs an OAuth App client id (GITHUB_OAUTH_CLIENT_ID) — use a Personal Access Token for now.",
-            })}
-          </p>
-        )}
+        <Label>
+          {t("settings.sections.githubBackup.connect", { defaultValue: "Connect to GitHub" })}
+        </Label>
 
-        {/* Connected banner */}
         {tokenStatus.hasToken ? (
+          /* Connected banner */
           <div className="flex items-center justify-between gap-3 rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3">
             <span className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -610,63 +496,86 @@ export function GithubBackupSection() {
               {t("settings.sections.githubBackup.disconnect", { defaultValue: "Disconnect" })}
             </Button>
           </div>
-        ) : cfg.authMethod === "pat" ? (
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <Input
-                type={showPat ? "text" : "password"}
-                value={pat}
-                onChange={(e) => setPat(e.target.value)}
-                placeholder={t("settings.sections.githubBackup.patPlaceholder", {
-                  defaultValue: "ghp_… (needs 'repo' scope)",
-                })}
-                className="flex-1"
-                autoComplete="off"
-              />
-              <Button
-                variant="outline"
-                size="icon"
-                type="button"
-                onClick={() => setShowPat((v) => !v)}
-              >
-                {showPat ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </Button>
-              <Button onClick={handleSavePat} disabled={!pat.trim() || busy !== null}>
-                {busy === "savePat" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  t("settings.sections.githubBackup.savePat", { defaultValue: "Save" })
-                )}
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {t("settings.sections.githubBackup.patHint", {
-                defaultValue:
-                  "Create a fine-grained or classic token with 'repo' scope. It's stored in your OS keychain, never in the project.",
-              })}
-            </p>
-          </div>
         ) : (
-          <div className="space-y-2">
-            <Button onClick={handleOAuthSignIn} disabled={!oauthEnabled || busy !== null} className="gap-1.5">
-              {busy === "oauth" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <GitBranch className="h-4 w-4" />
-              )}
-              {t("settings.sections.githubBackup.signIn", { defaultValue: "Sign in with GitHub" })}
-            </Button>
-            {oauth && (
-              <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
-                <p className="text-muted-foreground">
-                  {t("settings.sections.githubBackup.oauthEnterCode", {
-                    defaultValue: "Enter this code at {{uri}}:",
-                    uri: oauth.verificationUri,
-                  })}
-                </p>
-                <p className="mt-1 font-mono text-lg tracking-widest">{oauth.userCode}</p>
+          /* Guided two-step onboarding for non-technical users. */
+          <div className="space-y-3 rounded-md border bg-muted/20 p-4">
+            {/* Step 1 — create a token (deep-link with scope pre-selected) */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                  1
+                </span>
+                {t("settings.sections.githubBackup.step1Title", {
+                  defaultValue: "Create an access token on GitHub",
+                })}
               </div>
-            )}
+              <p className="pl-7 text-xs text-muted-foreground">
+                {t("settings.sections.githubBackup.step1Hint", {
+                  defaultValue:
+                    "Opens GitHub with the right permission ('repo') pre-selected. Just scroll down and click the green 'Generate token', then copy it. A token is like a one-time app password — log in with your GitHub account if asked.",
+                })}
+              </p>
+              <div className="pl-7">
+                <Button variant="outline" onClick={handleCreateToken} className="gap-1.5">
+                  <ExternalLink className="h-4 w-4" />
+                  {t("settings.sections.githubBackup.step1Button", {
+                    defaultValue: "Open GitHub to create a token",
+                  })}
+                </Button>
+              </div>
+            </div>
+
+            {/* Step 2 — paste + connect */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                  2
+                </span>
+                {t("settings.sections.githubBackup.step2Title", {
+                  defaultValue: "Paste the token here and connect",
+                })}
+              </div>
+              <div className="flex gap-2 pl-7">
+                <Input
+                  type={showPat ? "text" : "password"}
+                  value={pat}
+                  onChange={(e) => setPat(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && pat.trim() && busy === null) void handleSavePat()
+                  }}
+                  placeholder={t("settings.sections.githubBackup.patPlaceholder", {
+                    defaultValue: "Paste token (ghp_… or github_pat_…)",
+                  })}
+                  className="flex-1"
+                  autoComplete="off"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  type="button"
+                  onClick={() => setShowPat((v) => !v)}
+                  aria-label={t("settings.sections.githubBackup.toggleShow", {
+                    defaultValue: "Show/hide token",
+                  })}
+                >
+                  {showPat ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+                <Button onClick={handleSavePat} disabled={!pat.trim() || busy !== null} className="gap-1.5">
+                  {busy === "savePat" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <KeyRound className="h-4 w-4" />
+                  )}
+                  {t("settings.sections.githubBackup.connectButton", { defaultValue: "Connect" })}
+                </Button>
+              </div>
+              <p className="pl-7 text-xs text-muted-foreground">
+                {t("settings.sections.githubBackup.patHint", {
+                  defaultValue:
+                    "The token is stored in your OS keychain (macOS Keychain / Windows Credential Manager) — never in the project folder and never uploaded.",
+                })}
+              </p>
+            </div>
           </div>
         )}
       </div>
