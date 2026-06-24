@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useWikiStore } from "@/stores/wiki-store"
+import { useGithubBackupRuntime } from "@/stores/github-backup-runtime"
 import { listDirectory, readFile } from "@/commands/fs"
 import {
   DEFAULT_GITHUB_BACKUP_CONFIG,
@@ -72,27 +73,19 @@ export function GithubBackupSection() {
   // ── Versions list ──────────────────────────────────────────────────
   const [versions, setVersions] = useState<GithubVersion[] | null>(null)
 
-  // ── Busy + result banners ──────────────────────────────────────────
-  const [busy, setBusy] = useState<
-    | "savePat"
-    | "disconnect"
-    | "verifyRepo"
-    | "backup"
-    | "pull"
-    | "versions"
-    | "restore"
-    | null
-  >(null)
-  const [result, setResult] = useState<{ kind: "ok" | "err" | "warn"; message: string } | null>(
-    null,
-  )
-
-  // ── Live upload progress (drives the per-file line under the buttons) ─
-  const [progress, setProgress] = useState<{
-    current: number
-    total: number
-    file: string
-  } | null>(null)
+  // ── Busy + result + progress — held in a STORE, not local state ──────
+  //
+  // These describe an in-flight operation. They live in a module store so
+  // a long-running backup survives the section unmounting when the user
+  // navigates to another settings category and back (otherwise the work
+  // keeps running in Rust but the UI resets to blank). See
+  // stores/github-backup-runtime.ts.
+  const busy = useGithubBackupRuntime((s) => s.busy)
+  const setBusy = useGithubBackupRuntime((s) => s.setBusy)
+  const result = useGithubBackupRuntime((s) => s.result)
+  const setResult = useGithubBackupRuntime((s) => s.setResult)
+  const progress = useGithubBackupRuntime((s) => s.progress)
+  const setProgress = useGithubBackupRuntime((s) => s.setProgress)
 
   // ── Refresh the token status (drives the "connected as" line) ───────
   const refreshTokenStatus = useCallback(async () => {
