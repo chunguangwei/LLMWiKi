@@ -33,11 +33,13 @@ export const CHANGELOG: ChangelogEntry[] = [
         "Chat agent modes: pick Fast / Standard / Deep / Local-first per your needs — Deep does more retrieval rounds, Local-first prefers your own wiki. Your choice is remembered.",
         "The agent can now inspect your project's files directly (list + read) as a tool, and its step-by-step tool progress is saved with the conversation.",
         "Reasoning-model fix: if a provider streams only its 'thinking' and forgets to give a final answer, chat now automatically retries with reasoning off and returns a real answer instead of an error (helps DeepSeek-R1-style / Qwen reasoning endpoints).",
+        "New app logo & icon (a book with a knowledge-graph constellation).",
       ],
       zh: [
         "聊天 Agent 模式:按需选择 快速 / 标准 / 深度 / 本地优先——深度会做更多轮检索,本地优先更偏向你自己的 wiki。你的选择会被记住。",
         "Agent 现在能直接查看项目文件(列目录 + 读文件)作为工具使用,其逐步工具调用进度也会随对话一起保存。",
         "推理模型兜底:若某些供应商只流式输出「思考」却没给最终答案,聊天会自动用「关闭推理」重试一次并返回真正的回答,而不是报错(对 DeepSeek-R1 类 / Qwen 推理端点尤其有用)。",
+        "全新应用 logo 与图标(书本 + 知识图谱星座)。",
       ],
     },
   },
