@@ -64,6 +64,18 @@ function isRequestCancelledError(err: unknown): boolean {
   return /^request cancel(?:l)?ed$/i.test(message.trim())
 }
 
+/**
+ * Reasoning-model recovery (v0.5.1). Recognise the diagnostic streamChat
+ * raises when a "thinking" endpoint streams only chain-of-thought and ends
+ * with no actual answer content (DeepSeek-R1-style / Qwen reasoning
+ * deployments). Callers (chat-panel) catch this to retry the same request
+ * once with reasoning forced off, which reliably coaxes out a plain answer.
+ */
+export function isReasoningOnlyResponseError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return /^Model produced [\d,]+ characters of reasoning \/ chain-of-thought, but no actual response content\./.test(message)
+}
+
 export async function streamChat(
   config: LlmConfig,
   messages: import("./llm-providers").ChatMessage[],

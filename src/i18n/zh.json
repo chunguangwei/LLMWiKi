@@ -194,6 +194,13 @@
       "web": "联网",
       "anytxt": "AnyTXT"
     },
+    "agentMode": "Agent 模式",
+    "agentModes": {
+      "fast": "快速",
+      "standard": "标准",
+      "deep": "深度",
+      "localFirst": "本地优先"
+    },
     "referencePreview": "引用预览",
     "closeReferencePreview": "关闭引用预览",
     "resizeReferencePreview": "调整引用预览宽度",

@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import type { ChatMessage } from "@/lib/llm-client"
+import type { ChatAgentMode, ChatAgentStep } from "@/lib/chat-agent"
 import i18n from "@/i18n"
 
 export interface Conversation {
@@ -35,6 +36,16 @@ export interface DisplayMessage {
   timestamp: number
   conversationId: string
   references?: MessageReference[]  // pages cited in this response, saved at creation time
+  /**
+   * The chat-agent's tool-call / routing trail for this reply (v0.5.1).
+   * Produced by `buildChatAgentMessages` (ChatAgentResult.steps) and saved
+   * with the assistant message so the agent-activity block in chat-message
+   * survives re-renders, conversation switches, and app restarts. Undefined
+   * for classic-chat / non-agent replies. This is the upstream-shaped trail
+   * (id/type/tool/status), distinct from our richer `toolCalls` below which
+   * also carries input/result summaries for the audit fold.
+   */
+  agentSteps?: ChatAgentStep[]
   /**
    * How this assistant reply was produced. "classic" tags answers that
    * came from classic (toolless) retrieval while the user had agent mode
@@ -133,6 +144,13 @@ interface ChatState {
    * when AnyTXT is actually available on this machine.
    */
   useAnyTxtSearch: boolean
+  /**
+   * Agent routing mode (v0.5.1): "fast" | "standard" | "deep" |
+   * "local_first". Controls how aggressively the agent loop retrieves
+   * (round budget + tool preference). Persisted per device alongside the
+   * search toggles (chat-preferences.json) and restored on reopen.
+   */
+  agentMode: ChatAgentMode
 
   // Conversation management
   createConversation: () => string
@@ -182,7 +200,7 @@ interface ChatState {
   finalizeStream: (
     content: string,
     references?: MessageReference[],
-    opts?: { retrieval?: "classic" },
+    opts?: { retrieval?: "classic"; steps?: ChatAgentStep[] },
   ) => void
   setMode: (mode: ChatState["mode"]) => void
   setIngestSource: (path: string | null) => void
@@ -190,6 +208,7 @@ interface ChatState {
   setMaxHistoryMessages: (n: number) => void
   setUseWebSearch: (enabled: boolean) => void
   setUseAnyTxtSearch: (enabled: boolean) => void
+  setAgentMode: (mode: ChatAgentMode) => void
   removeLastAssistantMessage: () => void  // for regenerate: remove last assistant reply
 
   // Helpers
@@ -238,6 +257,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   maxHistoryMessages: 10,
   useWebSearch: false,
   useAnyTxtSearch: false,
+  agentMode: "standard",
 
   createConversation: () => {
     const id = generateConversationId()
@@ -392,6 +412,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversationId: activeConversationId,
         references,
         retrieval: opts?.retrieval,
+        agentSteps: opts?.steps,
       }
 
       return {
@@ -422,6 +443,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setUseWebSearch: (useWebSearch) => set({ useWebSearch }),
 
   setUseAnyTxtSearch: (useAnyTxtSearch) => set({ useAnyTxtSearch }),
+
+  setAgentMode: (agentMode) => set({ agentMode }),
 
   removeLastAssistantMessage: () =>
     set((state) => {

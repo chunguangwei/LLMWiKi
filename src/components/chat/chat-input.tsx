@@ -6,6 +6,11 @@ import { isImeComposing } from "@/lib/keyboard-utils"
 import { getFileName } from "@/lib/path-utils"
 import { isLikelyUrl } from "@/lib/web-fetch"
 import { looksLikeSearchTrigger } from "@/lib/search-trigger"
+import type { ChatAgentMode } from "@/lib/chat-agent"
+
+// v0.5.1: the four agent routing modes, in display order. Rendered as a
+// small segmented radiogroup beside the web/AnyTXT pill toggles.
+const AGENT_MODE_OPTIONS: ChatAgentMode[] = ["fast", "standard", "deep", "local_first"]
 
 /** Display-only shape for image chips. Full base64 / path lives in the parent. */
 export interface StagedImageChip {
@@ -29,8 +34,14 @@ interface ChatInputProps {
    */
   useWebSearch: boolean
   useAnyTxtSearch: boolean
+  /**
+   * Agent routing mode (v0.5.1). Controlled by the chat-store (persisted
+   * per device); the segmented selector here flips it via onAgentModeChange.
+   */
+  agentMode: ChatAgentMode
   onUseWebSearchChange: (enabled: boolean) => void
   onUseAnyTxtSearchChange: (enabled: boolean) => void
+  onAgentModeChange: (mode: ChatAgentMode) => void
   anyTxtAvailable?: boolean
   placeholder?: string
   stagedFiles?: string[]
@@ -107,8 +118,10 @@ export function ChatInput({
   isStreaming,
   useWebSearch,
   useAnyTxtSearch,
+  agentMode,
   onUseWebSearchChange,
   onUseAnyTxtSearchChange,
+  onAgentModeChange,
   anyTxtAvailable = true,
   placeholder,
   stagedFiles,
@@ -136,6 +149,21 @@ export function ChatInput({
 
   const isSearching = looksLikeSearchTrigger(value)
   const hasSearchIntent = Boolean(searchIntent && searchIntent.length > 0)
+
+  // v0.5.1: localized label for each agent routing mode.
+  const agentModeLabel = (mode: ChatAgentMode) => {
+    switch (mode) {
+      case "fast":
+        return t("chat.agentModes.fast")
+      case "deep":
+        return t("chat.agentModes.deep")
+      case "local_first":
+        return t("chat.agentModes.localFirst")
+      case "standard":
+      default:
+        return t("chat.agentModes.standard")
+    }
+  }
 
   const handleSearchClick = useCallback(() => {
     if (!onSearchClick) return
@@ -363,6 +391,39 @@ export function ChatInput({
             {t("chat.searchToggle.anytxt")}
           </button>
         )}
+        {/*
+          Agent routing-mode selector (v0.5.1). A small segmented
+          radiogroup: fast / standard / deep / local_first. Drives how
+          aggressively the chat-agent loop retrieves. State is owned by the
+          chat-store and persisted per device alongside the pill toggles.
+        */}
+        <div
+          className="inline-flex h-7 items-center rounded-md border border-border/70 bg-muted/30 p-0.5"
+          role="radiogroup"
+          aria-label={t("chat.agentMode")}
+          title={t("chat.agentMode")}
+        >
+          {AGENT_MODE_OPTIONS.map((mode) => {
+            const active = agentMode === mode
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                disabled={isStreaming}
+                onClick={() => onAgentModeChange(mode)}
+                className={`h-6 rounded px-2 text-xs font-medium transition-colors ${
+                  active
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                } disabled:pointer-events-none disabled:opacity-50`}
+              >
+                {agentModeLabel(mode)}
+              </button>
+            )
+          })}
+        </div>
       </div>
       <div className="flex items-end gap-2 p-3 pt-2">
         <textarea

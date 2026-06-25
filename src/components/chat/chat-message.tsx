@@ -27,7 +27,7 @@ import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
-import type { ChatAgentEvent, ChatAgentEventStage } from "@/lib/chat-agent"
+import type { ChatAgentEvent, ChatAgentEventStage, ChatAgentStep } from "@/lib/chat-agent"
 import { parseFileBlocks, isSafeIngestPath } from "@/lib/ingest"
 import { applyPageEdit } from "@/lib/apply-page-edit"
 import { diffLines, diffStats, isUnchanged } from "@/lib/text-diff"
@@ -121,6 +121,16 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate, onOpenReferen
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
       </div>
       <div className="max-w-[80%] flex flex-col gap-1.5">
+        {/*
+          v0.5.1: the agent's understanding/routing/tool-call trail, saved
+          with the reply (message.agentSteps) so it persists across reloads.
+          Rendered as a compact, read-only replay of the live AgentActivity
+          feed. This is the upstream-shaped trail; the fork's richer
+          ToolCallsBlock below adds the input/result-summary audit fold.
+        */}
+        {isAssistant && (
+          <SavedAgentActivity steps={message.agentSteps ?? []} />
+        )}
         {isAssistant && message.toolCalls && message.toolCalls.length > 0 && (
           <ToolCallsBlock toolCalls={message.toolCalls} />
         )}
@@ -183,6 +193,38 @@ export const ChatMessage = memo(ChatMessageImpl, (prev, next) =>
   && prev.onRegenerate === next.onRegenerate
   && prev.onOpenReferencePreview === next.onOpenReferencePreview
 )
+
+/**
+ * Replay a persisted agent step-trail (message.agentSteps) as a compact
+ * AgentActivity feed (v0.5.1). Maps the saved ChatAgentStep[] back into the
+ * ChatAgentEvent shape the live activity feed renders, dropping the "final"
+ * step (it has no user-facing activity line). Returns null when there's
+ * nothing to show so classic / non-agent replies render unchanged.
+ */
+function SavedAgentActivity({ steps }: { steps: ChatAgentStep[] }) {
+  const events = useMemo<ChatAgentEvent[]>(() => steps
+    .filter((step) => step.type !== "final")
+    .map((step) => ({
+      stage: step.type === "understanding"
+        ? "understanding"
+        : step.type === "routing"
+          ? "routing"
+          : step.type === "tool_call"
+            ? "tool_call"
+            : "tool_result",
+      tool: step.tool,
+      query: step.query,
+      message: step.message,
+      count: step.count,
+      status: step.status,
+    })), [steps])
+  if (events.length === 0) return null
+  return (
+    <div className="rounded-md border border-border/50 bg-background/50 px-2 py-1">
+      <AgentActivity events={events} compact />
+    </div>
+  )
+}
 
 /**
  * Tool calls rendered above the assistant message body. Defaults to a
@@ -1014,7 +1056,7 @@ export function StreamingMessage({ content, agentEvents = [] }: StreamingMessage
  * are collapsed so a multi-query tool round doesn't spam the feed; only
  * the last visible row is "active" (pulsing, foreground colour).
  */
-function AgentActivity({ events }: { events: ChatAgentEvent[] }) {
+function AgentActivity({ events, compact = false }: { events: ChatAgentEvent[]; compact?: boolean }) {
   const { t } = useTranslation()
   const visible = events.filter((event, index, arr) => {
     const prev = arr[index - 1]
@@ -1026,8 +1068,11 @@ function AgentActivity({ events }: { events: ChatAgentEvent[] }) {
   })
   if (visible.length === 0) return null
 
+  // `compact` (v0.5.1) is used by the saved-trail replay inside a message
+  // bubble: drop the bottom divider/margin so it nests cleanly in its own
+  // bordered container. The live streaming feed keeps the divider.
   return (
-    <div className="mb-2 flex flex-col gap-1.5 border-b border-border/40 pb-2">
+    <div className={`${compact ? "" : "mb-2 border-b border-border/40 pb-2"} flex flex-col gap-1.5`}>
       {visible.map((event, index) => {
         const active = index === visible.length - 1
         const Icon = agentStageIcon(event.stage)

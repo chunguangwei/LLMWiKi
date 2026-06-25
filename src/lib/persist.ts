@@ -3,6 +3,7 @@ import type { ReviewItem } from "@/stores/review-store"
 import type { LintItem } from "@/stores/lint-store"
 import type { DisplayMessage, Conversation } from "@/stores/chat-store"
 import type { ActivityItem } from "@/stores/activity-store"
+import type { ChatAgentMode } from "@/lib/chat-agent"
 import { normalizePath } from "@/lib/path-utils"
 
 /**
@@ -95,6 +96,10 @@ interface PersistedChatData {
 export interface ChatPreferences {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
+  // v0.5.1: agent routing mode (fast/standard/deep/local_first). Persisted
+  // per-device alongside the search toggles so the chosen mode survives
+  // project switches and restarts. Stays under `.llm-wiki-local/`.
+  agentMode: ChatAgentMode
 }
 
 function chatPreferencesFile(pp: string) {
@@ -314,8 +319,26 @@ export async function loadChatPreferences(projectPath: string): Promise<ChatPref
     return {
       useWebSearch: parsed.useWebSearch === true,
       useAnyTxtSearch: parsed.useAnyTxtSearch === true,
+      agentMode: normalizePersistedAgentMode(parsed.agentMode),
     }
   } catch {
-    return { useWebSearch: false, useAnyTxtSearch: false }
+    return { useWebSearch: false, useAnyTxtSearch: false, agentMode: "standard" }
+  }
+}
+
+/**
+ * Coerce a persisted agent-mode value back into a known `ChatAgentMode`.
+ * Anything unrecognised (older preference files written before v0.5.1, or
+ * a hand-edited/garbage value) falls back to "standard".
+ */
+function normalizePersistedAgentMode(value: unknown): ChatAgentMode {
+  switch (value) {
+    case "fast":
+    case "standard":
+    case "deep":
+    case "local_first":
+      return value
+    default:
+      return "standard"
   }
 }

@@ -270,10 +270,11 @@ describe("chat persistence — round-trip (new format)", () => {
   // the fork keeps these under `.llm-wiki-local/` (per-user, never
   // cloud-synced) — upstream parked them in `.llm-wiki/`.
   it("round-trips chat search preferences", async () => {
-    await saveChatPreferences(tmp.path, { useWebSearch: true, useAnyTxtSearch: false })
+    await saveChatPreferences(tmp.path, { useWebSearch: true, useAnyTxtSearch: false, agentMode: "deep" })
     await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
       useWebSearch: true,
       useAnyTxtSearch: false,
+      agentMode: "deep",
     })
 
     const raw = await readFileRaw(`${tmp.path}/.llm-wiki-local/chat-preferences.json`)
@@ -284,6 +285,7 @@ describe("chat persistence — round-trip (new format)", () => {
     await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
       useWebSearch: false,
       useAnyTxtSearch: false,
+      agentMode: "standard",
     })
   })
 })
