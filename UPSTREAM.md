@@ -10,7 +10,7 @@
 | 最近一次 sync | 2026-06-23（Round 3 大同步，merge-base `70d5579`，按子系统逐项移植至上游 v0.4.25，14 个 fork 提交 `890ea29`→`813819e`；cherry-pick 不可行，i18n/wiki-store/ingest 已结构性分叉，故全程手工三方合并）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
 | Upstream 版本号 | `0.5.1`（Round 3 追平：providers / embeddings+LanceDB / 摄取质量 / 审阅 / 渲染 / 稳定性 / 关系图性能 / MiniMax M3 / Lint 链接修复 / Firecrawl / 界面缩放 / MinerU / 托盘+自启 / MCP 打包 / 聊天独立视图）|
-| **本 fork 版本** | `0.5.1`（追平上游 v0.5.1：聊天 Agent 路由+模式与项目文件工具 + 推理模型兜底 + Atlas Cloud + AnyTXT 配置 + 引用预览 + 34类一致性护栏;叠加 fork 的 GitHub 备份等。macOS 仅 arm64）|
+| **本 fork 版本** | `0.5.2`（在 v0.5.1 上修复 app 图标白边[改用矢量图+透明圆角] 与暗色主题关系图标签可读性；macOS 仅 arm64）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 | 工作目录 | `app/`（即原 upstream 的项目根） |

@@ -26,6 +26,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.2",
+    date: "2026-06-25",
+    highlights: {
+      en: [
+        "Fixed the white border around the app icon — the logo now uses the vector source with transparent rounded corners.",
+        "Dark mode: the knowledge graph's node labels (and edges) are now readable — light text on the dark canvas instead of the old dark-on-dark.",
+      ],
+      zh: [
+        "修复应用图标的白边——logo 改用矢量图、圆角透明,Dock/任务栏不再有白框。",
+        "暗色模式:关系图的节点标签(及连线)现在清晰可读——深色画布上用浅色文字,不再「深色叠深色」看不清。",
+      ],
+    },
+  },
+  {
     version: "0.5.1",
     date: "2026-06-25",
     highlights: {
