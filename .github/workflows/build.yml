@@ -20,14 +20,15 @@ jobs:
           - platform: macos-latest
             args: '--target aarch64-apple-darwin'
             rust_target: aarch64-apple-darwin
-          # macOS Intel (x86_64). macos-13 is GitHub's last x86_64 runner
-          # (macos-14+ are Apple Silicon), so this is a NATIVE build — no
-          # cross-compile. We now ship a committed x86_64 libpdfium
-          # (libpdfium-x86_64.dylib), swapped into place below, so the Intel
-          # .dmg is restored (it had been dropped while pdfium was arm64-only).
-          - platform: macos-13
-            args: '--target x86_64-apple-darwin'
-            rust_target: x86_64-apple-darwin
+          # macOS Intel (x86_64) — DISABLED. The build (committed
+          # libpdfium-x86_64.dylib + the swap step below) is wired and ready,
+          # but GitHub's free `macos-13` Intel runner queues for 9+ hours and
+          # never schedules, which hangs the whole release. Re-enable by
+          # uncommenting this row once a reliable Intel runner is available
+          # (e.g. a paid larger runner or self-hosted):
+          # - platform: macos-13
+          #   args: '--target x86_64-apple-darwin'
+          #   rust_target: x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: ''
             rust_target: ''
