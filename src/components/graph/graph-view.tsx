@@ -367,6 +367,28 @@ function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: G
 // walk every node + edge on each hover/search change — this is the core
 // of the rendering-perf win (upstream 836eb8b). Also owns the size-scaled
 // label-culling settings so dense graphs stay legible and fast.
+/**
+ * Whether the app is in dark mode, tracked live. Tailwind toggles a `dark`
+ * class on <html>; we mirror it and re-render on change so the canvas-drawn
+ * graph (sigma doesn't see CSS) can pick readable label/edge colors. Without
+ * this, labels stayed a fixed dark slate (#1e293b) and were unreadable on the
+ * dark-mode canvas (dark:bg-slate-950).
+ */
+function useIsDarkTheme(): boolean {
+  const [isDark, setIsDark] = useState(
+    () => typeof document !== "undefined" && document.documentElement.classList.contains("dark"),
+  )
+  useEffect(() => {
+    const el = document.documentElement
+    const update = () => setIsDark(el.classList.contains("dark"))
+    update()
+    const obs = new MutationObserver(update)
+    obs.observe(el, { attributes: true, attributeFilter: ["class"] })
+    return () => obs.disconnect()
+  }, [])
+  return isDark
+}
+
 function GraphRenderSettings({
   hoverState,
   highlightedNodes,
@@ -378,11 +400,18 @@ function GraphRenderSettings({
 }) {
   const sigma = useSigma()
   const setSettings = useSetSettings()
+  const isDark = useIsDarkTheme()
 
   useEffect(() => {
+    // Theme-aware colors for the canvas-rendered graph (sigma can't read CSS).
+    const labelTextColor = isDark ? "#e2e8f0" : "#1e293b" // slate-200 / slate-800
+    const dimEdgeColor = isDark ? "#334155" : "#f1f5f9" // slate-700 / slate-100
+    const strongEdgeColor = isDark ? "#e2e8f0" : "#1e293b"
     setSettings({
       hideEdgesOnMove: true,
       hideLabelsOnMove: true,
+      labelColor: { color: labelTextColor },
+      defaultEdgeColor: isDark ? "#475569" : "#cbd5e1", // slate-600 / slate-300
       labelDensity: labelDensity(nodeCount),
       labelRenderedSizeThreshold: labelSizeThreshold(nodeCount),
       renderEdgeLabels: false,
@@ -405,7 +434,10 @@ function GraphRenderSettings({
           result.forceLabel = true
         }
         if ((hasHover && !isHoverNode && !isHoverNeighbor) || (hasHighlight && !isHighlighted)) {
-          result.color = mixColor(attrs.color ?? "#94a3b8", "#e2e8f0", 0.75)
+          // Fade dimmed nodes toward the canvas background so they recede
+          // (toward light in light mode, toward dark in dark mode) instead of
+          // always brightening — which washed nodes out on the dark canvas.
+          result.color = mixColor(attrs.color ?? "#94a3b8", isDark ? "#0f172a" : "#e2e8f0", 0.75)
           result.label = ""
           result.size = (attrs.size ?? BASE_NODE_SIZE) * 0.6
         }
@@ -425,18 +457,18 @@ function GraphRenderSettings({
           return result
         }
         if ((hasHover && !hoverEdge) || (hasHighlight && !highlightedEdge)) {
-          result.color = "#f1f5f9"
+          result.color = dimEdgeColor
           result.size = 0.3
         }
         if (hoverEdge || highlightedEdge) {
-          result.color = "#1e293b"
+          result.color = strongEdgeColor
           result.size = Math.max(2, (attrs.size ?? 1) * 1.5)
         }
         return result
       },
     })
     sigma.refresh()
-  }, [setSettings, sigma, hoverState, highlightedNodes, nodeCount])
+  }, [setSettings, sigma, hoverState, highlightedNodes, nodeCount, isDark])
 
   return null
 }
