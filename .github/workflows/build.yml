@@ -15,15 +15,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS Apple Silicon (arm64) — native build on the default
-          # (Apple Silicon) runner; uses the committed arm64 libpdfium.dylib.
-          # macOS is Apple Silicon (arm64) only. An Intel (x86_64) target was
-          # tried but dropped: GitHub's free `macos-13` Intel runner queues for
-          # 9+ hours and hangs the release, and Intel Macs are a shrinking
-          # minority. (Upstream's v0.5.0 also ships arm64-only.)
+          # macOS Apple Silicon (arm64) — native build on the default runner.
           - platform: macos-latest
             args: '--target aarch64-apple-darwin'
             rust_target: aarch64-apple-darwin
+          # macOS Intel (x86_64). macos-13 is GitHub's last x86_64 runner.
+          # NOTE: the free Intel runner has historically queued for hours; if it
+          # can't schedule, the other platforms still publish their assets — the
+          # Intel .dmg just arrives late (or not at all) without blocking them.
+          - platform: macos-13
+            args: '--target x86_64-apple-darwin'
+            rust_target: x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: ''
             rust_target: ''
@@ -48,7 +50,7 @@ jobs:
           targets: ${{ matrix.rust_target }}
 
       - name: Install protoc (macOS)
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos-')
         run: brew install protobuf
 
       - name: Install dependencies (Ubuntu)
@@ -76,6 +78,12 @@ jobs:
         run: |
           cp src-tauri/pdfium/libpdfium-arm64.so src-tauri/pdfium/libpdfium.so
           file src-tauri/pdfium/libpdfium.so
+
+      - name: Use x86_64 pdfium binary (macOS Intel only)
+        if: matrix.rust_target == 'x86_64-apple-darwin'
+        run: |
+          cp src-tauri/pdfium/libpdfium-x86_64.dylib src-tauri/pdfium/libpdfium.dylib
+          file src-tauri/pdfium/libpdfium.dylib
 
       - name: Install protoc (Windows)
         if: matrix.platform == 'windows-latest'

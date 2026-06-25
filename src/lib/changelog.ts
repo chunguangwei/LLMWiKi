@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.3",
+    date: "2026-06-25",
+    highlights: {
+      en: [
+        "Refined app logo — a cleaner glass book with a glowing knowledge-graph constellation, on a transparent squircle (no white edge).",
+      ],
+      zh: [
+        "改进应用 logo——更精致的玻璃质感书本 + 发光的知识图谱星座,透明 squircle 圆角(无白边)。",
+      ],
+    },
+  },
+  {
     version: "0.5.2",
     date: "2026-06-25",
     highlights: {
