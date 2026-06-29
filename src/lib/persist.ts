@@ -1,5 +1,5 @@
 import { writeFile, readFile, createDirectory, deleteFile, fileExists } from "@/commands/fs"
-import type { ReviewItem } from "@/stores/review-store"
+import { normalizeReviewItems, type ReviewItem } from "@/stores/review-store"
 import type { LintItem } from "@/stores/lint-store"
 import type { DisplayMessage, Conversation } from "@/stores/chat-store"
 import type { ActivityItem } from "@/stores/activity-store"
@@ -59,7 +59,7 @@ export async function loadReviewItems(projectPath: string): Promise<ReviewItem[]
   const pp = normalizePath(projectPath)
   try {
     const content = await readFile(`${sharedDir(pp)}/review.json`)
-    return JSON.parse(content) as ReviewItem[]
+    return normalizeReviewItems(JSON.parse(content) as ReviewItem[])
   } catch {
     return []
   }

@@ -29,6 +29,16 @@ describe("parseFrontmatter", () => {
     }
   })
 
+  it("documents that recovered fallback frontmatter may be lossy", () => {
+    const content = "```yaml\n---\ntitle: Fixed\n---\n```\n\n# Body"
+    const r = parseFrontmatter(content)
+
+    expect(r.frontmatter).toEqual({ title: "Fixed" })
+    expect(r.rawBlock).toBe("---\ntitle: Fixed\n---\n")
+    expect(r.rawBlock + r.body).not.toBe(content)
+    expect(r.body).toBe("# Body")
+  })
+
   it("parses inline arrays", () => {
     const r = parseFrontmatter(`---\ntags: [foo, bar, baz]\n---\nx`)
     expect(r.frontmatter).toEqual({ tags: ["foo", "bar", "baz"] })

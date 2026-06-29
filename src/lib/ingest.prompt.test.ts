@@ -45,6 +45,25 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("Which named subject is each claim about")
     expect(prompt).toContain("Do not transfer claims, limits, or evaluations")
   })
+
+  it("injects the project schema so analysis can recommend custom-typed pages", () => {
+    const schema = "## Page Types\n| goal | wiki/goals/ | Outcomes |\n| habit | wiki/habits/ | Behaviours |"
+    const prompt = buildAnalysisPrompt("", "", "", schema)
+    expect(prompt).toContain("## Project Schema")
+    expect(prompt).toContain("wiki/goals/")
+    // Recommendations guidance must mention schema-defined types
+    expect(prompt).toContain("goal, habit")
+  })
+
+  it("omits the schema section when no schema is provided", () => {
+    const prompt = buildAnalysisPrompt("", "", "")
+    expect(prompt).not.toContain("## Project Schema")
+  })
+
+  it("does not invent schema content not present in the source", () => {
+    const prompt = buildAnalysisPrompt("", "", "", "| goal | wiki/goals/ | x |")
+    expect(prompt).toContain("never invent")
+  })
 })
 
 describe("buildGenerationPrompt language directive", () => {

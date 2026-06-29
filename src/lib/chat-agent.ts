@@ -898,7 +898,7 @@ async function runProjectFilesTool(args: {
   const maxEntries = args.llmConfig.maxContextSize > 180_000 ? 160 : 80
   const [wikiTree, rawTree] = await Promise.all([
     listDirectory(`${args.projectPath}/wiki`).catch(() => [] as FileNode[]),
-    listDirectory(`${args.projectPath}/raw/sources`).catch(() => [] as FileNode[]),
+    listDirectory(`${args.projectPath}/raw/sources`, true).catch(() => [] as FileNode[]),
   ])
   const wikiEntries = flattenFileTree(wikiTree, "wiki").slice(0, maxEntries)
   const rawEntries = flattenFileTree(rawTree, "raw/sources").slice(0, Math.floor(maxEntries / 2))

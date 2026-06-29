@@ -127,8 +127,11 @@ export async function webSearch(
   if (resolved.provider === "none") {
     throw new Error("Web search not configured. Select a search provider in Settings.")
   }
-  if ((resolved.provider === "tavily" || resolved.provider === "serpapi") && !resolved.apiKey) {
-    throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings, or select a key-free provider such as Firecrawl or SearXNG.")
+  if (
+    (resolved.provider === "tavily" || resolved.provider === "serpapi" || resolved.provider === "brave") &&
+    !resolved.apiKey
+  ) {
+    throw new Error("Web search not configured. Add a Tavily, SerpApi, or Brave Search API key in Settings, or select a key-free provider such as Firecrawl or SearXNG.")
   }
   if (resolved.provider === "searxng" && !resolved.searXngUrl?.trim()) {
     throw new Error("Web search not configured. Add a SearXNG instance URL in Settings.")
@@ -146,6 +149,8 @@ export async function webSearch(
       return searXngSearch(query, resolved.searXngUrl ?? "", maxResults, resolved.searXngCategories ?? ["general"])
     case "ollama":
       return ollamaSearch(query, resolved.apiKey ?? "", maxResults)
+    case "brave":
+      return braveSearch(query, resolved.apiKey, maxResults)
     case "firecrawl":
       return firecrawlSearch(query, maxResults)
     default:
@@ -295,8 +300,8 @@ async function tavilySearch(
 interface FirecrawlSearchResponse {
   success?: boolean
   error?: string
-  data?: unknown[]
-  results?: unknown[]
+  data?: unknown
+  results?: unknown
 }
 
 async function firecrawlSearch(
@@ -362,14 +367,42 @@ function friendlyFirecrawlError(error?: string): string | null {
 }
 
 function normalizeFirecrawlResults(data: FirecrawlSearchResponse, maxResults: number): WebSearchResult[] {
-  const rawResults = data.data ?? data.results ?? []
+  const rawResults = extractFirecrawlResultArray(data)
   return rawResults
     .slice(0, maxResults)
     .map((item) => normalizeFirecrawlResult(item))
     .filter((item) => item.url.length > 0)
 }
 
+function extractFirecrawlResultArray(data: FirecrawlSearchResponse): unknown[] {
+  if (Array.isArray(data.data)) return data.data
+  if (Array.isArray(data.results)) return data.results
+
+  return extractFirecrawlNestedResultArray(data.data)
+    ?? extractFirecrawlNestedResultArray(data.results)
+    ?? []
+}
+
+function extractFirecrawlNestedResultArray(value: unknown): unknown[] | null {
+  if (!value || typeof value !== "object") return null
+  const nested = value as Record<string, unknown>
+
+  // Firecrawl v2 may return categorized results as data.web/news/images.
+  // LLM Wiki consumes the first supported text-search category; image/news
+  // categories are intentionally ignored because their payloads differ.
+  // The first matching category wins even when it is empty.
+  for (const key of ["web", "results", "items"]) {
+    const nestedValue = nested[key]
+    if (Array.isArray(nestedValue)) return nestedValue
+  }
+
+  return null
+}
+
 function normalizeFirecrawlResult(item: unknown): WebSearchResult {
+  if (!item || typeof item !== "object") {
+    return { title: "Untitled", url: "", snippet: "", source: "" }
+  }
   const r = item as {
     title?: string
     url?: string
@@ -550,6 +583,78 @@ async function ollamaSearch(
         title: r.title ?? "Untitled",
         url,
         snippet: r.content ?? "",
+        source: hostnameFromUrl(url),
+      }
+    })
+}
+
+interface BraveSearchResponse {
+  web?: {
+    results?: Array<{
+      title?: string
+      url?: string
+      description?: string
+    }>
+  }
+  message?: string
+}
+
+async function braveSearch(
+  query: string,
+  apiKey: string,
+  maxResults: number,
+): Promise<WebSearchResult[]> {
+  // Brave Web Search API caps `count` at 20 per request. Higher values
+  // are silently clamped server-side; bound here so the URL stays
+  // honest and we don't surprise users by appearing to ask for more.
+  const count = Math.max(1, Math.min(maxResults, 20))
+  const params = new URLSearchParams({ q: query, count: String(count) })
+
+  const httpFetch = await getHttpFetch()
+  let response: Response
+  try {
+    response = await httpFetch(
+      `https://api.search.brave.com/res/v1/web/search?${params.toString()}`,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "X-Subscription-Token": apiKey,
+        },
+      },
+    )
+  } catch (err) {
+    if (isFetchNetworkError(err)) {
+      throw new Error(
+        "Network error reaching api.search.brave.com. Check your connectivity and whether the Brave Search API key is still valid.",
+      )
+    }
+    throw err
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        "Brave Search API authentication failed. Check your subscription token in Settings.",
+      )
+    }
+    const errorText = await response.text().catch(() => "Unknown error")
+    throw new Error(`Brave search failed (${response.status}): ${errorText}`)
+  }
+
+  const data = (await response.json()) as BraveSearchResponse
+  if (data.message && !data.web) {
+    throw new Error(`Brave search error: ${data.message}`)
+  }
+
+  return (data.web?.results ?? [])
+    .slice(0, maxResults)
+    .map((r) => {
+      const url = r.url ?? ""
+      return {
+        title: r.title ?? "Untitled",
+        url,
+        snippet: r.description ?? "",
         source: hostnameFromUrl(url),
       }
     })

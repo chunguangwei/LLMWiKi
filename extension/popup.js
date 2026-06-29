@@ -1,4 +1,4 @@
-const API_URL = "http://127.0.0.1:19827";
+const API_URLS = ["http://127.0.0.1:19827", "http://localhost:19827"];
 
 const statusBar = document.getElementById("statusBar");
 const titleInput = document.getElementById("titleInput");
@@ -9,10 +9,34 @@ const projectSelect = document.getElementById("projectSelect");
 
 let extractedContent = "";
 let pageUrl = "";
+let apiUrl = API_URLS[0];
+
+async function clipFetch(path, options) {
+  const method = String(options?.method || "GET").toUpperCase();
+  // Only retry idempotent reads across host aliases. Retrying POST /clip can
+  // duplicate a clip if the server handled the first request but the response
+  // failed before the extension received it.
+  const urls = method === "GET"
+    ? [apiUrl, ...API_URLS.filter((url) => url !== apiUrl)]
+    : [apiUrl];
+  let lastError;
+
+  for (const baseUrl of urls) {
+    try {
+      const res = await fetch(`${baseUrl}${path}`, options);
+      apiUrl = baseUrl;
+      return res;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("Unable to connect to LLM Wiki");
+}
 
 async function checkConnection() {
   try {
-    const res = await fetch(`${API_URL}/status`, { method: "GET" });
+    const res = await clipFetch("/status", { method: "GET" });
     const data = await res.json();
     if (data.ok) {
       statusBar.className = "status connected";
@@ -30,7 +54,7 @@ async function checkConnection() {
 
 async function loadProjects() {
   try {
-    const res = await fetch(`${API_URL}/projects`, { method: "GET" });
+    const res = await clipFetch("/projects", { method: "GET" });
     const data = await res.json();
     if (data.ok && data.projects?.length > 0) {
       projectSelect.innerHTML = "";
@@ -46,7 +70,7 @@ async function loadProjects() {
   } catch {}
   // Fallback to current project
   try {
-    const res = await fetch(`${API_URL}/project`, { method: "GET" });
+    const res = await clipFetch("/project", { method: "GET" });
     const data = await res.json();
     if (data.ok && data.path) {
       const name = data.path.replace(/\\/g, "/").split("/").pop() || data.path;
@@ -212,7 +236,7 @@ async function sendClip() {
   statusBar.textContent = "⏳ Sending to LLM Wiki...";
 
   try {
-    const res = await fetch(`${API_URL}/clip`, {
+    const res = await clipFetch("/clip", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

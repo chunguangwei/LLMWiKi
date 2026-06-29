@@ -37,6 +37,17 @@ describe("raw source image resolver", () => {
     ).resolves.toBe(`${tmp.path}/raw/sources/project-a/config.pdf`)
   })
 
+  it("resolves media slugs for sources inside raw dotfolders", async () => {
+    if (!tmp) throw new Error("missing temp project")
+
+    await writeFileRaw(`${tmp.path}/raw/sources/.claude/research.md`, "dotfolder source\n")
+    const slug = sourceSummarySlugFromIdentity(".claude/research.md")
+
+    await expect(
+      findRawSourceForImage(`media/${slug}/img-1.png`, tmp.path),
+    ).resolves.toBe(`${tmp.path}/raw/sources/.claude/research.md`)
+  })
+
   it("normalizes wiki-relative image URLs to absolute wiki media paths", () => {
     expect(imageUrlToAbsolute("media/report/img-1.png", "/project")).toBe(
       "/project/wiki/media/report/img-1.png",

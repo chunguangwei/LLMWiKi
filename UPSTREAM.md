@@ -7,12 +7,19 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-06-23（Round 3 大同步，merge-base `70d5579`，按子系统逐项移植至上游 v0.4.25，14 个 fork 提交 `890ea29`→`813819e`；cherry-pick 不可行，i18n/wiki-store/ingest 已结构性分叉，故全程手工三方合并）|
+| 最近一次 sync | 2026-06-29（Round 4，上游 v0.5.1 → v0.5.3，按子系统手工三方合并；4 个并行子代理 + 主体亲自处理 ingest 核心/i18n/关系图）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.5.1`（Round 3 追平：providers / embeddings+LanceDB / 摄取质量 / 审阅 / 渲染 / 稳定性 / 关系图性能 / MiniMax M3 / Lint 链接修复 / Firecrawl / 界面缩放 / MinerU / 托盘+自启 / MCP 打包 / 聊天独立视图）|
-| **本 fork 版本** | `0.5.3`（refined app logo[书+知识图谱星座, squircle 透明]；重新尝试 Intel macOS 构建）|
+| Upstream 版本号 | `0.5.3`（Round 4 追平：schema 感知分析 / Brave 搜索 / 摄取队列暂停恢复 / Review API+刷新 / frontmatter 原文编辑 / 关系图悬停对比 / 一批稳定性修复）|
+| **本 fork 版本** | `0.5.4`（Round 4 上游同步 v0.5.1→v0.5.3）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
+
+> **Round 4 同步（2026-06-29，v0.5.1 → v0.5.3）**：移植 24 个上游提交。
+> - **核心**：schema 感知分析（`f714076`+`6085149`）——把项目 schema 注入 stage-1 分析与长文分块分析，让内容能被推荐/路由到正确的 34 类页面类型（手工并入 forked `buildAnalysisPrompt`/`buildChunkAnalysisSystemPrompt`，附 3 个新测试）。
+> - **功能**：Brave 搜索 provider（`f6a9413`/`87310cc`/`4756bfe`，hand-merge 因上游仍带我们已移除的 anytxt/deepResearch）；摄取队列 暂停/恢复 + 防启动自动恢复（`c3f66b9`/`2a3747f`/`0e97e22`，`ingest-queue.ts` wholesale + `activity-panel` hand-merge）；Review API（PATCH/批量 resolve）+ 刷新按钮 + 内容稳定 review id（`68800ee`/`d691e41`/`dbf0e72`/`23f21f4`，`api_server.rs`/`review-store.ts` wholesale）；frontmatter 原文 markdown 编辑（`0251863`，保留我方类型选择器+RefreshControls）；CORS 加固（`9a17552`，新增 `cors.rs`）。
+> - **稳定性**：取消后停止写入（`006327d`）、PDF 整页扫描图跳过（`00d670b`）、dotfolders 可见（`a126829`/`c70da6a`，但**摄取**仍走 fork 的 `copy_directory` 故仍跳过 dotfiles——保守、与上游 ingest 行为有别）、preset 关闭时清空 llmConfig（`4371975`/`61ece9e`）、自然排序、Firecrawl 对象响应、关系图悬停对比 pill（`e14bbcb`，适配我方 `useIsDarkTheme`）。
+> - **范围回退**：上游 wholesale 把 v0.5.3 的 **本地 CLI 隔离特性**（`localCliIsolation`/`codexCliTimeoutMinutes` + `claude_cli_spawn` 新签名）一并带入，但该特性不在本次请求范围、且会破坏未同步的 `claude-cli-transport.ts` 调用契约——故将 `claude_cli.rs`/`preset-resolver.ts`/`llm-provider-section.tsx` 回退到 HEAD，仅重新应用 `4371975`+`61ece9e`（与隔离无关）。连带丢弃纠缠其中的 `8e3d465`（其 MCP 隔离配置 bug 在我方旧版不存在）。
+> - **验证**：typecheck ✅ / test:mocks 2126 ✅ / i18n parity ✅ / cargo check ✅ / cargo test --lib 159 ✅。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局

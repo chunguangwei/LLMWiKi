@@ -1265,8 +1265,24 @@ pub async fn write_binary_file(path: String, base64: String) -> Result<(), Strin
     .map_err(|e| format!("write_binary_file blocking task join error: {e}"))?
 }
 
+/// Whether a directory entry should appear in a listing.
+///
+/// Hidden (dot-prefixed) entries are shown only when `include_hidden`
+/// is set. That flag is reserved for the `raw/sources` content area,
+/// where dotfolders like `.claude` / `.codex` are legitimate sources
+/// the user deliberately added. Every other caller keeps hiding dot
+/// entries so internal state (`.llm-wiki`, `.git`), caches, and secrets
+/// (`.env`) never leak into trees or the ingest candidate set.
+fn entry_is_visible(name: &str, include_hidden: bool) -> bool {
+    include_hidden || !name.starts_with('.')
+}
+
 #[tauri::command]
-pub async fn list_directory(path: String) -> Result<Vec<FileNode>, String> {
+pub async fn list_directory(
+    path: String,
+    include_hidden: Option<bool>,
+) -> Result<Vec<FileNode>, String> {
+    let include_hidden = include_hidden.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("list_directory", || {
             let p = Path::new(&path);
@@ -1276,7 +1292,7 @@ pub async fn list_directory(path: String) -> Result<Vec<FileNode>, String> {
             if !p.is_dir() {
                 return Err(format!("Path is not a directory: '{}'", path));
             }
-            let nodes = build_tree(p, 0, 30)?;
+            let nodes = build_tree(p, 0, 30, include_hidden)?;
             Ok(nodes)
         })
     })
@@ -1284,7 +1300,12 @@ pub async fn list_directory(path: String) -> Result<Vec<FileNode>, String> {
     .map_err(|e| format!("list_directory blocking task join error: {e}"))?
 }
 
-fn build_tree(dir: &Path, depth: usize, max_depth: usize) -> Result<Vec<FileNode>, String> {
+fn build_tree(
+    dir: &Path,
+    depth: usize,
+    max_depth: usize,
+    include_hidden: bool,
+) -> Result<Vec<FileNode>, String> {
     if depth >= max_depth {
         return Ok(vec![]);
     }
@@ -1293,11 +1314,10 @@ fn build_tree(dir: &Path, depth: usize, max_depth: usize) -> Result<Vec<FileNode
         .map_err(|e| format!("Failed to read directory '{}': {}", dir.display(), e))?
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
-            // Skip dotfiles
             entry
                 .file_name()
                 .to_str()
-                .map(|n| !n.starts_with('.'))
+                .map(|n| entry_is_visible(n, include_hidden))
                 .unwrap_or(false)
         })
         .collect();
@@ -1326,7 +1346,7 @@ fn build_tree(dir: &Path, depth: usize, max_depth: usize) -> Result<Vec<FileNode
         let is_dir = entry_path.is_dir();
 
         let children = if is_dir {
-            let kids = build_tree(&entry_path, depth + 1, max_depth)?;
+            let kids = build_tree(&entry_path, depth + 1, max_depth, include_hidden)?;
             if kids.is_empty() {
                 None
             } else {
@@ -2240,6 +2260,39 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn build_tree_hides_dot_entries_by_default_and_includes_them_when_asked() {
+        let root = make_temp_dir("build-tree-hidden");
+        fs::create_dir_all(root.join(".claude")).unwrap();
+        fs::write(root.join(".claude/CLAUDE.md"), "x").unwrap();
+        fs::create_dir_all(root.join("visible")).unwrap();
+        fs::write(root.join("visible/doc.md"), "y").unwrap();
+        fs::write(root.join(".env"), "secret").unwrap();
+
+        // Default: dot entries (incl. .env) hidden, normal entries shown.
+        let hidden = build_tree(&root, 0, 30, false).unwrap();
+        let hidden_names: Vec<&str> = hidden.iter().map(|n| n.name.as_str()).collect();
+        assert!(hidden_names.contains(&"visible"));
+        assert!(
+            !hidden_names.iter().any(|n| n.starts_with('.')),
+            "no dot entries should leak by default: {hidden_names:?}"
+        );
+
+        // include_hidden=true: dotfolders/dotfiles present.
+        let shown = build_tree(&root, 0, 30, true).unwrap();
+        let shown_names: Vec<&str> = shown.iter().map(|n| n.name.as_str()).collect();
+        assert!(shown_names.contains(&".claude"));
+        assert!(shown_names.contains(&".env"));
+        assert!(shown_names.contains(&"visible"));
+
+        // The dotfolder's children come through too.
+        let claude = shown.iter().find(|n| n.name == ".claude").unwrap();
+        let kids = claude.children.as_ref().expect(".claude should have children");
+        assert!(kids.iter().any(|n| n.name == "CLAUDE.md"));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     /// Pull the inner sync `copy_recursive` body out from

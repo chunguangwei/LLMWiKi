@@ -41,12 +41,14 @@ interface ApiHealth {
  * a route there, update this list — it's the only place users discover
  * the API contract until we ship a proper OpenAPI doc.
  */
-const ENDPOINTS: Array<{ method: "GET" | "POST"; path: string; noteKey: string }> = [
+const ENDPOINTS: Array<{ method: "GET" | "POST" | "PATCH"; path: string; noteKey: string }> = [
   { method: "GET", path: "/api/v1/health", noteKey: "endpointHealthNote" },
   { method: "GET", path: "/api/v1/projects", noteKey: "endpointProjectsNote" },
   { method: "GET", path: "/api/v1/projects/{id}/files", noteKey: "endpointFilesNote" },
   { method: "GET", path: "/api/v1/projects/{id}/files/content", noteKey: "endpointContentNote" },
   { method: "GET", path: "/api/v1/projects/{id}/reviews", noteKey: "endpointReviewsNote" },
+  { method: "PATCH", path: "/api/v1/projects/{id}/reviews/{reviewId}", noteKey: "endpointPatchReviewNote" },
+  { method: "POST", path: "/api/v1/projects/{id}/reviews/resolve", noteKey: "endpointBulkResolveNote" },
   { method: "POST", path: "/api/v1/projects/{id}/search", noteKey: "endpointSearchNote" },
   { method: "GET", path: "/api/v1/projects/{id}/graph", noteKey: "endpointGraphNote" },
   { method: "POST", path: "/api/v1/projects/{id}/sources/rescan", noteKey: "endpointRescanNote" },
@@ -557,7 +559,9 @@ export function ApiServerSection({ draft, setDraft }: Props) {
             const methodClass =
               endpoint.method === "GET"
                 ? "bg-blue-500/10 text-blue-700 dark:text-blue-400"
-                : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                : endpoint.method === "PATCH"
+                  ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                  : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
             return (
               <div
                 key={`${endpoint.method} ${endpoint.path}`}

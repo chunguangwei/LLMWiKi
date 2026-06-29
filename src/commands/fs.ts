@@ -34,8 +34,17 @@ export async function writeBinaryFile(path: string, base64: string): Promise<voi
   return invoke<void>("write_binary_file", { path, base64 })
 }
 
-export async function listDirectory(path: string): Promise<FileNode[]> {
-  return invoke<FileNode[]>("list_directory", { path })
+/**
+ * List a directory tree. Dot-prefixed entries (`.claude`, `.env`,
+ * `.llm-wiki`, …) are hidden by default; pass `includeHidden: true`
+ * only for the `raw/sources` content area, where dotfolders are
+ * legitimate user-added sources. See `entry_is_visible` in fs.rs.
+ */
+export async function listDirectory(
+  path: string,
+  includeHidden = false,
+): Promise<FileNode[]> {
+  return invoke<FileNode[]>("list_directory", { path, includeHidden })
 }
 
 export async function copyFile(

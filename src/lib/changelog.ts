@@ -26,6 +26,30 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.4",
+    date: "2026-06-29",
+    highlights: {
+      en: [
+        "Smarter routing: the source-analysis stage now sees your project's schema, so content that fits a specific page type (decision, meeting, finding, goal, …) is recommended and filed in the right folder instead of being flattened into generic entity/concept pages.",
+        "New web-search provider: Brave Search (add your API key in Settings → Web Search).",
+        "Ingest queue now has explicit Pause / Resume — pause after the current task without cancelling the backlog, and queued tasks no longer silently auto-resume on startup.",
+        "Review tab: a Refresh button to re-read items from disk, plus resolve / reopen review items through the local API.",
+        "You can now edit a page's frontmatter directly as raw markdown in the editor.",
+        "Knowledge graph: the hovered node's label sits on a contrasting pill so it stays readable over dense areas, in both light and dark mode.",
+        "Reliability: cancelling an ingest stops writes immediately; full-page scanned images in PDFs are skipped; .claude/.codex source folders are now visible; source imports sort naturally.",
+      ],
+      zh: [
+        "分类更准:资料分析阶段现在能看到项目的 schema(34 类拆分),凡是符合某个具体页面类型(决策、会议、发现、目标……)的内容会被推荐并归入正确的文件夹,而不再被压平成笼统的实体/概念页。",
+        "新增联网搜索源:Brave Search(在 设置 → 联网搜索 填入 API Key 即可)。",
+        "摄取队列新增 暂停 / 继续——可在当前任务完成后暂停而不取消整批,排队任务也不再在启动时静默自动恢复。",
+        "审阅标签页:新增「刷新」按钮从磁盘重新读取审阅项,并支持通过本地 API 解决/重新打开审阅项。",
+        "现在可以在编辑器里直接以原始 markdown 编辑页面的 frontmatter。",
+        "知识图谱:鼠标悬停的节点标签现在带一个对比色的小圆底,在密集区域也清晰可读(亮色与暗色模式皆可)。",
+        "稳定性:取消摄取会立即停止写入;PDF 里整页的扫描图会被跳过;.claude/.codex 资料文件夹现在可见;资料导入按自然顺序排序。",
+      ],
+    },
+  },
+  {
     version: "0.5.3",
     date: "2026-06-25",
     highlights: {

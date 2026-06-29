@@ -3,6 +3,8 @@ use std::sync::Mutex;
 use std::thread;
 use tiny_http::{Header, Method, Response, Server};
 
+use crate::cors::{local_cors_headers, request_origin};
+
 static CURRENT_PROJECT: Mutex<String> = Mutex::new(String::new());
 static ALL_PROJECTS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new()); // (name, path)
 static PENDING_CLIPS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new()); // (projectPath, filePath)
@@ -89,13 +91,8 @@ pub fn start_clip_server() {
             println!("[Clip Server] Listening on http://127.0.0.1:{}", PORT);
 
             for mut request in server.incoming_requests() {
-                let cors_headers = vec![
-                    Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
-                    Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-                        .unwrap(),
-                    Header::from_bytes("Access-Control-Allow-Headers", "Content-Type").unwrap(),
-                    Header::from_bytes("Content-Type", "application/json").unwrap(),
-                ];
+                let origin = request_origin(&request);
+                let cors_headers = cors_headers(origin.as_deref());
 
                 // Handle CORS preflight
                 if request.method() == &Method::Options {
@@ -103,6 +100,8 @@ pub fn start_clip_server() {
                     for h in &cors_headers {
                         response.add_header(h.clone());
                     }
+                    response
+                        .add_header(Header::from_bytes("Access-Control-Max-Age", "600").unwrap());
                     let _ = request.respond(response);
                     continue;
                 }
@@ -292,6 +291,10 @@ pub fn start_clip_server() {
             thread::sleep(std::time::Duration::from_secs(RESTART_DELAY_SECS));
         }
     });
+}
+
+fn cors_headers(origin: Option<&str>) -> Vec<Header> {
+    local_cors_headers(origin, "Content-Type")
 }
 
 fn handle_set_project(body: &str) -> String {

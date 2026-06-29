@@ -57,6 +57,13 @@ const SEARCH_PROVIDERS = [
     hint: "Anonymous Firecrawl Search API",
     configKind: "none",
   },
+  {
+    id: "brave",
+    label: "Brave Search",
+    hint: "Independent index with privacy focus (api.search.brave.com)",
+    keyPlaceholder: "Enter your Brave Search API subscription token",
+    configKind: "key",
+  },
 ] as const
 
 export function WebSearchSection() {

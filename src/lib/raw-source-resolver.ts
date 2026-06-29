@@ -41,7 +41,7 @@ export async function findRawSourceForImage(
 
   let tree: FileNode[]
   try {
-    tree = await listDirectory(`${normalizedProjectPath}/raw/sources`)
+    tree = await listDirectory(`${normalizedProjectPath}/raw/sources`, true)
   } catch {
     return null
   }

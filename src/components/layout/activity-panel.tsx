@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import {
   ChevronUp, ChevronDown, Loader2, CheckCircle2, AlertCircle,
   FileText, Users, Lightbulb, BookOpen, GitMerge, BarChart3, HelpCircle, Layout,
-  RotateCcw, X, Clock, TrendingUp, Target,
+  RotateCcw, X, Clock, TrendingUp, Target, Pause, Play,
 } from "lucide-react"
 import { useActivityStore, type ActivityItem } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -15,6 +15,8 @@ import {
   retryAllFailedTasks,
   cancelTask,
   cancelAllTasks,
+  pauseProcessing,
+  resumeProcessing,
   type IngestTask,
 } from "@/lib/ingest-queue"
 import {
@@ -92,6 +94,7 @@ const ACTIVITY_FILTER_VALUES: ReadonlyArray<{ value: ActivityTypeFilter; label: 
 ]
 
 export function ActivityPanel() {
+  const { t } = useTranslation()
   const items = useActivityStore((s) => s.items)
   const clearDone = useActivityStore((s) => s.clearDone)
   const project = useWikiStore((s) => s.project)
@@ -125,6 +128,9 @@ export function ActivityPanel() {
 
   const queueSummary = getQueueSummary()
   const hasQueue = queueSummary.total > 0
+  const shouldResumeQueue =
+    queueSummary.userPaused ||
+    (queueSummary.restoredBacklogWaiting && queueSummary.processing === 0)
   const hasFileSync = fileSyncTasks.length > 0 || Boolean(fileSyncError)
   const fileSyncPending = fileSyncTasks.filter((t) => t.status === "pending").length
   const fileSyncProcessing = fileSyncTasks.filter((t) => t.status === "processing").length
@@ -193,13 +199,18 @@ export function ActivityPanel() {
     if (!project) return
     const activeCount = queueSummary.pending + queueSummary.processing
     if (activeCount === 0) return
-    if (!window.confirm(
-      `Cancel all ${activeCount} queued/processing task${activeCount > 1 ? "s" : ""}? ` +
-      `Partial files from the in-progress task will be removed. ` +
-      `Failed tasks will be kept so you can retry them.`,
-    )) return
+    if (!window.confirm(t("activity.cancelAllConfirm", { count: activeCount }))) return
     cancelAllTasks()
-  }, [project, queueSummary.pending, queueSummary.processing])
+  }, [project, queueSummary.pending, queueSummary.processing, t])
+
+  const handleTogglePause = useCallback(() => {
+    if (!project) return
+    if (shouldResumeQueue) {
+      resumeProcessing()
+    } else {
+      pauseProcessing()
+    }
+  }, [project, shouldResumeQueue])
 
   const handleFileSyncRescan = useCallback(() => {
     if (!project) return
@@ -321,26 +332,51 @@ export function ActivityPanel() {
           {hasQueue && (queueSummary.processing > 0 || queueSummary.pending > 0) && (
             <div className="px-3 py-1.5 border-b border-border/50">
               <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1 gap-2">
-                <span>Ingest Queue</span>
-                <span className="flex-1 text-right">
-                  {queueSummary.total - queueSummary.pending - queueSummary.processing}/{queueSummary.total} complete
+                <span>
+                  {queueSummary.paused && queueSummary.processing === 0
+                    ? t("activity.ingestQueuePaused")
+                    : t("activity.ingestQueue")}
                 </span>
+                <span className="flex-1 text-right">
+                  {t("activity.queueCompleteCount", {
+                    done: queueSummary.completed + queueSummary.failed,
+                    total: queueSummary.total,
+                  })}
+                </span>
+                {(queueSummary.processing > 0 || queueSummary.pending > 0 || queueSummary.paused) && (
+                  <button
+                    onClick={handleTogglePause}
+                    className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground"
+                    title={
+                      shouldResumeQueue
+                        ? t("activity.resumeQueueTitle")
+                        : t("activity.pauseQueueTitle")
+                    }
+                  >
+                    {shouldResumeQueue
+                      ? <Play className="h-2.5 w-2.5" />
+                      : <Pause className="h-2.5 w-2.5" />}
+                    {shouldResumeQueue
+                      ? t("activity.resumeQueue")
+                      : t("activity.pauseQueue")}
+                  </button>
+                )}
                 {queueSummary.pending + queueSummary.processing >= 2 && (
                   <button
                     onClick={handleCancelAll}
                     className="rounded px-1.5 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
-                    title="Cancel all queued and in-progress tasks"
+                    title={t("activity.cancelAllTitle")}
                   >
-                    Cancel all
+                    {t("activity.cancelAll")}
                   </button>
                 )}
                 {queueSummary.failed > 0 && (
                   <button
                     onClick={handleRetryAllFailed}
                     className="rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground"
-                    title="Retry all failed ingest tasks"
+                    title={t("activity.retryFailedTitle")}
                   >
-                    Retry failed
+                    {t("activity.retryFailed")}
                   </button>
                 )}
               </div>
@@ -356,16 +392,16 @@ export function ActivityPanel() {
           {hasQueue && queueSummary.processing === 0 && queueSummary.pending === 0 && queueSummary.failed > 0 && (
             <div className="px-3 py-1.5 border-b border-border/50">
               <div className="flex items-center justify-between text-[10px] text-muted-foreground gap-2">
-                <span>Ingest Queue</span>
+                <span>{t("activity.ingestQueue")}</span>
                 <span className="flex-1 text-right">
-                  {queueSummary.failed} failed
+                  {t("activity.failedCount", { count: queueSummary.failed })}
                 </span>
                 <button
                   onClick={handleRetryAllFailed}
                   className="rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground"
-                  title="Retry all failed ingest tasks"
+                  title={t("activity.retryFailedTitle")}
                 >
-                  Retry failed
+                  {t("activity.retryFailed")}
                 </button>
               </div>
             </div>

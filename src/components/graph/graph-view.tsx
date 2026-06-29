@@ -2,6 +2,7 @@ import { useEffect, useCallback, useMemo, useState, useRef, type ChangeEvent } f
 import Graph from "graphology"
 import { SigmaContainer, useLoadGraph, useRegisterEvents, useSetSettings, useSigma } from "@react-sigma/core"
 import "@react-sigma/core/lib/style.css"
+import type { NodeHoverDrawingFunction } from "sigma/rendering"
 import type { SigmaNodeEventPayload } from "sigma/types"
 import forceAtlas2 from "graphology-layout-forceatlas2"
 import { Network, RefreshCw, ZoomIn, ZoomOut, Maximize, Layers, Tag, Lightbulb, AlertTriangle, Link2, X, Search, Loader2, Filter, RotateCcw, EyeOff } from "lucide-react"
@@ -374,6 +375,83 @@ function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: G
  * this, labels stayed a fixed dark slate (#1e293b) and were unreadable on the
  * dark-mode canvas (dark:bg-slate-950).
  */
+function drawRoundedRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  const safeRadius = Math.min(radius, width / 2, height / 2)
+  context.beginPath()
+  context.moveTo(x + safeRadius, y)
+  context.lineTo(x + width - safeRadius, y)
+  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius)
+  context.lineTo(x + width, y + height - safeRadius)
+  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height)
+  context.lineTo(x + safeRadius, y + height)
+  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius)
+  context.lineTo(x, y + safeRadius)
+  context.quadraticCurveTo(x, y, x + safeRadius, y)
+  context.closePath()
+}
+
+// Hover label gets a contrasting rounded "pill" behind it so the hovered
+// node's name stays readable over busy graph regions, on either theme
+// (upstream e14bbcb, adapted to the fork's isDark boolean).
+function createGraphNodeHoverRenderer(isDark: boolean): NodeHoverDrawingFunction {
+  const hoverLabelText = isDark ? "#f8fafc" : "#0f172a"
+  const hoverLabelBackground = isDark ? "rgba(15,23,42,0.94)" : "rgba(255,255,255,0.97)"
+  const hoverLabelBorder = isDark ? "rgba(148,163,184,0.38)" : "rgba(15,23,42,0.14)"
+  const hoverLabelShadow = isDark ? "rgba(2,6,23,0.55)" : "rgba(15,23,42,0.18)"
+  return (context, data, settings) => {
+    const label = typeof data.label === "string" ? data.label : ""
+    const labelSize = settings.labelSize
+    const font = settings.labelFont
+    const weight = settings.labelWeight
+    const nodeRadius = Math.max(data.size, labelSize / 2) + 3
+
+    context.save()
+    context.shadowOffsetX = 0
+    context.shadowOffsetY = 2
+    context.shadowBlur = 10
+    context.shadowColor = hoverLabelShadow
+    context.fillStyle = hoverLabelBackground
+    context.strokeStyle = hoverLabelBorder
+    context.lineWidth = 1
+
+    context.beginPath()
+    context.arc(data.x, data.y, nodeRadius, 0, Math.PI * 2)
+    context.closePath()
+    context.fill()
+    context.stroke()
+
+    if (label) {
+      context.font = `${weight} ${labelSize}px ${font}`
+      const paddingX = 8
+      const paddingY = 4
+      const gap = 6
+      const textWidth = context.measureText(label).width
+      const boxWidth = Math.ceil(textWidth + paddingX * 2)
+      const boxHeight = Math.ceil(labelSize + paddingY * 2)
+      const boxX = data.x + nodeRadius + gap
+      const boxY = data.y - boxHeight / 2
+
+      drawRoundedRect(context, boxX, boxY, boxWidth, boxHeight, 5)
+      context.fill()
+      context.stroke()
+
+      context.shadowBlur = 0
+      context.shadowOffsetY = 0
+      context.fillStyle = hoverLabelText
+      context.fillText(label, boxX + paddingX, data.y + labelSize / 3)
+    }
+
+    context.restore()
+  }
+}
+
 function useIsDarkTheme(): boolean {
   const [isDark, setIsDark] = useState(
     () => typeof document !== "undefined" && document.documentElement.classList.contains("dark"),
@@ -412,6 +490,7 @@ function GraphRenderSettings({
       hideLabelsOnMove: true,
       labelColor: { color: labelTextColor },
       defaultEdgeColor: isDark ? "#475569" : "#cbd5e1", // slate-600 / slate-300
+      defaultDrawNodeHover: createGraphNodeHoverRenderer(isDark),
       labelDensity: labelDensity(nodeCount),
       labelRenderedSizeThreshold: labelSizeThreshold(nodeCount),
       renderEdgeLabels: false,

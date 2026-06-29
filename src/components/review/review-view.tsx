@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { useCallback, useState } from "react"
 import { queueResearch } from "@/lib/deep-research"
 import {
   AlertTriangle,
@@ -10,6 +10,7 @@ import {
   X,
   Check,
   Trash2,
+  RotateCcw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
@@ -34,8 +35,28 @@ export function ReviewView() {
   const resolveItem = useReviewStore((s) => s.resolveItem)
   const dismissItem = useReviewStore((s) => s.dismissItem)
   const clearResolved = useReviewStore((s) => s.clearResolved)
+  const setItems = useReviewStore((s) => s.setItems)
   const project = useWikiStore((s) => s.project)
   const setFileTree = useWikiStore((s) => s.setFileTree)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // Reload review items from disk. The review pane has no equivalent of
+  // lint's re-run, so external writers — the resolve API, another window,
+  // a manual edit of review.json — would otherwise stay invisible until
+  // the project is reopened.
+  const handleRefresh = useCallback(async () => {
+    if (!project || refreshing) return
+    setRefreshing(true)
+    try {
+      const { loadReviewItems } = await import("@/lib/persist")
+      const loaded = await loadReviewItems(project.path)
+      setItems(loaded)
+    } catch (err) {
+      console.error("Failed to refresh review items:", err)
+    } finally {
+      setRefreshing(false)
+    }
+  }, [project, refreshing, setItems])
 
   const handleResolve = useCallback(async (id: string, action: string) => {
     const pp = project ? normalizePath(project.path) : ""
@@ -284,12 +305,25 @@ export function ReviewView() {
             </span>
           )}
         </h2>
-        {resolved.length > 0 && (
-          <Button variant="ghost" size="sm" onClick={clearResolved} className="text-xs">
-            <Trash2 className="mr-1 h-3 w-3" />
-            Clear resolved
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="text-xs"
+            title="Reload review items from disk"
+          >
+            <RotateCcw className={`mr-1 h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
+            Refresh
           </Button>
-        )}
+          {resolved.length > 0 && (
+            <Button variant="ghost" size="sm" onClick={clearResolved} className="text-xs">
+              <Trash2 className="mr-1 h-3 w-3" />
+              Clear resolved
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">

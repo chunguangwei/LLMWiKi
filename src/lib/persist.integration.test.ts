@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { realFs, createTempProject, readFileRaw, writeFileRaw, fileExists } from "@/test-helpers/fs-temp"
-import type { ReviewItem } from "@/stores/review-store"
+import { reviewIdFor, type ReviewItem } from "@/stores/review-store"
 import type { LintItem } from "@/stores/lint-store"
 import type { Conversation, DisplayMessage } from "@/stores/chat-store"
 
@@ -62,14 +62,17 @@ afterEach(async () => {
 })
 
 describe("review persistence — round-trip", () => {
-  it("save then load returns identical items", async () => {
+  it("save then load returns normalized review items", async () => {
     const items: ReviewItem[] = [
       makeReview({ id: "r-1", title: "Alpha" }),
       makeReview({ id: "r-2", title: "Beta", type: "duplicate" }),
     ]
     await saveReviewItems(tmp.path, items)
     const loaded = await loadReviewItems(tmp.path)
-    expect(loaded).toEqual(items)
+    expect(loaded).toEqual([
+      { ...items[0], id: reviewIdFor(items[0]) },
+      { ...items[1], id: reviewIdFor(items[1]) },
+    ])
   })
 
   it("creates the .llm-wiki directory on first save", async () => {
@@ -97,8 +100,29 @@ describe("review persistence — round-trip", () => {
     ]
     await saveReviewItems(tmp.path, items)
     const loaded = await loadReviewItems(tmp.path)
-    expect(loaded).toEqual(items)
+    expect(loaded.map((item) => item.title)).toEqual(items.map((item) => item.title))
+    expect(loaded.map((item) => item.id)).toEqual(items.map((item) => reviewIdFor(item)))
     expect(loaded[0].title).toBe("注意力机制")
+  })
+
+  it("migrates old counter review ids and collapses duplicate content on load", async () => {
+    await writeFileRaw(`${tmp.path}/.llm-wiki/review.json`, JSON.stringify([
+      makeReview({ id: "review-1", title: "Attention", resolved: false, affectedPages: ["a.md"] }),
+      makeReview({
+        id: "review-2",
+        title: "Missing page: Attention",
+        resolved: true,
+        resolvedAction: "user-resolved",
+        affectedPages: ["b.md"],
+      }),
+    ]))
+
+    const loaded = await loadReviewItems(tmp.path)
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0].id).toBe(reviewIdFor(loaded[0]))
+    expect(loaded[0].resolved).toBe(true)
+    expect(loaded[0].resolvedAction).toBe("user-resolved")
+    expect(loaded[0].affectedPages).toEqual(expect.arrayContaining(["a.md", "b.md"]))
   })
 
   it("overwrites existing file on subsequent saves", async () => {

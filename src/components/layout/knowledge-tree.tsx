@@ -339,7 +339,7 @@ function RawSourcesSection() {
   useEffect(() => {
     if (!project) return
     const pp = normalizePath(project.path)
-    listDirectory(`${pp}/raw/sources`)
+    listDirectory(`${pp}/raw/sources`, true)
       .then((tree) => setSources(flattenAllFiles(tree)))
       .catch(() => setSources([]))
   }, [project])

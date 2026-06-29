@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next"
 import { normalizePath } from "@/lib/path-utils"
 import { decideDeleteClick } from "@/lib/sources-tree-delete"
 import { rescanProjectFileSync } from "@/lib/project-file-sync"
+import { naturalCompare } from "@/lib/natural-sort"
 import {
   deleteSourceFile,
   deleteSourceFolder,
@@ -73,8 +74,9 @@ export function SourcesView() {
     if (!project) return
     const pp = normalizePath(project.path)
     try {
-      const tree = await listDirectory(`${pp}/raw/sources`)
-      // Filter out hidden files/dirs and cache
+      const tree = await listDirectory(`${pp}/raw/sources`, true)
+      // Keep user-added dotfolders (.claude, .codex) but drop ingest
+      // noise (.cache, .DS_Store) — see filterTree.
       const filtered = filterTree(tree)
       setSources(filtered)
       setRefreshError(null)
@@ -679,9 +681,14 @@ interface SourceTreeRow {
   depth: number
 }
 
+// Ingest-generated noise hidden from the sources tree even though the
+// listing now includes dot entries. User-added dotfolders (.claude,
+// .codex) pass through; only these internal artifacts are dropped.
+const HIDDEN_SOURCE_ENTRIES = new Set([".cache", ".DS_Store"])
+
 function filterTree(nodes: FileNode[]): FileNode[] {
   return nodes
-    .filter((n) => !n.name.startsWith("."))
+    .filter((n) => !HIDDEN_SOURCE_ENTRIES.has(n.name))
     .map((n) => {
       if (n.is_dir && n.children) {
         return { ...n, children: filterTree(n.children) }
@@ -707,7 +714,7 @@ function sortSourceNodes(nodes: readonly FileNode[]): FileNode[] {
   return [...nodes].sort((a, b) => {
     if (a.is_dir && !b.is_dir) return -1
     if (!a.is_dir && b.is_dir) return 1
-    return a.name.localeCompare(b.name)
+    return naturalCompare(a.name, b.name)
   })
 }
 

@@ -23,6 +23,9 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+const MIN_FULL_PAGE_SKIP_RATIO: f32 = 0.5;
+const MAX_FULL_PAGE_SKIP_RATIO: f32 = 1.0;
+
 /// Filter knobs. The defaults mirror what's documented in
 /// plans/multimodal-images.md; callers (the TS layer wiring this up)
 /// will eventually surface them in Settings.
@@ -38,6 +41,20 @@ pub struct ExtractOptions {
     /// (each image base64'd is ~MB-scale) AND blow up downstream VLM
     /// cost during Phase 3.
     pub max_images: usize,
+    /// Skip raster image objects that cover most of a PDF page when the page
+    /// already has meaningful extractable text. Pure scanned pages, and scans
+    /// with only a page number or watermark text layer, keep their full-page
+    /// raster because that image is the only reliable content. Searchable OCR
+    /// scans with a full text layer may be treated as text pages; this is an
+    /// intentional default tradeoff to avoid importing every PDF page as a
+    /// large duplicate PNG.
+    pub skip_full_page_images: bool,
+    /// Fraction of page width and height an image must cover to be considered
+    /// page-sized. Values are clamped to 0.5..=1.0 before use.
+    pub full_page_coverage_ratio: f32,
+    /// Minimum non-whitespace text characters before a page is treated as a
+    /// text page for page-sized image filtering.
+    pub full_page_min_text_chars: usize,
 }
 
 impl Default for ExtractOptions {
@@ -46,6 +63,9 @@ impl Default for ExtractOptions {
             min_width: 100,
             min_height: 100,
             max_images: 500,
+            skip_full_page_images: true,
+            full_page_coverage_ratio: 0.90,
+            full_page_min_text_chars: 80,
         }
     }
 }
@@ -54,6 +74,8 @@ impl Default for ExtractOptions {
 #[serde(rename_all = "camelCase")]
 pub struct ExtractedImage {
     /// 1-based index in document order. Stable across re-extractions.
+    /// Stability assumes the same extraction options; changing filters can
+    /// shift subsequent indices.
     /// Used as the filename suffix when the caller writes images to
     /// `wiki/media/<slug>/img-<index>.<ext>`.
     pub index: u32,
@@ -74,6 +96,84 @@ pub struct ExtractedImage {
     /// `data_base64` decodes to). Used by the Phase 3 caption cache
     /// to dedupe identical images across files.
     pub sha256: String,
+}
+
+fn is_full_page_image_bounds(
+    object_width: f32,
+    object_height: f32,
+    page_width: f32,
+    page_height: f32,
+    coverage_ratio: f32,
+) -> bool {
+    if object_width <= 0.0 || object_height <= 0.0 || page_width <= 0.0 || page_height <= 0.0 {
+        return false;
+    }
+    let ratio = coverage_ratio.clamp(MIN_FULL_PAGE_SKIP_RATIO, MAX_FULL_PAGE_SKIP_RATIO);
+    object_width / page_width >= ratio && object_height / page_height >= ratio
+}
+
+fn has_meaningful_page_text(text: &str, min_chars: usize) -> bool {
+    text.chars().filter(|c| !c.is_whitespace()).count() >= min_chars
+}
+
+fn is_full_page_pdf_image_object(
+    object: &pdfium_render::prelude::PdfPageObject<'_>,
+    page_width: f32,
+    page_height: f32,
+    coverage_ratio: f32,
+) -> bool {
+    use pdfium_render::prelude::PdfPageObjectCommon;
+
+    object
+        .bounds()
+        .map(|bounds| {
+            is_full_page_image_bounds(
+                bounds.width().value,
+                bounds.height().value,
+                page_width,
+                page_height,
+                coverage_ratio,
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn pdf_page_has_meaningful_text(
+    page: &pdfium_render::prelude::PdfPage<'_>,
+    min_chars: usize,
+) -> bool {
+    // Image-only extraction should not fail just because text extraction fails;
+    // keeping the image is the safer fallback.
+    page.text()
+        .map(|text| has_meaningful_page_text(&text.all(), min_chars))
+        .unwrap_or(false)
+}
+
+fn should_skip_full_page_image_decision(
+    skip_enabled: bool,
+    page_has_meaningful_text: bool,
+    image_is_full_page: bool,
+) -> bool {
+    skip_enabled && page_has_meaningful_text && image_is_full_page
+}
+
+fn should_skip_full_page_pdf_image(
+    object: &pdfium_render::prelude::PdfPageObject<'_>,
+    page_width: f32,
+    page_height: f32,
+    page_has_meaningful_text: bool,
+    options: &ExtractOptions,
+) -> bool {
+    should_skip_full_page_image_decision(
+        options.skip_full_page_images,
+        page_has_meaningful_text,
+        is_full_page_pdf_image_object(
+            object,
+            page_width,
+            page_height,
+            options.full_page_coverage_ratio,
+        ),
+    )
 }
 
 // ── PDF (pdfium) ────────────────────────────────────────────────────────
@@ -143,7 +243,10 @@ pub fn extract_pdf_markdown(
         let page_text = page
             .text()
             .map_err(|e| format!("Page {page_num} text extraction failed in '{path}': {e}"))?;
-        out.push_str(&page_text.all());
+        let page_text_content = page_text.all();
+        let page_has_meaningful_text =
+            has_meaningful_page_text(&page_text_content, options.full_page_min_text_chars);
+        out.push_str(&page_text_content);
         // Single trailing newline so the next block starts on its own
         // line; the `\n\n` separator before the next `## Page` heading
         // gets prepended by the loop entry above.
@@ -163,6 +266,15 @@ pub fn extract_pdf_markdown(
                 Some(img) => img,
                 None => continue,
             };
+            if should_skip_full_page_pdf_image(
+                &object,
+                page.width().value,
+                page.height().value,
+                page_has_meaningful_text,
+                options,
+            ) {
+                continue;
+            }
             let dyn_img = match image.get_raw_image() {
                 Ok(b) => b,
                 Err(e) => {
@@ -251,6 +363,7 @@ pub fn extract_pdf_images(
     let mut idx: u32 = 0;
 
     'pages: for (page_idx, page) in doc.pages().iter().enumerate() {
+        let mut page_has_meaningful_text: Option<bool> = None;
         for object in page.objects().iter() {
             // Only image objects. Path / text / shading / form / etc.
             // are all skipped — we don't try to rasterize vector charts
@@ -259,6 +372,23 @@ pub fn extract_pdf_images(
                 Some(img) => img,
                 None => continue,
             };
+            let should_skip = if options.skip_full_page_images {
+                let has_meaningful_text = *page_has_meaningful_text.get_or_insert_with(|| {
+                    pdf_page_has_meaningful_text(&page, options.full_page_min_text_chars)
+                });
+                should_skip_full_page_pdf_image(
+                    &object,
+                    page.width().value,
+                    page.height().value,
+                    has_meaningful_text,
+                    options,
+                )
+            } else {
+                false
+            };
+            if should_skip {
+                continue;
+            }
 
             // get_raw_image returns an `image::DynamicImage`. PDFium
             // can fail per-image on a corrupt embed; we log + skip
@@ -649,6 +779,7 @@ pub fn extract_and_save_pdf_images(
     let mut total_objects: u32 = 0;
     let mut total_image_objects: u32 = 0;
     let mut filtered_too_small: u32 = 0;
+    let mut filtered_full_page: u32 = 0;
     let mut filtered_decode_err: u32 = 0;
     let mut filtered_encode_err: u32 = 0;
 
@@ -659,6 +790,7 @@ pub fn extract_and_save_pdf_images(
     );
 
     'pages: for (page_idx, page) in doc.pages().iter().enumerate() {
+        let mut page_has_meaningful_text: Option<bool> = None;
         for object in page.objects().iter() {
             total_objects += 1;
             let image = match object.as_image_object() {
@@ -666,6 +798,28 @@ pub fn extract_and_save_pdf_images(
                 None => continue,
             };
             total_image_objects += 1;
+            let should_skip = if options.skip_full_page_images {
+                let has_meaningful_text = *page_has_meaningful_text.get_or_insert_with(|| {
+                    pdf_page_has_meaningful_text(&page, options.full_page_min_text_chars)
+                });
+                should_skip_full_page_pdf_image(
+                    &object,
+                    page.width().value,
+                    page.height().value,
+                    has_meaningful_text,
+                    options,
+                )
+            } else {
+                false
+            };
+            if should_skip {
+                filtered_full_page += 1;
+                eprintln!(
+                    "[extract_and_save_pdf_images] page {} image covers most of page — skipped",
+                    page_idx + 1
+                );
+                continue;
+            }
             let dyn_img = match image.get_raw_image() {
                 Ok(b) => b,
                 Err(e) => {
@@ -732,8 +886,8 @@ pub fn extract_and_save_pdf_images(
     }
 
     eprintln!(
-        "[extract_and_save_pdf_images] '{path}' DONE — saved={}, total_objects={}, image_objects={}, too_small={}, decode_err={}, encode_err={}",
-        out.len(), total_objects, total_image_objects, filtered_too_small, filtered_decode_err, filtered_encode_err,
+        "[extract_and_save_pdf_images] '{path}' DONE — saved={}, total_objects={}, image_objects={}, too_small={}, full_page={}, decode_err={}, encode_err={}",
+        out.len(), total_objects, total_image_objects, filtered_too_small, filtered_full_page, filtered_decode_err, filtered_encode_err,
     );
 
     Ok(out)
@@ -968,5 +1122,54 @@ mod tests {
         assert_eq!(o.min_width, 100);
         assert_eq!(o.min_height, 100);
         assert_eq!(o.max_images, 500);
+        assert!(o.skip_full_page_images);
+        assert_eq!(o.full_page_coverage_ratio, 0.90);
+        assert_eq!(o.full_page_min_text_chars, 80);
+    }
+
+    #[test]
+    fn full_page_image_bounds_detects_page_scans() {
+        assert!(is_full_page_image_bounds(
+            900.0, 900.0, 1000.0, 1000.0, 0.90
+        ));
+        assert!(is_full_page_image_bounds(
+            950.0, 910.0, 1000.0, 1000.0, 0.90
+        ));
+        assert!(!is_full_page_image_bounds(
+            899.0, 1000.0, 1000.0, 1000.0, 0.90
+        ));
+        assert!(!is_full_page_image_bounds(
+            1000.0, 899.0, 1000.0, 1000.0, 0.90
+        ));
+        assert!(!is_full_page_image_bounds(
+            400.0, 300.0, 1000.0, 1000.0, 0.90
+        ));
+        assert!(!is_full_page_image_bounds(900.0, 900.0, 0.0, 1000.0, 0.90));
+        assert!(is_full_page_image_bounds(500.0, 500.0, 1000.0, 1000.0, 0.0));
+        assert!(is_full_page_image_bounds(
+            500.0, 500.0, 1000.0, 1000.0, -1.0
+        ));
+        assert!(!is_full_page_image_bounds(
+            999.0, 1000.0, 1000.0, 1000.0, 1.5
+        ));
+    }
+
+    #[test]
+    fn meaningful_page_text_ignores_short_stamp_layers() {
+        assert!(!has_meaningful_page_text(" 12 \n", 80));
+        assert!(!has_meaningful_page_text("confidential watermark", 80));
+        assert!(has_meaningful_page_text(
+            "This page has enough extracted words to be treated as a real text page rather than a scanned page with only a short OCR stamp.",
+            80
+        ));
+    }
+
+    #[test]
+    fn full_page_skip_decision_requires_all_conditions() {
+        assert!(should_skip_full_page_image_decision(true, true, true));
+        assert!(!should_skip_full_page_image_decision(false, true, true));
+        assert!(!should_skip_full_page_image_decision(true, false, true));
+        assert!(!should_skip_full_page_image_decision(true, true, false));
+        assert!(!should_skip_full_page_image_decision(false, false, false));
     }
 }

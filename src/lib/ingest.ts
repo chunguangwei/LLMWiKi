@@ -309,10 +309,22 @@ export async function autoIngest(
   llmConfig: LlmConfig,
   signal?: AbortSignal,
   folderContext?: string,
+  onFileWritten?: (relativePath: string) => void,
 ): Promise<string[]> {
   return withProjectLock(normalizePath(projectPath), () =>
-    autoIngestImpl(projectPath, sourcePath, llmConfig, signal, folderContext),
+    autoIngestImpl(projectPath, sourcePath, llmConfig, signal, folderContext, onFileWritten),
   )
+}
+
+function throwIfIngestAborted(signal: AbortSignal | undefined, activityId?: string): void {
+  if (!signal?.aborted) return
+  if (activityId) {
+    useActivityStore.getState().updateItem(activityId, {
+      status: "error",
+      detail: "Ingest cancelled",
+    })
+  }
+  throw new Error("Ingest cancelled")
 }
 
 async function autoIngestImpl(
@@ -321,6 +333,7 @@ async function autoIngestImpl(
   llmConfig: LlmConfig,
   signal?: AbortSignal,
   folderContext?: string,
+  onFileWritten?: (relativePath: string) => void,
 ): Promise<string[]> {
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
@@ -376,7 +389,7 @@ async function autoIngestImpl(
     } catch (err) {
       // A cancelled run must surface the cancellation, not silently
       // degrade to pdfium — otherwise the user's stop is ignored.
-      if (signal?.aborted) throw err
+      throwIfIngestAborted(signal, activityId)
       const msg = trimInlineStatus(err instanceof Error ? err.message : String(err))
       console.warn(`[ingest:mineru] MinerU parsing failed, falling back to pdfium: ${msg}`)
       activity.updateItem(activityId, {
@@ -672,7 +685,7 @@ async function autoIngestImpl(
           const src = capByFactor(sourceContext, maxCtx, factor)
           const idx = capByFactor(index, 8_000, factor)
           return [
-            { role: "system", content: buildAnalysisPrompt(purpose, idx, src) },
+            { role: "system", content: buildAnalysisPrompt(purpose, idx, src, schema) },
             { role: "user", content: `Analyze this source document:\n\n**File:** ${sourceIdentity}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${src}` },
           ]
         },
@@ -757,6 +770,7 @@ async function autoIngestImpl(
   }
 
   // ── Step 3: Write files ───────────────────────────────────────
+  throwIfIngestAborted(signal, activityId)
   activity.updateItem(activityId, { detail: "Writing files..." })
   await migrateLegacySourceSummaryIfSafe(pp, sourceIdentity, sourceSummaryPath)
 
@@ -805,6 +819,8 @@ async function autoIngestImpl(
     sourceIdentity,
     sourceSummaryPath,
     signal,
+    activityId,
+    onFileWritten,
   )
 
   // Surface parser / writer warnings to the activity panel so users
@@ -867,6 +883,7 @@ async function autoIngestImpl(
     try {
       await writeFile(sourceSummaryFullPath, fallbackContent)
       writtenPaths.push(sourceSummaryPath)
+      onFileWritten?.(sourceSummaryPath)
     } catch {
       // non-critical
     }
@@ -950,14 +967,15 @@ async function autoIngestImpl(
         },
       )
     } catch (err) {
-      if (signal?.aborted) throw err
+      throwIfIngestAborted(signal, activityId)
       console.warn(`[ingest] Review suggestion generation failed for "${sourceIdentity}":`, err)
     }
-    if (signal?.aborted) throw new Error("Ingest cancelled")
+    throwIfIngestAborted(signal, activityId)
     if (reviewStageHadError) reviewSuggestionOutput = ""
   }
 
   // ── Step 4: Parse review items ────────────────────────────────
+  throwIfIngestAborted(signal, activityId)
   // Merge REVIEW blocks from the main generation and the dedicated
   // suggestion pass; parseReviewBlocks dedupes downstream in the store.
   const reviewItems = [
@@ -1304,6 +1322,8 @@ async function writeFileBlocks(
   sourceFileName: string,
   sourceSummaryPath?: string,
   signal?: AbortSignal,
+  activityId?: string,
+  onFileWritten?: (relativePath: string) => void,
 ): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[] }> {
   const { blocks, warnings: parseWarnings } = parseFileBlocks(text)
   const warnings = [...parseWarnings]
@@ -1328,6 +1348,7 @@ async function writeFileBlocks(
   const projectSchemaRouting = await loadProjectWikiSchemaRouting(projectPath)
 
   for (const { path: rawRelativePath, content: rawContent } of blocks) {
+    throwIfIngestAborted(signal, activityId)
     let relativePath = rawRelativePath
     if (sourceSummaryPath && relativePath.startsWith("wiki/sources/")) {
       relativePath = sourceSummaryPath
@@ -1440,6 +1461,7 @@ async function writeFileBlocks(
         await writeFile(fullPath, toWrite)
       }
       writtenPaths.push(relativePath)
+      onFileWritten?.(relativePath)
     } catch (err) {
       const msg = `Failed to write "${relativePath}": ${err instanceof Error ? err.message : String(err)}`
       console.error(`[ingest] ${msg}`)
@@ -2247,12 +2269,14 @@ function buildChunkAnalysisSystemPrompt(
     "- Concise summary of the main chunk",
     "- New or updated entities",
     "- New or updated concepts",
+    "- Any schema-defined page types beyond entity/concept that the main chunk genuinely supports",
     "- Claims, findings, evidence, contradictions",
     "- Open questions or research gaps",
     "",
     "## Updated Global Digest",
     "A compact document-level digest that incorporates this chunk and preserves prior cross-chunk context.",
-    "Keep this digest structured under: Summary, Entities, Concepts, Claims, Evidence, Contradictions, Open Questions, Cross-Chunk Relations.",
+    "Keep this digest structured under: Summary, Entities, Concepts, Schema-Typed Candidates, Claims, Evidence, Contradictions, Open Questions, Cross-Chunk Relations.",
+    "Use schema-defined types only when the source actually supports them; never invent goals, habits, journal entries, decisions, or similar user-authored records that are not present in the source.",
     "",
     "Stable project context follows. It changes rarely and should be treated as background:",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
@@ -2371,7 +2395,7 @@ async function analyzeLongSourceInChunks(
 
   for (const chunk of chunks) {
     if (chunk.index <= completedThrough) continue
-    if (signal?.aborted) throw new Error("Ingest cancelled")
+    throwIfIngestAborted(signal, activityId)
     const doneThisSession = chunk.index - 1 - sessionStartChunk
     const remaining = chunks.length - (chunk.index - 1)
     const etaMs =
@@ -2398,7 +2422,7 @@ async function analyzeLongSourceInChunks(
         }),
       )
     } catch (err) {
-      if (signal?.aborted) throw new Error("Ingest cancelled")
+      throwIfIngestAborted(signal, activityId)
       const msg = err instanceof Error ? err.message : String(err)
       // The checkpoint with all chunks completed SO FAR is already on disk
       // (saved after each one), so this failure loses nothing already done —
@@ -2458,7 +2482,12 @@ async function analyzeLongSourceInChunks(
  * Step 1 prompt: AI reads the source and produces a structured analysis.
  * This is the "discussion" step — the AI reasons about the source before writing wiki pages.
  */
-export function buildAnalysisPrompt(purpose: string, index: string, sourceContent: string = ""): string {
+export function buildAnalysisPrompt(
+  purpose: string,
+  index: string,
+  sourceContent: string = "",
+  schema: string = "",
+): string {
   return [
     "You are an expert research analyst. Read the source document and produce a structured analysis.",
     "Do not output chain-of-thought, hidden reasoning, or a thinking transcript. Reason internally and write only the concise final analysis.",
@@ -2520,6 +2549,7 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "",
     "## Recommendations",
     "- What wiki pages should be created or updated?",
+    "- If the project schema (below) defines page types beyond entity/concept (e.g. goal, habit, reflection, finding, decision, meeting), and the source genuinely contains matching content, recommend pages of those types — name the type explicitly. Only when the source actually supports it; never invent goals/habits/journal entries that aren't in the source.",
     "- What should be emphasized vs. de-emphasized?",
     "- Any open questions worth flagging for the user?",
     "",
@@ -2527,6 +2557,9 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "",
     "If a folder context is provided, use it as a hint for categorization — the folder structure often reflects the user's organizational intent (e.g., 'travel/japan' suggests a travel-plan; 'papers/energy' suggests an energy-related paper).",
     "",
+    schema
+      ? `## Project Schema (page types available — map source content to schema-defined types when it fits)\n${schema}`
+      : "",
     purpose ? `## Wiki Purpose (for context)\n${purpose}` : "",
     index ? `## Current Wiki Index (for checking existing content)\n${index}` : "",
   ].filter(Boolean).join("\n")

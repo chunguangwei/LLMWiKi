@@ -10,8 +10,8 @@ export interface FrontmatterParseResult {
    * closing `---`, plus the newlines that separate it from the
    * body) as it appears in the input. Empty string when there is
    * no frontmatter. Callers that edit only the body — e.g. the
-   * WikiEditor — write back `rawBlock + body` so user-managed YAML
-   * survives untouched.
+   * read-mode renderers or body-only transforms — write back
+   * `rawBlock + body` so user-managed YAML survives untouched.
    */
   rawBlock: string
 }

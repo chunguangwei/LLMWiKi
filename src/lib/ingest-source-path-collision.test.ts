@@ -297,6 +297,11 @@ describe("autoIngest source summary paths", () => {
     controller.abort()
     mockParseWithMineru.mockRejectedValueOnce(new Error("MinerU parsing cancelled"))
 
+    // A cancelled MinerU run now surfaces the unified cancellation error
+    // (upstream 006327d routes all abort paths through throwIfIngestAborted,
+    // which also marks the activity item errored) instead of re-throwing the
+    // MinerU-specific message. The key behavior — no silent pdfium fallback —
+    // is still asserted below.
     await expect(
       autoIngest(
         tmp.path,
@@ -305,7 +310,7 @@ describe("autoIngest source summary paths", () => {
         controller.signal,
         "project-a",
       ),
-    ).rejects.toThrow("MinerU parsing cancelled")
+    ).rejects.toThrow("Ingest cancelled")
 
     expect(
       useActivityStore.getState().items.some((item) =>

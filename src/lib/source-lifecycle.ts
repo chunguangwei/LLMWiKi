@@ -12,7 +12,7 @@ import type { WikiProject, FileNode } from "@/types/wiki"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { enqueueBatch } from "@/lib/ingest-queue"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
-import { getFileName, getFileStem, normalizePath } from "@/lib/path-utils"
+import { getFileName, getFileStem, getRelativePath, normalizePath } from "@/lib/path-utils"
 import {
   sourceIdentityForPath,
   sourceReferenceIdentity,
@@ -32,6 +32,7 @@ import {
   stripDeletedWikilinks,
 } from "@/lib/wiki-cleanup"
 import { collectAllFilesIncludingDot } from "@/lib/sources-tree-delete"
+import { naturalCompare } from "@/lib/natural-sort"
 
 export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "md",
@@ -149,18 +150,24 @@ export async function importSourceFolder(
   const destDir = `${pp}/raw/sources/${folderName}`
   const copiedFiles = await copyDirectory(selectedFolder, destDir)
 
-  for (const filePath of copiedFiles) {
+  // Ingest in human-natural order (file2 < file10) so multi-part sources
+  // are summarized in the order a reader expects.
+  const naturallyOrderedFiles = [...copiedFiles].sort((a, b) =>
+    naturalCompare(getRelativePath(a, destDir), getRelativePath(b, destDir)),
+  )
+
+  for (const filePath of naturallyOrderedFiles) {
     preprocessFile(filePath).catch(() => {})
   }
 
   if (hasUsableLlm(llmConfig)) {
-    await enqueueSourceIngest(project, copiedFiles, llmConfig, {
+    await enqueueSourceIngest(project, naturallyOrderedFiles, llmConfig, {
       sourceRoot: destDir,
       rootContext: folderName,
     })
   }
 
-  return copiedFiles
+  return naturallyOrderedFiles
 }
 
 export async function deleteSourceFile(
