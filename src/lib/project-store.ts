@@ -113,15 +113,23 @@ export async function loadMultimodalConfig(): Promise<MultimodalConfig | null> {
 
 const MINERU_KEY = "mineruConfig"
 
-// Coerce persisted MinerU config into a known-safe shape. Hardens against
-// older/malformed `app-state.json` values (e.g. a stringly-typed flag or a
-// dropped "mineru-html" model version) so a stale store can't break ingest.
 function normalizeMineruConfig(config: MineruConfig): MineruConfig {
   return {
     enabled: config.enabled === true,
     token: typeof config.token === "string" ? config.token : "",
     modelVersion: config.modelVersion === "pipeline" ? "pipeline" : "vlm",
   }
+}
+
+function normalizeZoomLevel(level: unknown): number {
+  return typeof level === "number" && Number.isFinite(level)
+    ? clampZoomLevel(level)
+    : DEFAULT_ZOOM_LEVEL
+}
+
+export const __projectStoreTest = {
+  normalizeMineruConfig,
+  normalizeZoomLevel,
 }
 
 export async function saveMineruConfig(config: MineruConfig): Promise<void> {
@@ -182,20 +190,13 @@ export async function loadApiConfig(): Promise<ApiConfig | null> {
   return (await store.get<ApiConfig>(API_CONFIG_KEY)) ?? null
 }
 
-// General desktop-app behavior (ported from upstream 0e292ee):
-// launch-at-startup + title-bar-close behavior. Stored globally (not
-// per-project) since it's about the desktop process, not the wiki.
 const GENERAL_CONFIG_KEY = "generalConfig"
 
 export const DEFAULT_GENERAL_CONFIG: GeneralConfig = {
   autostart: false,
-  closeBehavior: "ask",
+  closeBehavior: "minimize",
 }
 
-// Defensive normalizer: a hand-edited or partially-written store could
-// carry a missing/garbage field. Coerce each back to the default so the
-// Rust side (which only accepts "ask" | "minimize" | "exit") and the
-// autostart toggle never see an out-of-range value.
 export function normalizeGeneralConfig(config?: Partial<GeneralConfig> | null): GeneralConfig {
   const closeBehavior = config?.closeBehavior
   return {
@@ -217,71 +218,6 @@ export async function loadGeneralConfig(): Promise<GeneralConfig> {
   const store = await getStore()
   const config = await store.get<Partial<GeneralConfig>>(GENERAL_CONFIG_KEY)
   return normalizeGeneralConfig(config)
-}
-
-/**
- * Labs / experimental flags. Currently just the agent-ingest toggle
- * — kept as its own key (not bundled into a generic experimentalConfig
- * object) so future toggles can land without a migration: each is its
- * own boolean key, missing = default off.
- */
-const AGENT_INGEST_FLAG_KEY = "experimentalAgentIngest"
-const AI_LINT_FIX_FLAG_KEY = "experimentalAiLintFix"
-
-export async function saveExperimentalAgentIngest(enabled: boolean): Promise<void> {
-  const store = await getStore()
-  await store.set(AGENT_INGEST_FLAG_KEY, enabled)
-}
-
-export async function loadExperimentalAgentIngest(): Promise<boolean> {
-  const store = await getStore()
-  return (await store.get<boolean>(AGENT_INGEST_FLAG_KEY)) ?? false
-}
-
-export async function saveExperimentalAiLintFix(enabled: boolean): Promise<void> {
-  const store = await getStore()
-  await store.set(AI_LINT_FIX_FLAG_KEY, enabled)
-}
-
-export async function loadExperimentalAiLintFix(): Promise<boolean> {
-  const store = await getStore()
-  return (await store.get<boolean>(AI_LINT_FIX_FLAG_KEY)) ?? false
-}
-
-const RAW_SAVE_TO_WIKI_FLAG_KEY = "experimentalRawSaveToWiki"
-
-export async function saveExperimentalRawSaveToWiki(enabled: boolean): Promise<void> {
-  const store = await getStore()
-  await store.set(RAW_SAVE_TO_WIKI_FLAG_KEY, enabled)
-}
-
-export async function loadExperimentalRawSaveToWiki(): Promise<boolean> {
-  const store = await getStore()
-  return (await store.get<boolean>(RAW_SAVE_TO_WIKI_FLAG_KEY)) ?? false
-}
-
-const INDEX_ANNOTATIONS_FLAG_KEY = "experimentalIndexAnnotations"
-
-export async function saveExperimentalIndexAnnotations(enabled: boolean): Promise<void> {
-  const store = await getStore()
-  await store.set(INDEX_ANNOTATIONS_FLAG_KEY, enabled)
-}
-
-export async function loadExperimentalIndexAnnotations(): Promise<boolean> {
-  const store = await getStore()
-  return (await store.get<boolean>(INDEX_ANNOTATIONS_FLAG_KEY)) ?? false
-}
-
-const INGEST_PREVIEW_FLAG_KEY = "experimentalIngestPreview"
-
-export async function saveExperimentalIngestPreview(enabled: boolean): Promise<void> {
-  const store = await getStore()
-  await store.set(INGEST_PREVIEW_FLAG_KEY, enabled)
-}
-
-export async function loadExperimentalIngestPreview(): Promise<boolean> {
-  const store = await getStore()
-  return (await store.get<boolean>(INGEST_PREVIEW_FLAG_KEY)) ?? false
 }
 
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"
@@ -344,58 +280,16 @@ export async function loadLanguage(): Promise<string | null> {
   return (await store.get<string>(LANGUAGE_KEY)) ?? null
 }
 
-/**
- * UI theme preference: "system" | "light" | "dark". Stored as a
- * plain string with the same one-key-per-pref convention as the
- * Labs flags — a future addition (custom palette, font scale) lands
- * as its own key, no migration.
- */
 const THEME_KEY = "theme"
 
-export async function saveTheme(theme: string): Promise<void> {
+export async function saveTheme(theme: "light" | "dark" | "system"): Promise<void> {
   const store = await getStore()
   await store.set(THEME_KEY, theme)
 }
 
-export async function loadTheme(): Promise<string | null> {
+export async function loadTheme(): Promise<"light" | "dark" | "system" | null> {
   const store = await getStore()
-  return (await store.get<string>(THEME_KEY)) ?? null
-}
-
-/**
- * Interface zoom level, stored as a decimal (1 = 100%). Global to the
- * whole install (one key, no per-project override) just like the theme
- * preference above. The font-size based zoom in App.tsx / app-layout
- * reads this on startup and re-applies it whenever the user changes it.
- *
- * `normalizeZoomLevel` guards the persisted value: a hand-edited or
- * legacy store may hold a string, NaN, Infinity, or an out-of-range
- * number. Finite numbers are clamped to [MIN, MAX]; anything else
- * falls back to 100% so the UI can never load at an unusable size.
- */
-const ZOOM_LEVEL_KEY = "zoomLevel"
-
-function normalizeZoomLevel(level: unknown): number {
-  return typeof level === "number" && Number.isFinite(level)
-    ? clampZoomLevel(level)
-    : DEFAULT_ZOOM_LEVEL
-}
-
-/** Test-only surface so unit tests can exercise pure normalizers. */
-export const __projectStoreTest = {
-  normalizeZoomLevel,
-  normalizeMineruConfig,
-}
-
-export async function saveZoomLevel(level: number): Promise<void> {
-  const store = await getStore()
-  await store.set(ZOOM_LEVEL_KEY, normalizeZoomLevel(level))
-}
-
-export async function loadZoomLevel(): Promise<number> {
-  const store = await getStore()
-  const level = await store.get<number>(ZOOM_LEVEL_KEY)
-  return normalizeZoomLevel(level)
+  return (await store.get<"light" | "dark" | "system">(THEME_KEY)) ?? null
 }
 
 const OUTPUT_LANGUAGE_KEY = "outputLanguage"
@@ -493,4 +387,18 @@ export async function loadUpdateCheckState(): Promise<PersistedUpdateCheckState 
   return (
     (await store.get<PersistedUpdateCheckState>(UPDATE_CHECK_STATE_KEY)) ?? null
   )
+}
+
+const ZOOM_LEVEL_KEY = "zoomLevel"
+
+export async function saveZoomLevel(level: number): Promise<void> {
+  const store = await getStore()
+  await store.set(ZOOM_LEVEL_KEY, normalizeZoomLevel(level))
+  await store.save()
+}
+
+export async function loadZoomLevel(): Promise<number> {
+  const store = await getStore()
+  const level = await store.get<number>(ZOOM_LEVEL_KEY)
+  return normalizeZoomLevel(level)
 }

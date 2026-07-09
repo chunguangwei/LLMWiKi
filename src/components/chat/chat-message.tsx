@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, useMemo } from "react"
+import { useTranslation } from "react-i18next"
+import { convertFileSrc } from "@tauri-apps/api/core"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
@@ -7,31 +9,32 @@ import "katex/dist/katex.min.css"
 import {
   Bot, User, FileText, BookmarkPlus, ChevronDown, ChevronRight, RefreshCw, Copy, Check,
   Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, Layout, Globe,
-  TrendingUp, Target, Sparkles, Image as ImageIcon, Search, FileSearch,
+  TrendingUp, Target, Sparkles, Image as ImageIcon, FileSearch, Terminal,
 } from "lucide-react"
-import { useTranslation } from "react-i18next"
+import { openUrl } from "@tauri-apps/plugin-opener"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { lastQueryPages } from "@/components/chat/chat-panel"
-import { useChatStore, type DisplayMessage } from "@/stores/chat-store"
+import type { DisplayMessage, MessageReference } from "@/stores/chat-store"
 import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
-import { normalizePath, getFileName } from "@/lib/path-utils"
-import { makeQueryFileName, makeQuerySlug } from "@/lib/wiki-filename"
+import { normalizePath, getFileName, isAbsolutePath } from "@/lib/path-utils"
+import { makeQueryFileName } from "@/lib/wiki-filename"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { messageImageToDataUrl } from "@/lib/chat-image-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
+import { transformImageEmbeds } from "@/lib/wikilink-transform"
 import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-resolver"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
-import type { ChatAgentEvent, ChatAgentEventStage, ChatAgentStep } from "@/lib/chat-agent"
-import { parseFileBlocks, isSafeIngestPath } from "@/lib/ingest"
-import { applyPageEdit } from "@/lib/apply-page-edit"
-import { diffLines, diffStats, isUnchanged } from "@/lib/text-diff"
-import { useReviewStore } from "@/stores/review-store"
+import type { ChatAgentEvent, ChatAgentEventStage, ChatAgentStep, ChatUserInputField, ChatUserInputRequest } from "@/lib/chat-agent-types"
+import { filterRawSourceTree } from "@/lib/source-filter"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { getFileCategory, getFileExtension, isTextReadable } from "@/lib/file-types"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -43,6 +46,7 @@ export function useSourceFiles() {
     if (!project) return
     const pp = normalizePath(project.path)
     listDirectory(`${pp}/raw/sources`, true)
+      .then(filterRawSourceTree)
       .then((tree) => {
         cachedSourceFiles = flattenNames(tree)
       })
@@ -70,23 +74,11 @@ interface ChatMessageProps {
   message: DisplayMessage
   isLastAssistant?: boolean
   onRegenerate?: () => void
-  /**
-   * Inline-citation click handler (ported from upstream). When provided,
-   * clicking a cited reference opens the chat-internal right-side preview
-   * panel (chat-panel owns the state) instead of switching the whole app
-   * to the wiki view via `openFileInPreview`. Optional so the component
-   * still works standalone — without it the panel falls back to
-   * `openFileInPreview`, preserving the fork's original behavior.
-   */
-  onOpenReferencePreview?: (preview: ChatReferencePreview) => void
+  onOpenReferencePreview?: (preview: ChatReferencePreview, relatedPreviews?: ChatReferencePreview[]) => void
+  onApproveShellCommand?: (command: string, assistantMessageId: string) => void
+  onSubmitUserInput?: (request: ChatUserInputRequest, answers: Record<string, unknown>) => boolean
 }
 
-/**
- * Payload for the chat-internal reference-preview side panel (ported from
- * upstream). `path` is an absolute file path for on-disk references (the
- * markdown/file preview reads it); `content` is the already-read text so
- * the panel can render immediately without a second read.
- */
 export interface ChatReferencePreview {
   title: string
   path: string
@@ -96,8 +88,14 @@ export interface ChatReferencePreview {
   snippet?: string
 }
 
-function ChatMessageImpl({ message, isLastAssistant, onRegenerate, onOpenReferencePreview }: ChatMessageProps) {
-  const { t } = useTranslation()
+function ChatMessageImpl({
+  message,
+  isLastAssistant,
+  onRegenerate,
+  onOpenReferencePreview,
+  onApproveShellCommand,
+  onSubmitUserInput,
+}: ChatMessageProps) {
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   const isAssistant = message.role === "assistant"
@@ -121,38 +119,41 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate, onOpenReferen
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
       </div>
       <div className="max-w-[80%] flex flex-col gap-1.5">
-        {/*
-          v0.5.1: the agent's understanding/routing/tool-call trail, saved
-          with the reply (message.agentSteps) so it persists across reloads.
-          Rendered as a compact, read-only replay of the live AgentActivity
-          feed. This is the upstream-shaped trail; the fork's richer
-          ToolCallsBlock below adds the input/result-summary audit fold.
-        */}
+        {isUser && message.images && message.images.length > 0 && (
+          <div className={`flex flex-wrap gap-1.5 ${isUser ? "justify-end" : ""}`}>
+            {message.images.map((img, i) => (
+              <img
+                key={i}
+                src={messageImageToDataUrl(img)}
+                alt=""
+                className="max-h-40 max-w-[180px] rounded-lg border border-border/40 object-contain"
+                loading="lazy"
+              />
+            ))}
+          </div>
+        )}
         {isAssistant && (
-          <SavedAgentActivity steps={message.agentSteps ?? []} />
+          <SavedAgentActivity
+            steps={message.agentSteps ?? []}
+            canApproveShellCommand={Boolean(isLastAssistant && onApproveShellCommand)}
+            onApproveShellCommand={(command) => onApproveShellCommand?.(command, message.id)}
+          />
         )}
-        {isAssistant && message.toolCalls && message.toolCalls.length > 0 && (
-          <ToolCallsBlock toolCalls={message.toolCalls} />
+        {(!isUser || message.content) && (
+          <div
+            className={`rounded-lg px-3 py-2 text-sm ${
+              isUser
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-foreground"
+            }`}
+          >
+            {isUser ? (
+              <p dir="auto" className="whitespace-pre-wrap break-words">{message.content}</p>
+            ) : (
+              <MarkdownContent content={message.content} />
+            )}
+          </div>
         )}
-        {isAssistant && message.retrieval === "classic" && (
-          <span className="inline-flex w-fit items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted-foreground">
-            <Search className="h-3 w-3" /> {t("chat.classicSearchBadge")}
-          </span>
-        )}
-        <div
-          className={`rounded-lg px-3 py-2 text-sm ${
-            isUser
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-foreground"
-          }`}
-        >
-          {isUser ? (
-            <p dir="auto" className="whitespace-pre-wrap break-words">{message.content}</p>
-          ) : (
-            <MarkdownContent content={message.content} />
-          )}
-        </div>
-        {isAssistant && <ProposedEdits content={message.content} />}
         {isAssistant && (
           <CitedReferencesPanel
             content={message.content}
@@ -160,16 +161,16 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate, onOpenReferen
             onOpenReferencePreview={onOpenReferencePreview}
           />
         )}
+        {isAssistant && message.userInputRequest && (
+          <UserInputRequestPanel
+            request={message.userInputRequest}
+            onSubmit={onSubmitUserInput}
+          />
+        )}
         {isAssistant && hovered && (
           <div className="flex items-center gap-1">
             <CopyButton content={message.content} />
-            <SaveToWikiButton
-              messageId={message.id}
-              content={message.content}
-              savedToWiki={message.savedToWiki}
-              fetchedSources={message.fetchedSources}
-              visible={true}
-            />
+            <SaveToWikiButton content={message.content} visible={true} />
             {isLastAssistant && onRegenerate && (
               <button
                 type="button"
@@ -187,21 +188,16 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate, onOpenReferen
   )
 }
 
-export const ChatMessage = memo(ChatMessageImpl, (prev, next) =>
-  prev.message === next.message
-  && prev.isLastAssistant === next.isLastAssistant
-  && prev.onRegenerate === next.onRegenerate
-  && prev.onOpenReferencePreview === next.onOpenReferencePreview
-)
-
-/**
- * Replay a persisted agent step-trail (message.agentSteps) as a compact
- * AgentActivity feed (v0.5.1). Maps the saved ChatAgentStep[] back into the
- * ChatAgentEvent shape the live activity feed renders, dropping the "final"
- * step (it has no user-facing activity line). Returns null when there's
- * nothing to show so classic / non-agent replies render unchanged.
- */
-function SavedAgentActivity({ steps }: { steps: ChatAgentStep[] }) {
+function SavedAgentActivity({
+  steps,
+  canApproveShellCommand,
+  onApproveShellCommand,
+}: {
+  steps: ChatAgentStep[]
+  canApproveShellCommand?: boolean
+  onApproveShellCommand?: (command: string) => void
+}) {
+  const { t } = useTranslation()
   const events = useMemo<ChatAgentEvent[]>(() => steps
     .filter((step) => step.type !== "final")
     .map((step) => ({
@@ -218,84 +214,242 @@ function SavedAgentActivity({ steps }: { steps: ChatAgentStep[] }) {
       count: step.count,
       status: step.status,
     })), [steps])
-  if (events.length === 0) return null
+  const shellCommand = useMemo(() => extractShellApprovalCommand(steps), [steps])
+  if (events.length === 0 && !shellCommand) return null
   return (
-    <div className="rounded-md border border-border/50 bg-background/50 px-2 py-1">
-      <AgentActivity events={events} compact />
-    </div>
-  )
-}
-
-/**
- * Tool calls rendered above the assistant message body. Defaults to a
- * compact "🔧 used N tools" header that the user can click to expand
- * into per-tool name / input / result rows. Read-only — the user can
- * inspect what the agent did but can't replay it.
- *
- * One row per tool call, in the order the agent emitted them. Result
- * summaries are colour-coded loosely: gray = ok, amber = skipped or
- * structured error, never destructive.
- */
-function ToolCallsBlock({
-  toolCalls,
-}: {
-  toolCalls: NonNullable<DisplayMessage["toolCalls"]>
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-2 hover:text-foreground"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span>
-          🔧 {toolCalls.length} tool call{toolCalls.length === 1 ? "" : "s"}:{" "}
-          <span className="font-mono">
-            {Array.from(new Set(toolCalls.map((t) => t.name))).join(", ")}
-          </span>
-        </span>
-        <span className="text-[10px]">{open ? "▾" : "▸"}</span>
-      </button>
-      {open && (
-        <div className="mt-1.5 flex flex-col gap-1 border-t border-border pt-1.5">
-          {toolCalls.map((t, i) => (
-            <div key={i} className="flex flex-col gap-0.5 font-mono text-[10px]">
-              <div>
-                <span className="text-primary">{t.name}</span>
-                <span className="ml-1 text-muted-foreground/80">({t.inputSummary})</span>
-              </div>
-              <div
-                className={`pl-3 ${
-                  isAttentionResult(t.resultSummary)
-                    ? "text-amber-600 dark:text-amber-400"
-                    : ""
-                }`}
-              >
-                → {t.resultSummary}
-              </div>
-            </div>
-          ))}
-        </div>
+    <div className="space-y-1 rounded-md border border-border/50 bg-background/50 px-2 py-1">
+      {events.length > 0 && <AgentActivity events={events} compact />}
+      {shellCommand && canApproveShellCommand && (
+        <button
+          type="button"
+          onClick={() => onApproveShellCommand?.(shellCommand)}
+          className="flex w-full max-w-full items-start gap-1.5 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-left text-[11px] text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
+          title={shellCommand}
+        >
+          <Terminal className="h-3 w-3 shrink-0" />
+          <span className="shrink-0">{t("chat.approveCommand")}</span>
+          <code className="whitespace-pre-wrap break-all font-mono text-[10px] text-foreground dark:text-foreground">
+            {shellCommand}
+          </code>
+        </button>
       )}
     </div>
   )
 }
 
-/**
- * Whether a tool's result summary should render in amber (worth-a-look).
- * Covers explicit `error:`, the runner's done-batch `skipped` sentinel,
- * and the chat-agent's structured `no_provider_configured` envelope —
- * all three are "tool ran but didn't accomplish what the LLM wanted".
- * Plain `ok` results stay in the muted default color.
- */
-function isAttentionResult(summary: string): boolean {
-  const s = summary.toLowerCase()
+function extractShellApprovalCommand(steps: ChatAgentStep[]): string | null {
+  for (const step of steps) {
+    if (step.tool !== "shell_exec" || step.status !== "skipped") continue
+    const message = step.message?.trim() ?? ""
+    const command = message.startsWith("approval required:")
+      ? message.slice("approval required:".length).trim()
+      : ""
+    if (command) return command
+  }
+  return null
+}
+
+export const ChatMessage = memo(ChatMessageImpl, (prev, next) =>
+  prev.message === next.message
+  && prev.isLastAssistant === next.isLastAssistant
+  && prev.onRegenerate === next.onRegenerate
+  && prev.onOpenReferencePreview === next.onOpenReferencePreview
+  && prev.onApproveShellCommand === next.onApproveShellCommand
+  && prev.onSubmitUserInput === next.onSubmitUserInput
+)
+
+function UserInputRequestPanel({
+  request,
+  onSubmit,
+}: {
+  request: ChatUserInputRequest
+  onSubmit?: (request: ChatUserInputRequest, answers: Record<string, unknown>) => boolean
+}) {
+  const { t } = useTranslation()
+  const [answers, setAnswers] = useState<Record<string, unknown>>(() => initialUserInputAnswers(request))
+  const [submitted, setSubmitted] = useState(false)
+  const canSubmit = Boolean(onSubmit) && !submitted
+
+  const update = useCallback((id: string, value: unknown) => {
+    setAnswers((prev) => ({ ...prev, [id]: value }))
+  }, [])
+
   return (
-    s.startsWith("error:") ||
-    s.startsWith("skipped") ||
-    s.includes("no_provider_configured")
+    <div className="rounded-lg border border-primary/20 bg-background px-3 py-3 shadow-sm">
+      <div className="mb-3">
+        <div className="text-sm font-medium text-foreground">{request.title}</div>
+        {request.description && (
+          <p className="mt-1 text-xs text-muted-foreground">{request.description}</p>
+        )}
+      </div>
+      <div className="space-y-3">
+        {request.fields.map((field) => (
+          <UserInputFieldControl
+            key={field.id}
+            field={field}
+            value={answers[field.id]}
+            disabled={!canSubmit}
+            onChange={(value) => update(field.id, value)}
+          />
+        ))}
+      </div>
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          disabled={!canSubmit}
+          onClick={() => {
+            if (!canSubmit) return
+            if (onSubmit?.(request, answers)) {
+              setSubmitted(true)
+            }
+          }}
+          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <Check className="h-3.5 w-3.5" />
+          {submitted ? t("chat.userInputSubmitted") : t("chat.userInputSubmit")}
+        </button>
+      </div>
+    </div>
   )
+}
+
+function UserInputFieldControl({
+  field,
+  value,
+  disabled,
+  onChange,
+}: {
+  field: ChatUserInputField
+  value: unknown
+  disabled?: boolean
+  onChange: (value: unknown) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="space-y-1.5">
+      <div>
+        <label className="text-xs font-medium text-foreground">{field.label}</label>
+        {field.description && (
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{field.description}</p>
+        )}
+      </div>
+      {field.type === "single" && (
+        <div className="grid gap-1.5">
+          {(field.options ?? []).map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange(option.value)}
+              className={`rounded-md border px-2.5 py-2 text-left text-xs transition-colors ${
+                value === option.value
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border bg-muted/30 text-muted-foreground hover:bg-muted"
+              } disabled:cursor-not-allowed disabled:opacity-70`}
+            >
+              <span className="flex items-center justify-between gap-2">
+                <span className="font-medium">{option.label}</span>
+                {option.recommended && (
+                  <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                    {t("chat.userInputRecommended")}
+                  </span>
+                )}
+              </span>
+              {option.description && (
+                <span className="mt-0.5 block text-[11px] opacity-80">{option.description}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+      {field.type === "multi" && (
+        <div className="grid gap-1.5">
+          {(field.options ?? []).map((option) => {
+            const selected = Array.isArray(value) && value.includes(option.value)
+            return (
+              <label
+                key={option.value}
+                className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-xs transition-colors ${
+                  selected ? "border-primary bg-primary/10" : "border-border bg-muted/30 hover:bg-muted"
+                } ${disabled ? "cursor-not-allowed opacity-70" : ""}`}
+              >
+                <input
+                  type="checkbox"
+                  disabled={disabled}
+                  checked={selected}
+                  onChange={(event) => {
+                    const current = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+                    onChange(event.target.checked
+                      ? [...current, option.value]
+                      : current.filter((item) => item !== option.value))
+                  }}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium text-foreground">{option.label}</span>
+                  {option.description && (
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">{option.description}</span>
+                  )}
+                </span>
+              </label>
+            )
+          })}
+        </div>
+      )}
+      {field.type === "text" && (
+        <input
+          disabled={disabled}
+          value={typeof value === "string" ? value : ""}
+          placeholder={field.placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-primary disabled:opacity-70"
+        />
+      )}
+      {field.type === "textarea" && (
+        <textarea
+          disabled={disabled}
+          value={typeof value === "string" ? value : ""}
+          placeholder={field.placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          rows={4}
+          className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-primary disabled:opacity-70"
+        />
+      )}
+      {field.type === "confirm" && (
+        <label className={`flex items-center gap-2 text-sm ${disabled ? "opacity-70" : ""}`}>
+          <input
+            type="checkbox"
+            disabled={disabled}
+            checked={Boolean(value)}
+            onChange={(event) => onChange(event.target.checked)}
+          />
+          <span>{field.placeholder ?? t("chat.userInputEnabled")}</span>
+        </label>
+      )}
+    </div>
+  )
+}
+
+function initialUserInputAnswers(request: ChatUserInputRequest): Record<string, unknown> {
+  const answers: Record<string, unknown> = {}
+  for (const field of request.fields) {
+    if (field.defaultValue !== undefined) {
+      answers[field.id] = field.defaultValue
+      continue
+    }
+    if (field.type === "single") {
+      answers[field.id] = field.options?.find((option) => option.recommended)?.value
+        ?? field.options?.[0]?.value
+        ?? ""
+    } else if (field.type === "multi") {
+      answers[field.id] = []
+    } else if (field.type === "confirm") {
+      answers[field.id] = false
+    } else {
+      answers[field.id] = ""
+    }
+  }
+  return answers
 }
 
 function CopyButton({ content }: { content: string }) {
@@ -327,35 +481,13 @@ function CopyButton({ content }: { content: string }) {
   )
 }
 
-function SaveToWikiButton({
-  messageId,
-  content,
-  savedToWiki,
-  fetchedSources,
-  visible,
-}: {
-  messageId: string
-  content: string
-  savedToWiki?: DisplayMessage["savedToWiki"]
-  fetchedSources?: DisplayMessage["fetchedSources"]
-  visible: boolean
-}) {
+function SaveToWikiButton({ content, visible }: { content: string; visible: boolean }) {
   const project = useWikiStore((s) => s.project)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
-  const markMessageSavedToWiki = useChatStore((s) => s.markMessageSavedToWiki)
-  const setMessageIngestState = useChatStore((s) => s.setMessageIngestState)
-  // Derived from the message itself, not local state: a previous
-  // local-state implementation flashed "Saved!" for 2 seconds then
-  // reset, which meant remounts / scroll virtualisation let the user
-  // click Save again on already-saved content and create dupes. We
-  // persist the saved flag on the message so it survives re-renders,
-  // conversation switches, and app restarts (chat auto-save writes
-  // messages including savedToWiki to disk).
-  const isSaved = Boolean(savedToWiki?.path)
+  const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const handleSave = useCallback(async () => {
-    if (!project || saving || isSaved) return
+    if (!project || saving) return
     const pp = normalizePath(project.path)
     setSaving(true)
     try {
@@ -363,95 +495,10 @@ function SaveToWikiButton({
       // See `src/lib/wiki-filename.ts` — the slug is Unicode-aware
       // (so CJK titles don't collapse to empty) and the HHMMSS
       // timestamp suffix guarantees same-day saves stay distinct.
-      // Strip hidden sources/save-worthy comments + thinking blocks, then take
-      // the first VISIBLE line as the title. Shared with review-view's `save:`
-      // path so a Q&A saved from either entry point gets the same title/slug.
-      // (Previously we took content.split("\n")[0], which could be a hidden
-      // comment or blank line and produced a misleading title.)
-      const stripped = cleanAssistantContentForWikiSave(content)
-      const title = titleFromCleanAssistantContent(stripped)
+      const cleanContent = cleanAssistantContentForWikiSave(content)
+      const title = titleFromCleanAssistantContent(cleanContent)
       const { date, fileName } = makeQueryFileName(title)
       const filePath = `${pp}/wiki/queries/${fileName}`
-
-      // Wikify pass — a small LLM call that rewrites conversational
-      // chat tone ("Based on the article...", "Here's a summary...",
-      // "I fetched...") into clean knowledge-style markdown. Same
-      // facts, no chat scaffolding. Falls back to `stripped` when
-      // the LLM call fails / there's no usable LLM / content is too
-      // short to bother. Lazy-imported so test code that mocks the
-      // module doesn't have to mock streamChat.
-      //
-      // Bypassed when the Labs `experimentalRawSaveToWiki` flag is
-      // ON — some users want the agent's reply verbatim (record-
-      // keeping, code-heavy answers, prose where wikify over-edits).
-      //
-      // NOTE: llmConfig is captured ONCE here and reused for the
-      // autoIngest call below — defining a second `const llmConfig`
-      // in the same scope would shadow + tsc-fail.
-      const llmConfig = useWikiStore.getState().llmConfig
-      const rawSaveOptIn = useWikiStore.getState().experimentalRawSaveToWiki
-      let cleanContent = stripped
-      if (!rawSaveOptIn && hasUsableLlm(llmConfig)) {
-        try {
-          const { wikifyForSave } = await import("@/lib/wikify")
-          cleanContent = await wikifyForSave(stripped, llmConfig)
-        } catch (err) {
-          console.warn("[SaveToWiki] wikify failed, using raw content:", err)
-        }
-      }
-
-      // Raw-source preservation — spill every web_fetch primary
-      // source the chat-agent pulled into raw/sources/web/. The
-      // resulting filenames go into the query frontmatter's
-      // `sources:` array so the wiki page has a paper-trail back
-      // to the original article without the user having to dig
-      // through the activity log.
-      //
-      // Failure is per-source and best-effort — if one source fails
-      // to write, the others still go through and the user gets the
-      // wiki page either way. Whatever DID write goes into the
-      // frontmatter; the rest is logged via console.warn.
-      const writtenSourcePaths: string[] = []
-      if (fetchedSources && fetchedSources.length > 0) {
-        const rawWebDir = `${pp}/raw/sources/web`
-        try {
-          // createDirectory is idempotent — re-creating is cheap and
-          // avoids a "first save fails because directory missing" foot-gun.
-          const { createDirectory } = await import("@/commands/fs")
-          await createDirectory(rawWebDir).catch(() => {})
-        } catch {
-          /* fall through — writeFile below will surface a clear error */
-        }
-        for (let i = 0; i < fetchedSources.length; i++) {
-          const src = fetchedSources[i]
-          const srcSlug = makeQuerySlug(src.title || `source-${i + 1}`)
-          const srcFileName = `${srcSlug || `source-${i + 1}`}-${date}-${
-            // Add a 1-based suffix so multiple sources from the same
-            // save can't collide if they happen to slugify to the
-            // same name (rare but possible — e.g. two CNBC articles
-            // with the same H1).
-            String(i + 1).padStart(2, "0")
-          }.md`
-          const srcPath = `${rawWebDir}/${srcFileName}`
-          const srcFm = [
-            "---",
-            "type: source",
-            `title: ${JSON.stringify(src.title || srcFileName.replace(/\.md$/, ""))}`,
-            `url: ${JSON.stringify(src.url)}`,
-            `created: ${date}`,
-            src.fetchedAt ? `fetched_at: ${JSON.stringify(src.fetchedAt)}` : "",
-            "origin: chat-save-raw",
-            "---",
-            "",
-          ].filter(Boolean).join("\n")
-          try {
-            await writeFile(srcPath, srcFm + src.markdown)
-            writtenSourcePaths.push(`raw/sources/web/${srcFileName}`)
-          } catch (err) {
-            console.warn(`[SaveToWiki] failed to write raw source ${srcPath}:`, err)
-          }
-        }
-      }
 
       const frontmatter = [
         "---",
@@ -459,20 +506,9 @@ function SaveToWikiButton({
         `title: "${title.replace(/"/g, '\\"')}"`,
         `created: ${date}`,
         `tags: []`,
-        // sources: array of project-relative paths to the raw web
-        // fetches that informed this reply. Empty array (or absent)
-        // means the agent answered without external sources.
-        writtenSourcePaths.length > 0
-          ? `sources: ${JSON.stringify(writtenSourcePaths)}`
-          : "",
-        // origin marker — autoIngest reads this to decide whether
-        // to run its review-suggestion stage. Chat replies are
-        // already user-vetted answers; they don't need the LLM to
-        // come back and "raise concerns" in the Review queue.
-        `origin: chat-save`,
         "---",
         "",
-      ].filter(Boolean).join("\n")
+      ].join("\n")
 
       await writeFile(filePath, frontmatter + cleanContent)
 
@@ -511,133 +547,43 @@ function SaveToWikiButton({
       await writeFile(logPath, logContent.trimEnd() + "\n" + logEntry)
 
       // Refresh file tree and update graph
-      const tree = await listDirectory(pp)
-      setFileTree(tree)
-      useWikiStore.getState().bumpDataVersion()
+      await refreshProjectFileTree(pp, { bumpDataVersion: true })
 
-      // Commit the saved-to-wiki marker on the message itself. This
-      // is what protects against duplicate clicks: the next render
-      // sees savedToWiki populated and the button reads "Saved" +
-      // disables.
-      markMessageSavedToWiki(messageId, filePath)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
 
-      // Full auto-ingest. We DON'T await — autoIngest is heavy and
-      // we want the user back to chatting immediately. State updates
-      // ride through chat-store, so the button + summary card update
-      // in place as ingest progresses / finishes. Reuses the
-      // `llmConfig` captured at the start of this try block (above
-      // wikify pass) — re-fetching the store here would double up.
+      // Full auto-ingest: extract entities, concepts, cross-references from saved content
+      const llmConfig = useWikiStore.getState().llmConfig
       if (hasUsableLlm(llmConfig)) {
-        setMessageIngestState(messageId, { state: "running" })
         const { autoIngest } = await import("@/lib/ingest")
-        autoIngest(pp, filePath, llmConfig)
-          .then((pages) => {
-            setMessageIngestState(messageId, { state: "done", pages })
-          })
-          .catch((err) => {
-            console.error("Failed to auto-ingest saved query:", err)
-            setMessageIngestState(messageId, {
-              state: "failed",
-              error: err instanceof Error ? err.message : String(err),
-            })
-          })
+        autoIngest(pp, filePath, llmConfig).catch((err) =>
+          console.error("Failed to auto-ingest saved query:", err)
+        )
       }
     } catch (err) {
       console.error("Failed to save to wiki:", err)
     } finally {
       setSaving(false)
     }
-  }, [
-    project,
-    content,
-    saving,
-    isSaved,
-    messageId,
-    markMessageSavedToWiki,
-    setMessageIngestState,
-    setFileTree,
-  ])
+  }, [project, content, saving])
 
-  if (!visible && !isSaved) return null
-
-  const ingest = savedToWiki?.ingest
-  const buttonLabel = !isSaved
-    ? saving
-      ? "Saving..."
-      : "Save to Wiki"
-    : !ingest
-      ? "Saved"
-      : ingest.state === "running"
-        ? "Saved · ingesting…"
-        : ingest.state === "done"
-          ? `Saved · ${ingest.pages.length} page${ingest.pages.length === 1 ? "" : "s"}`
-          : "Saved · ingest failed"
+  if (!visible && !saved) return null
 
   return (
-    <div className="flex flex-col gap-1">
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={saving || isSaved}
-        className="self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-        title={
-          ingest?.state === "failed"
-            ? `Save OK but ingest failed: ${ingest.error}`
-            : isSaved && savedToWiki
-              ? `Already saved to ${savedToWiki.path}`
-              : "Save to wiki"
-        }
-      >
-        <BookmarkPlus className="h-3 w-3" />
-        {buttonLabel}
-      </button>
-      {isSaved && ingest?.state === "done" && ingest.pages.length > 0 && (
-        <SavedIngestSummary pages={ingest.pages} />
-      )}
-    </div>
+    <button
+      type="button"
+      onClick={handleSave}
+      disabled={saving}
+      className="self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+      title="Save to wiki"
+    >
+      <BookmarkPlus className="h-3 w-3" />
+      {saved ? "Saved!" : saving ? "Saving..." : "Save to Wiki"}
+    </button>
   )
 }
 
-/**
- * Inline summary listing the wiki pages autoIngest generated from the
- * saved chat reply. Click-to-expand keeps the bar tight by default;
- * the user clicks once to see exactly what concepts/entities landed.
- */
-function SavedIngestSummary({ pages }: { pages: string[] }) {
-  const [open, setOpen] = useState(false)
-  if (pages.length === 0) return null
-  return (
-    <div className="rounded-md border border-emerald-300/60 bg-emerald-50/60 dark:border-emerald-800/60 dark:bg-emerald-950/30 px-2 py-1 text-[10px] text-emerald-700 dark:text-emerald-400">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-2 hover:underline"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span>
-          ✨ {pages.length} wiki page{pages.length === 1 ? "" : "s"} created from this reply
-        </span>
-        <span className="text-[9px]">{open ? "▾" : "▸"}</span>
-      </button>
-      {open && (
-        <ul className="mt-1 flex flex-col gap-0.5 font-mono">
-          {pages.slice(0, 12).map((p) => (
-            <li key={p} className="truncate">· {p}</li>
-          ))}
-          {pages.length > 12 && (
-            <li className="text-emerald-600/70 dark:text-emerald-400/70">
-              … and {pages.length - 12} more
-            </li>
-          )}
-        </ul>
-      )}
-    </div>
-  )
-}
-
-interface CitedPage {
-  title: string
-  path: string
-}
+type CitedPage = MessageReference
 
 const REF_TYPE_CONFIG: Record<string, { icon: typeof FileText; color: string }> = {
   entity: { icon: Users, color: "text-blue-500" },
@@ -651,11 +597,72 @@ const REF_TYPE_CONFIG: Record<string, { icon: typeof FileText; color: string }> 
   methodology: { icon: BookOpen, color: "text-teal-500" },
   overview: { icon: Layout, color: "text-yellow-500" },
   clip: { icon: Globe, color: "text-blue-400" },
+  external: { icon: Globe, color: "text-sky-500" },
+  anytxt: { icon: FileSearch, color: "text-emerald-500" },
+  workspace: { icon: FileText, color: "text-cyan-500" },
 }
 
-function getRefType(path: string): string {
+function getRefType(path: string, page?: CitedPage): string {
+  if (page?.kind === "workspace") return "workspace"
+  if (page?.kind === "external") {
+    return page.source?.toLowerCase() === "anytxt" ? "anytxt" : "external"
+  }
   if (path.includes("raw/sources/")) return "clip"
   return inferWikiTypeFromPath(path) ?? "source"
+}
+
+function displayExternalPath(page: CitedPage): string {
+  const raw = page.url || page.path
+  if (!raw) return page.path
+  if (raw.startsWith("file://")) {
+    try {
+      const url = new URL(raw)
+      const decoded = decodeURIComponent(url.pathname)
+      if (/^\/[A-Za-z]:\//.test(decoded)) return decoded.slice(1)
+      if (url.hostname) return `//${url.hostname}${decoded}`
+      return decoded
+    } catch {
+      return raw.replace(/^file:\/\//, "")
+    }
+  }
+  return raw
+}
+
+function isAnyTxtReference(page: CitedPage): boolean {
+  return page.kind === "external" && page.source?.toLowerCase() === "anytxt"
+}
+
+function referenceSourceLabel(page: CitedPage): string {
+  if (isAnyTxtReference(page)) return "AnyTXT"
+  if (page.kind === "workspace") return "Workspace"
+  if (page.kind === "external") return page.source || "Web"
+  return "Wiki"
+}
+
+function referenceLocator(page: CitedPage): string {
+  if (page.kind === "external") return displayExternalPath(page)
+  return page.path
+}
+
+function referenceSnippet(page: CitedPage): string {
+  return page.kind === "external" ? page.snippet?.trim() ?? "" : ""
+}
+
+function projectAbsolutePath(projectPath: string, path: string): string {
+  const pp = normalizePath(projectPath)
+  const normalized = normalizePath(path)
+  if (normalized.startsWith(`${pp}/`)) return normalized
+  if (isAbsolutePath(normalized)) return normalized
+  return `${pp}/${normalized.replace(/^\/+/, "")}`
+}
+
+function isAgentWorkspacePath(filePath: string): boolean {
+  return normalizePath(filePath).split("/").includes("agent-workspace")
+}
+
+function isGeneratedOutputImage(filePath: string): boolean {
+  const category = getFileCategory(filePath)
+  return category === "image" || (getFileExtension(filePath) === "svg" && isAgentWorkspacePath(filePath))
 }
 
 /**
@@ -685,14 +692,14 @@ function CitedReferencesPanel({
 }: {
   content: string
   savedReferences?: CitedPage[]
-  // When set, clicking a citation opens the chat-internal side preview
-  // (upstream behavior) rather than the full wiki view. See ChatMessageProps.
-  onOpenReferencePreview?: (preview: ChatReferencePreview) => void
+  onOpenReferencePreview?: (preview: ChatReferencePreview, relatedPreviews?: ChatReferencePreview[]) => void
 }) {
+  const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
   const setPendingScrollImageSrc = useWikiStore((s) => s.setPendingScrollImageSrc)
   const [expanded, setExpanded] = useState(false)
+  const [outputsExpanded, setOutputsExpanded] = useState(false)
   /**
    * Per-cited-page image info: count + first image URL. We can't
    * hang this off `CitedPage` directly because `extractCitedPages`
@@ -704,8 +711,13 @@ function CitedReferencesPanel({
   const [imageInfos, setImageInfos] = useState<Record<string, CitedImageInfo>>({})
 
   // Use saved references first (persisted with message), fall back to dynamic extraction
+  const generatedOutputs = useMemo(() => (
+    (savedReferences ?? []).filter((page) => page.kind === "workspace")
+  ), [savedReferences])
   const citedPages = useMemo(() => {
-    if (savedReferences && savedReferences.length > 0) return savedReferences
+    if (savedReferences && savedReferences.length > 0) {
+      return savedReferences.filter((page) => page.kind !== "workspace")
+    }
     return extractCitedPages(content)
   }, [content, savedReferences])
 
@@ -722,6 +734,9 @@ function CitedReferencesPanel({
         // Try the path verbatim first, then the same fallback set
         // the click-handler uses below — keeps "is the file on
         // disk" check consistent across the panel.
+        if (page.kind === "external" || page.kind === "workspace") {
+          return [page.path, { count: 0, firstUrl: null }] as const
+        }
         const id = getFileName(page.path.replace(/^wiki\//, "").replace(/\.md$/, ""))
         const candidates = [
           `${pp}/${page.path}`,
@@ -780,10 +795,12 @@ function CitedReferencesPanel({
         try {
           const content = await readFile(rawPath)
           setPendingScrollImageSrc(imageUrlToAbsolute(firstUrl, pp))
-          // Prefer the chat-internal side preview when available (upstream
-          // behavior); otherwise fall back to the full wiki view.
           if (onOpenReferencePreview) {
-            onOpenReferencePreview({ title: getFileName(rawPath), path: rawPath, content })
+            onOpenReferencePreview({
+              title: getFileName(rawPath),
+              path: rawPath,
+              content,
+            })
           } else {
             openFileInPreview(rawPath, content)
           }
@@ -797,11 +814,15 @@ function CitedReferencesPanel({
       // target — at least the safety-net section will scroll into
       // view there.
       try {
-        const fallbackAbsPath = `${pp}/${fallbackPath}`
+        const fallbackAbsPath = projectAbsolutePath(pp, fallbackPath)
         const content = await readFile(fallbackAbsPath)
         setPendingScrollImageSrc(firstUrl)
         if (onOpenReferencePreview) {
-          onOpenReferencePreview({ title: getFileName(fallbackAbsPath), path: fallbackAbsPath, content })
+          onOpenReferencePreview({
+            title: getFileName(fallbackAbsPath),
+            path: fallbackAbsPath,
+            content,
+          })
         } else {
           openFileInPreview(fallbackAbsPath, content)
         }
@@ -812,71 +833,243 @@ function CitedReferencesPanel({
     [project, setPendingScrollImageSrc, openFileInPreview, onOpenReferencePreview],
   )
 
-  if (citedPages.length === 0) return null
+  const openCitedPage = useCallback(async (page: CitedPage) => {
+    if (page.kind === "workspace") {
+      if (!project) return
+      const pp = normalizePath(project.path)
+      const workspacePath = projectAbsolutePath(pp, page.path)
+      const relatedOutputPreviews = generatedOutputs.map((output) => {
+        const outputPath = projectAbsolutePath(pp, output.path)
+        return {
+          title: output.title,
+          path: outputPath,
+          source: output.source ?? "Workspace",
+          content: output.path === page.path ? page.snippet ?? "" : "",
+          snippet: output.snippet,
+        }
+      })
+      try {
+        const category = getFileCategory(workspacePath)
+        const shouldReadContent = isTextReadable(category) || category === "pdf"
+        const content = shouldReadContent ? await readFile(workspacePath) : ""
+        if (onOpenReferencePreview) {
+          onOpenReferencePreview({
+            title: page.title,
+            path: workspacePath,
+            source: page.source ?? "Workspace",
+            content,
+            snippet: page.snippet,
+          }, relatedOutputPreviews)
+        } else {
+          openFileInPreview(workspacePath, content)
+        }
+      } catch (err) {
+        console.warn("[chat refs] failed to open workspace reference:", err)
+        if (onOpenReferencePreview) {
+          onOpenReferencePreview({
+            title: page.title,
+            path: workspacePath,
+            source: page.source ?? "Workspace",
+            content: `Unable to load generated file: ${page.path}`,
+            snippet: page.snippet,
+          }, relatedOutputPreviews)
+        }
+      }
+      return
+    }
+    if (page.kind === "external") {
+      const target = page.url || page.path
+      const displayPath = displayExternalPath(page)
+      const previewPath = `${isAnyTxtReference(page) ? "anytxt" : "external"}-preview://${encodeURIComponent(target || page.title)}`
+      const previewContent = [
+        `# ${page.title}`,
+        "",
+        `**Source:** ${referenceSourceLabel(page)}`,
+        `**Path:** ${displayPath}`,
+        "",
+        "## Preview",
+        "",
+        page.snippet?.trim() || "(No preview fragment returned.)",
+      ].join("\n")
+      if (onOpenReferencePreview) {
+        onOpenReferencePreview({
+          title: page.title,
+          path: displayPath,
+          source: referenceSourceLabel(page),
+          external: true,
+          content: previewContent,
+          snippet: page.snippet ?? "",
+        })
+        return
+      }
+      if (isAnyTxtReference(page)) {
+        openFileInPreview(previewPath, previewContent)
+        useWikiStore.getState().setExternalPreview({
+          title: page.title,
+          path: previewPath,
+          source: referenceSourceLabel(page),
+          url: displayPath,
+          snippet: page.snippet ?? "",
+        })
+        return
+      }
+      if (target) {
+        await openUrl(target).catch((err) => {
+          console.warn("[chat refs] failed to open external reference:", err)
+        })
+      }
+      return
+    }
+    if (!project) return
+    const pp = normalizePath(project.path)
+    const id = getFileName(page.path.replace(/^wiki\//, "").replace(/\.md$/, ""))
+    const candidates = [
+      projectAbsolutePath(pp, page.path),
+      `${pp}/wiki/entities/${id}.md`,
+      `${pp}/wiki/concepts/${id}.md`,
+      `${pp}/wiki/sources/${id}.md`,
+      `${pp}/wiki/queries/${id}.md`,
+      `${pp}/wiki/synthesis/${id}.md`,
+      `${pp}/wiki/comparisons/${id}.md`,
+      `${pp}/wiki/${id}.md`,
+    ]
+    for (const candidate of candidates) {
+      try {
+        const content = await readFile(candidate)
+        if (onOpenReferencePreview) {
+          onOpenReferencePreview({
+            title: page.title,
+            path: candidate,
+            content,
+          })
+        } else {
+          openFileInPreview(candidate, content)
+        }
+        return
+      } catch {
+        // try next
+      }
+    }
+    const fallbackPath = projectAbsolutePath(pp, page.path)
+    const fallbackContent = `Unable to load: ${page.path}`
+    if (onOpenReferencePreview) {
+      onOpenReferencePreview({
+        title: page.title,
+        path: fallbackPath,
+        content: fallbackContent,
+      })
+    } else {
+      openFileInPreview(fallbackPath, fallbackContent)
+    }
+  }, [project, generatedOutputs, onOpenReferencePreview, openFileInPreview])
+
+  if (citedPages.length === 0 && generatedOutputs.length === 0) return null
 
   const MAX_COLLAPSED = 3
   const visiblePages = expanded ? citedPages : citedPages.slice(0, MAX_COLLAPSED)
+  const visibleOutputs = outputsExpanded ? generatedOutputs : generatedOutputs.slice(0, MAX_COLLAPSED)
   const hasMore = citedPages.length > MAX_COLLAPSED
+  const hasMoreOutputs = generatedOutputs.length > MAX_COLLAPSED
 
   return (
-    <div className="rounded-md border border-border/60 bg-muted/30 text-xs mb-1">
-      <button
-        type="button"
-        onClick={() => hasMore && setExpanded(!expanded)}
-        className="flex w-full items-center gap-1.5 px-2 py-1 text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <FileText className="h-3 w-3 shrink-0" />
-        <span className="font-medium">References ({citedPages.length})</span>
-        {hasMore && (
-          expanded
-            ? <ChevronDown className="h-3 w-3 ml-auto" />
-            : <ChevronRight className="h-3 w-3 ml-auto" />
-        )}
-      </button>
-      <div className="px-2 pb-1.5">
+    <div className="space-y-1">
+      {generatedOutputs.length > 0 && (
+        <div className="rounded-md border border-primary/20 bg-primary/5 text-xs mb-1">
+          <button
+            type="button"
+            onClick={() => hasMoreOutputs && setOutputsExpanded(!outputsExpanded)}
+            className="flex w-full items-center gap-1.5 px-2 py-1 text-primary transition-colors hover:text-primary/80"
+          >
+            <Sparkles className="h-3 w-3 shrink-0" />
+            <span className="font-medium">{t("chat.generatedOutputs")} ({generatedOutputs.length})</span>
+            {hasMoreOutputs && (
+              outputsExpanded
+                ? <ChevronDown className="h-3 w-3 ml-auto" />
+                : <ChevronRight className="h-3 w-3 ml-auto" />
+            )}
+          </button>
+          <div className="px-2 pb-1.5">
+            {visibleOutputs.map((page, i) => {
+              const refType = getRefType(page.path, page)
+              const config = REF_TYPE_CONFIG[refType] ?? REF_TYPE_CONFIG.source
+              const Icon = config.icon
+              const absoluteOutputPath = project ? projectAbsolutePath(project.path, page.path) : page.path
+              const isImageOutput = isGeneratedOutputImage(absoluteOutputPath)
+              const imageSrc = isImageOutput ? convertFileSrc(absoluteOutputPath) : null
+              return (
+                <div
+                  key={page.path}
+                  className="flex w-full items-start gap-1.5 rounded text-left"
+                  title={page.path}
+                >
+                  <span className="mt-1 text-[10px] text-primary/60 w-4 shrink-0 text-right">[{i + 1}]</span>
+                  <button
+                    type="button"
+                    onClick={() => openCitedPage(page)}
+                    className="flex min-w-0 flex-1 items-start gap-2 rounded px-1 py-1 text-left hover:bg-primary/10 transition-colors"
+                  >
+                    {imageSrc ? (
+                      <span className="h-14 w-20 shrink-0 overflow-hidden rounded border border-primary/20 bg-background/80">
+                        <img
+                          src={imageSrc}
+                          alt={page.title}
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                          onError={(event) => {
+                            event.currentTarget.style.opacity = "0"
+                          }}
+                        />
+                      </span>
+                    ) : (
+                      <Icon className={`mt-0.5 h-3 w-3 shrink-0 ${config.color}`} />
+                    )}
+                    <span className="min-w-0 flex-1 text-foreground/90">
+                      <span className="block truncate">{page.title}</span>
+                      <span className="mt-0.5 block truncate text-[10px] text-muted-foreground/75">
+                        {referenceLocator(page)}
+                      </span>
+                    </span>
+                    <span className="shrink-0 rounded border border-primary/20 bg-background/80 px-1 py-0 text-[10px] text-primary">
+                      {t("chat.generatedOutput")}
+                    </span>
+                  </button>
+                </div>
+              )
+            })}
+            {hasMoreOutputs && !outputsExpanded && (
+              <button
+                type="button"
+                onClick={() => setOutputsExpanded(true)}
+                className="w-full text-center text-[10px] text-primary/70 hover:text-primary pt-0.5"
+              >
+                +{generatedOutputs.length - MAX_COLLAPSED} more...
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {citedPages.length > 0 && (
+        <div className="rounded-md border border-border/60 bg-muted/30 text-xs mb-1">
+          <button
+            type="button"
+            onClick={() => hasMore && setExpanded(!expanded)}
+            className="flex w-full items-center gap-1.5 px-2 py-1 text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <FileText className="h-3 w-3 shrink-0" />
+            <span className="font-medium">{t("chat.references")} ({citedPages.length})</span>
+            {hasMore && (
+              expanded
+                ? <ChevronDown className="h-3 w-3 ml-auto" />
+                : <ChevronRight className="h-3 w-3 ml-auto" />
+            )}
+          </button>
+          <div className="px-2 pb-1.5">
         {visiblePages.map((page, i) => {
-          const refType = getRefType(page.path)
+          const refType = getRefType(page.path, page)
           const config = REF_TYPE_CONFIG[refType] ?? REF_TYPE_CONFIG.source
           const Icon = config.icon
           const info = imageInfos[page.path]
           const hasImages = (info?.count ?? 0) > 0
-          const openCitedPage = async () => {
-            if (!project) return
-            const pp = normalizePath(project.path)
-            const id = getFileName(page.path.replace(/^wiki\//, "").replace(/\.md$/, ""))
-            const candidates = [
-              `${pp}/${page.path}`,
-              `${pp}/wiki/entities/${id}.md`,
-              `${pp}/wiki/concepts/${id}.md`,
-              `${pp}/wiki/sources/${id}.md`,
-              `${pp}/wiki/queries/${id}.md`,
-              `${pp}/wiki/synthesis/${id}.md`,
-              `${pp}/wiki/comparisons/${id}.md`,
-              `${pp}/wiki/${id}.md`,
-            ]
-            for (const candidate of candidates) {
-              try {
-                const content = await readFile(candidate)
-                // Inline citation click → chat-internal side preview when
-                // wired (upstream behavior); else the full wiki view.
-                if (onOpenReferencePreview) {
-                  onOpenReferencePreview({ title: page.title, path: candidate, content })
-                } else {
-                  openFileInPreview(candidate, content)
-                }
-                return
-              } catch {
-                // try next
-              }
-            }
-            const fallbackAbsPath = `${pp}/${page.path}`
-            const fallbackContent = `Unable to load: ${page.path}`
-            if (onOpenReferencePreview) {
-              onOpenReferencePreview({ title: page.title, path: fallbackAbsPath, content: fallbackContent })
-            } else {
-              openFileInPreview(fallbackAbsPath, fallbackContent)
-            }
-          }
           return (
             // Outer is a div, NOT a button — we have two click
             // targets inside (image badge + main row) and nesting
@@ -886,7 +1079,7 @@ function CitedReferencesPanel({
             <div
               key={page.path}
               className="flex w-full items-center gap-1.5 rounded text-left"
-              title={page.path}
+              title={page.kind === "external" ? `${referenceSourceLabel(page)}: ${referenceLocator(page)}` : page.path}
             >
               <span className="text-[10px] text-muted-foreground/60 w-4 shrink-0 text-right">[{i + 1}]</span>
               {/*
@@ -915,11 +1108,28 @@ function CitedReferencesPanel({
               )}
               <button
                 type="button"
-                onClick={openCitedPage}
+                onClick={() => openCitedPage(page)}
                 className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-accent/50 transition-colors"
               >
                 <Icon className={`h-3 w-3 shrink-0 ${config.color}`} />
-                <span className="truncate text-foreground/80">{page.title}</span>
+                <span className="min-w-0 flex-1 text-foreground/80">
+                  <span className="block truncate">{page.title}</span>
+                  {page.kind === "external" && (
+                    <span className="mt-0.5 block truncate text-[10px] text-muted-foreground/75">
+                      {referenceLocator(page)}
+                    </span>
+                  )}
+                  {isAnyTxtReference(page) && referenceSnippet(page) && (
+                    <span className="mt-0.5 line-clamp-2 whitespace-normal text-[10px] leading-4 text-muted-foreground">
+                      {referenceSnippet(page)}
+                    </span>
+                  )}
+                </span>
+                {page.kind === "external" && (
+                  <span className="shrink-0 rounded border border-border/60 bg-background/80 px-1 py-0 text-[10px] text-muted-foreground">
+                    {referenceSourceLabel(page)}
+                  </span>
+                )}
               </button>
             </div>
           )
@@ -933,7 +1143,9 @@ function CitedReferencesPanel({
             +{citedPages.length - MAX_COLLAPSED} more...
           </button>
         )}
+          </div>
       </div>
+      )}
     </div>
   )
 }
@@ -1013,15 +1225,6 @@ function extractCitedPages(text: string): CitedPage[] {
 
 interface StreamingMessageProps {
   content: string
-  /**
-   * Live chat-agent activity feed (ported from upstream cea0029). The
-   * agent emits stage events (understanding → routing → tool calls →
-   * writing) while it builds context; AgentActivity renders them as a
-   * compact, de-duplicated trace above the streaming answer so the user
-   * sees what the agent is doing during the otherwise-silent retrieval
-   * phase. Empty array = nothing rendered (e.g. a classic fallback that
-   * doesn't run the agent loop).
-   */
   agentEvents?: ChatAgentEvent[]
 }
 
@@ -1050,12 +1253,6 @@ export function StreamingMessage({ content, agentEvents = [] }: StreamingMessage
   )
 }
 
-/**
- * Compact live trace of the chat-agent's reasoning/retrieval stages
- * (ported verbatim from upstream cea0029). Consecutive duplicate stages
- * are collapsed so a multi-query tool round doesn't spam the feed; only
- * the last visible row is "active" (pulsing, foreground colour).
- */
 function AgentActivity({ events, compact = false }: { events: ChatAgentEvent[]; compact?: boolean }) {
   const { t } = useTranslation()
   const visible = events.filter((event, index, arr) => {
@@ -1068,9 +1265,6 @@ function AgentActivity({ events, compact = false }: { events: ChatAgentEvent[]; 
   })
   if (visible.length === 0) return null
 
-  // `compact` (v0.5.1) is used by the saved-trail replay inside a message
-  // bubble: drop the bottom divider/margin so it nests cleanly in its own
-  // bordered container. The live streaming feed keeps the divider.
   return (
     <div className={`${compact ? "" : "mb-2 border-b border-border/40 pb-2"} flex flex-col gap-1.5`}>
       {visible.map((event, index) => {
@@ -1132,224 +1326,9 @@ function agentStageIcon(stage: ChatAgentEventStage) {
   }
 }
 
-// ── Proposed wiki edits surfaced from the chat answer ─────────────
-// When the assistant proposes a wiki correction it emits a FILE block
-// (apply to an existing page) or, when unsure which page, a REVIEW block
-// (route to the manual review queue). We render those as actionable
-// cards instead of letting the raw block show as text.
-
-interface ProposedReview { kind: string; title: string; body: string }
-
-function parseProposedReviews(content: string): ProposedReview[] {
-  const re = /---REVIEW:\s*([\w-]+)\s*\|\s*(.+?)\s*---\n([\s\S]*?)---END REVIEW---/g
-  const out: ProposedReview[] = []
-  let m: RegExpExecArray | null
-  while ((m = re.exec(content)) !== null) {
-    out.push({ kind: m[1].trim(), title: m[2].trim(), body: m[3].trim() })
-  }
-  return out
-}
-
-function ProposedEdits({ content }: { content: string }) {
-  const fileBlocks = useMemo(
-    () => parseFileBlocks(content).blocks.filter((b) => /^wiki\/.+\.md$/i.test(b.path) && isSafeIngestPath(b.path)),
-    [content],
-  )
-  const reviews = useMemo(() => parseProposedReviews(content), [content])
-  if (fileBlocks.length === 0 && reviews.length === 0) return null
-  return (
-    <div className="flex flex-col gap-2">
-      {fileBlocks.map((b, i) => (
-        <EditCard key={`edit-${i}`} path={b.path} newContent={b.content} />
-      ))}
-      {reviews.map((r, i) => (
-        <ReviewSuggestionCard key={`rev-${i}`} kind={r.kind} title={r.title} body={r.body} />
-      ))}
-    </div>
-  )
-}
-
-function EditCard({ path, newContent }: { path: string; newContent: string }) {
-  const project = useWikiStore((s) => s.project)
-  const selectedFile = useWikiStore((s) => s.selectedFile)
-  const [oldContent, setOldContent] = useState<string | null>(null)
-  const [loaded, setLoaded] = useState(false)
-  const [showDiff, setShowDiff] = useState(false)
-  const [status, setStatus] = useState<"idle" | "applying" | "applied" | "error">("idle")
-  const [errorMsg, setErrorMsg] = useState("")
-
-  const pp = project ? normalizePath(project.path) : ""
-  const fullPath = pp ? `${pp}/${path}` : ""
-
-  useEffect(() => {
-    let cancelled = false
-    if (!fullPath) return
-    readFile(fullPath)
-      .then((c) => { if (!cancelled) setOldContent(c) })
-      .catch(() => { if (!cancelled) setOldContent(null) })
-      .finally(() => { if (!cancelled) setLoaded(true) })
-    return () => { cancelled = true }
-  }, [fullPath])
-
-  const isNew = loaded && oldContent === null
-  const diff = useMemo(
-    () => (oldContent !== null ? diffLines(oldContent, newContent) : null),
-    [oldContent, newContent],
-  )
-  const stats = useMemo(() => (diff ? diffStats(diff) : null), [diff])
-  const unchanged = oldContent !== null && isUnchanged(oldContent, newContent)
-
-  const handleApply = useCallback(async () => {
-    if (!project || status === "applying" || status === "applied") return
-    setStatus("applying")
-    try {
-      await applyPageEdit(project.path, path, newContent)
-      // Refresh the tree + dependent views, and the open preview if this
-      // is the page being viewed.
-      try {
-        const tree = await listDirectory(pp)
-        useWikiStore.getState().setFileTree(tree)
-      } catch { /* ignore */ }
-      useWikiStore.getState().bumpDataVersion()
-      if (selectedFile && normalizePath(selectedFile) === normalizePath(fullPath)) {
-        useWikiStore.getState().setFileContent(newContent)
-      }
-      setStatus("applied")
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err))
-      setStatus("error")
-    }
-  }, [project, status, path, newContent, pp, selectedFile, fullPath])
-
-  return (
-    <div className="rounded-md border border-amber-300/60 bg-amber-50/60 dark:border-amber-800/60 dark:bg-amber-950/30 p-2 text-xs">
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <GitMerge className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
-        <span className="font-medium text-foreground">
-          {isNew ? "Proposed new page" : "Proposed edit"}
-        </span>
-        <code className="rounded bg-muted px-1 py-0.5 text-[10px] break-all">{path}</code>
-        {stats && (
-          <span className="text-[10px] text-muted-foreground">
-            <span className="text-emerald-600 dark:text-emerald-400">+{stats.added}</span>{" "}
-            <span className="text-red-600 dark:text-red-400">−{stats.removed}</span>
-          </span>
-        )}
-      </div>
-
-      {unchanged ? (
-        <p className="mt-1 text-muted-foreground">No changes — the proposed content matches the current page.</p>
-      ) : (
-        <>
-          <div className="mt-1.5 flex items-center gap-2">
-            {!isNew && diff && (
-              <button
-                type="button"
-                onClick={() => setShowDiff((v) => !v)}
-                className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary"
-              >
-                {showDiff ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                {showDiff ? "Hide diff" : "Show diff"}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleApply}
-              disabled={status === "applying" || status === "applied" || !loaded}
-              className="inline-flex items-center gap-1 rounded bg-amber-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-amber-700 disabled:opacity-60"
-              title={isNew ? "Create this page" : "Back up the current page and apply this edit"}
-            >
-              {status === "applied" ? <Check className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
-              {status === "applied"
-                ? "Applied"
-                : status === "applying"
-                  ? "Applying…"
-                  : isNew
-                    ? "Create page"
-                    : "Apply edit"}
-            </button>
-            {!isNew && status !== "applied" && (
-              <span className="text-[10px] text-muted-foreground">a backup is saved first</span>
-            )}
-          </div>
-
-          {showDiff && diff && (
-            <pre className="mt-1.5 max-h-72 overflow-auto rounded bg-background/70 p-2 font-mono text-[11px] leading-snug">
-              {diff.map((line, i) => (
-                <div
-                  key={i}
-                  className={
-                    line.type === "add"
-                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                      : line.type === "del"
-                        ? "bg-red-500/10 text-red-700 dark:text-red-300"
-                        : "text-muted-foreground"
-                  }
-                >
-                  <span className="select-none opacity-60">{line.type === "add" ? "+ " : line.type === "del" ? "− " : "  "}</span>
-                  {line.text || " "}
-                </div>
-              ))}
-            </pre>
-          )}
-
-          {status === "error" && (
-            <p className="mt-1 text-red-600 dark:text-red-400">Apply failed: {errorMsg}</p>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
-function ReviewSuggestionCard({ kind, title, body }: { kind: string; title: string; body: string }) {
-  const [sent, setSent] = useState(false)
-  const handleSend = useCallback(() => {
-    const type = (["contradiction", "duplicate", "missing-page", "confirm", "suggestion"].includes(kind)
-      ? kind
-      : "suggestion") as "contradiction" | "duplicate" | "missing-page" | "confirm" | "suggestion"
-    useReviewStore.getState().addItem({
-      type,
-      title: title || "Suggested wiki change",
-      description: body,
-      options: [{ label: "Mark handled", action: "ack" }],
-    })
-    setSent(true)
-  }, [kind, title, body])
-
-  return (
-    <div className="rounded-md border border-sky-300/60 bg-sky-50/60 dark:border-sky-800/60 dark:bg-sky-950/30 p-2 text-xs">
-      <div className="flex items-center gap-1.5">
-        <HelpCircle className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
-        <span className="font-medium text-foreground">Suggested change (needs review)</span>
-      </div>
-      {title && <p className="mt-1 font-medium text-foreground">{title}</p>}
-      {body && <p className="mt-0.5 whitespace-pre-wrap text-muted-foreground">{body}</p>}
-      <button
-        type="button"
-        onClick={handleSend}
-        disabled={sent}
-        className="mt-1.5 inline-flex items-center gap-1 rounded bg-sky-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-sky-700 disabled:opacity-60"
-      >
-        {sent ? <Check className="h-3 w-3" /> : <BookmarkPlus className="h-3 w-3" />}
-        {sent ? "Sent to Review" : "Send to Review"}
-      </button>
-    </div>
-  )
-}
-
 function MarkdownContent({ content }: { content: string }) {
-  // Strip hidden comments and any proposed-edit FILE/REVIEW blocks — those
-  // are rendered separately as Apply/Review cards (see ProposedEdits), not
-  // as raw markdown. The trailing-open variants keep a half-streamed block
-  // from flashing as plain text mid-response.
-  const cleaned = content
-    .replace(/<!--.*?-->/gs, "")
-    .replace(/---FILE:[\s\S]*?---END FILE---/g, "")
-    .replace(/---REVIEW:[\s\S]*?---END REVIEW---/g, "")
-    .replace(/---FILE:[\s\S]*$/g, "")
-    .replace(/---REVIEW:[\s\S]*$/g, "")
-    .trimEnd()
+  // Strip hidden comments
+  const cleaned = content.replace(/<!--.*?-->/gs, "").trimEnd()
 
   // Project path for resolving wiki-relative image src in chat
   // replies (LLM may surface images that came in via retrieved
@@ -1479,9 +1458,9 @@ function StreamingThinkingBlock({ content }: { content: string }) {
       <div className="flex items-center gap-1.5 mb-1.5">
         <span className="text-sm animate-pulse">💭</span>
         <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Thinking...</span>
-        <span className="text-[10px] text-amber-600 dark:text-amber-400/50 dark:text-amber-500/40">{lines.length} lines</span>
+        <span className="text-[10px] text-amber-600/50 dark:text-amber-500/40">{lines.length} lines</span>
       </div>
-      <div className="h-[5lh] overflow-hidden text-xs text-amber-800 dark:text-amber-200/70 dark:text-amber-300/60 font-mono leading-relaxed">
+      <div className="h-[5lh] overflow-hidden text-xs text-amber-800/70 dark:text-amber-300/60 font-mono leading-relaxed">
         {visibleLines.map((line, i) => (
           <div
             key={lines.length - 5 + i}
@@ -1511,12 +1490,12 @@ function ThinkingBlock({ content }: { content: string }) {
       >
         <span className="text-sm">💭</span>
         <span className="font-medium">Thought for {lines.length} lines</span>
-        <span className="text-amber-600 dark:text-amber-400/60 dark:text-amber-500/60">
+        <span className="text-amber-600/60 dark:text-amber-500/60">
           {expanded ? "▼" : "▶"}
         </span>
       </button>
       {expanded && (
-        <div className="border-t border-amber-500/20 px-2.5 py-2 text-xs text-amber-800 dark:text-amber-200/80 dark:text-amber-300/70 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono leading-relaxed">
+        <div className="border-t border-amber-500/20 px-2.5 py-2 text-xs text-amber-800/80 dark:text-amber-300/70 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono leading-relaxed">
           {content}
         </div>
       )}
@@ -1530,6 +1509,12 @@ function ThinkingBlock({ content }: { content: string }) {
  */
 function processContent(text: string): string {
   let result = text
+
+  // Rewrite Obsidian image embeds (`![[…]]`) into standard markdown
+  // FIRST — before the `[[…]]` → wikilink conversion below, which
+  // would otherwise mangle the embed target into a broken
+  // `wikilink:` image. Same rule the wiki reader / raw preview use.
+  result = transformImageEmbeds(result)
 
   // Wrap bare \begin{...}...\end{...} blocks with $$ for remark-math
   result = result.replace(
@@ -1605,8 +1590,6 @@ function WikiLink({ pageName, children }: { pageName: string; children: React.Re
     if (!resolvedPath.current) return
     try {
       const content = await readFile(resolvedPath.current)
-      // openFileInPreview switches to the wiki view itself, so clicking a
-      // wikilink from chat lands on the page preview in the center area.
       openFileInPreview(resolvedPath.current, content)
     } catch {
       // ignore

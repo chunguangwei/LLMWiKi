@@ -1,8 +1,10 @@
 pub mod claude_cli;
 pub mod cli_finder;
+mod cli_resolver;
 pub mod codex_cli;
 pub mod config_backup;
 pub mod config_crypto;
+pub mod external_search;
 pub mod extract_images;
 pub mod file_sync;
 pub mod github_backup;

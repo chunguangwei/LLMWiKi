@@ -10,6 +10,14 @@ describe("normalizeReviewTitle", () => {
     expect(normalizeReviewTitle("Missing page: Attention")).toBe("attention")
   })
 
+  it("strips recognized prefixes after leading whitespace", () => {
+    expect(normalizeReviewTitle(" Missing page: Attention")).toBe("attention")
+  })
+
+  it("does not strip English prefix-like words without a colon delimiter", () => {
+    expect(normalizeReviewTitle("Missing page Attention")).toBe("missing page attention")
+  })
+
   it("strips hyphenated 'Missing-Page:' prefix", () => {
     expect(normalizeReviewTitle("Missing-Page: Attention")).toBe("attention")
   })
@@ -32,6 +40,10 @@ describe("normalizeReviewTitle", () => {
 
   it("strips Chinese '重复页面：' prefix", () => {
     expect(normalizeReviewTitle("重复页面：大模型")).toBe("大模型")
+  })
+
+  it("does not strip Chinese prefix-like words without a colon delimiter", () => {
+    expect(normalizeReviewTitle("疑似重复 注意力")).toBe("疑似重复 注意力")
   })
 
   it("strips 'Possible duplicate:' prefix", () => {

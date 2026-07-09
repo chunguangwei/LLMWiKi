@@ -38,9 +38,11 @@ vi.mock("@/lib/project-store", () => ({
 }))
 
 import {
+  isProjectManagedScheduledImportPath,
   resolveImportPath,
   scheduledImportDestinationForFile,
   scanAndImport,
+  shouldSkipScheduledImportConfigFile,
   shouldSkipScheduledImportFile,
 } from "./scheduled-import"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -92,6 +94,28 @@ describe("scheduled import path handling", () => {
     expect(dest).toBe(`${projectPath}/raw/sources/source.md`)
   })
 
+  it("detects scheduled import paths managed by the project itself", () => {
+    expect(isProjectManagedScheduledImportPath(projectPath, projectPath)).toBe(true)
+    expect(
+      isProjectManagedScheduledImportPath(projectPath, `${projectPath}/raw/sources`),
+    ).toBe(true)
+    expect(
+      isProjectManagedScheduledImportPath(projectPath, `${projectPath}/raw`),
+    ).toBe(true)
+    expect(
+      isProjectManagedScheduledImportPath(projectPath, `${projectPath}/wiki`),
+    ).toBe(true)
+    expect(
+      isProjectManagedScheduledImportPath(projectPath, `${projectPath}/.llm-wiki`),
+    ).toBe(true)
+    expect(
+      isProjectManagedScheduledImportPath(projectPath, "/Users/me"),
+    ).toBe(true)
+    expect(
+      isProjectManagedScheduledImportPath(projectPath, "/Users/me/inbox"),
+    ).toBe(false)
+  })
+
   it("sanitizes Windows-unsafe destination path segments with a stable suffix", () => {
     const dest = scheduledImportDestinationForFile(
       projectPath,
@@ -120,6 +144,14 @@ describe("scheduled import path handling", () => {
         `${projectPath}/raw/sources/.cache/source.pdf.txt`,
       ),
     ).toBe(true)
+  })
+
+  it("skips config-like files for unattended scheduled import", () => {
+    expect(shouldSkipScheduledImportConfigFile("/Users/me/inbox/data.json")).toBe(true)
+    expect(shouldSkipScheduledImportConfigFile("/Users/me/inbox/secrets.yaml")).toBe(true)
+    expect(shouldSkipScheduledImportConfigFile("/Users/me/inbox/settings.yml")).toBe(true)
+    expect(shouldSkipScheduledImportConfigFile("/Users/me/inbox/config.xml")).toBe(true)
+    expect(shouldSkipScheduledImportConfigFile("/Users/me/inbox/notes.md")).toBe(false)
   })
 })
 
@@ -182,6 +214,13 @@ describe("scanAndImport failure handling", () => {
     expect(mocks.writeFileAtomic).not.toHaveBeenCalled()
   })
 
+  it("does not leave the scanner locked after a managed project path is skipped", async () => {
+    await scanAndImport(project, `${project.path}/raw/sources`)
+    await scanAndImport(project, "/Users/me/inbox")
+
+    expect(mocks.listDirectory).toHaveBeenCalledWith("/Users/me/inbox")
+  })
+
   it("continues scanning when one file is locked or unreadable", async () => {
     mocks.listDirectory.mockResolvedValueOnce([
       { name: "locked.pdf", path: "/Users/me/inbox/locked.pdf", is_dir: false },
@@ -211,5 +250,27 @@ describe("scanAndImport failure handling", () => {
     expect(mocks.getFileMd5).not.toHaveBeenCalled()
     expect(mocks.copyFile).not.toHaveBeenCalled()
     expect(mocks.enqueueSourceIngest).not.toHaveBeenCalled()
+  })
+
+  it("does not copy unattended json/yaml/xml config files", async () => {
+    mocks.listDirectory.mockResolvedValueOnce([
+      { name: "secrets.yaml", path: "/Users/me/inbox/secrets.yaml", is_dir: false },
+      { name: "notes.md", path: "/Users/me/inbox/notes.md", is_dir: false },
+    ])
+    mocks.enqueueSourceIngest.mockResolvedValue(["task-1"])
+
+    await scanAndImport(project, "/Users/me/inbox")
+
+    expect(mocks.copyFile).toHaveBeenCalledTimes(1)
+    expect(mocks.copyFile).toHaveBeenCalledWith(
+      "/Users/me/inbox/notes.md",
+      "/Users/me/wiki-project/raw/sources/scheduled-import/notes.md",
+    )
+    expect(mocks.copyFile).not.toHaveBeenCalledWith("/Users/me/inbox/secrets.yaml", expect.anything())
+    expect(mocks.enqueueSourceIngest).toHaveBeenCalledWith(
+      project,
+      ["/Users/me/wiki-project/raw/sources/scheduled-import/notes.md"],
+      expect.any(Object),
+    )
   })
 })

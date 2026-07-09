@@ -5,144 +5,18 @@ import type { FileNode } from "@/types/wiki"
 import { useActivityStore } from "@/stores/activity-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
-import { parseFrontmatter } from "@/lib/frontmatter"
-import { WIKI_TYPE_OPTIONS } from "@/lib/wiki-type-options"
-
-/**
- * Wiki sub-folders whose contents are RAW imports, not knowledge
- * pages. Real-world testing on a ~250-page wiki showed 70% of all
- * structural lint findings (94 broken-link + 15 orphan + 2 no-outlinks
- * out of 142 total) came from these folders — and almost none of
- * those findings were actionable:
- *
- *   - `sources/` holds source documents the user ingested. They're
- *     allowed to reference external concepts that don't have wiki
- *     pages yet (broken-link), they're naturally unlinked from other
- *     wiki pages (orphan), and their bodies are raw imports without
- *     wikilink curation (no-outlinks). Treating them as knowledge
- *     pages floods the Lint view with noise.
- *
- *   - `raw/` is the same idea under an older project layout.
- *
- *   - `queries/` is where chat-saved replies land (Save to Wiki).
- *     Each one is a one-shot answer card; no expectation that they
- *     should link / be linked-to like curated wiki pages.
- *
- *   - `.llm-wiki/` / `.llm-wiki-local/` are app-internal scratch
- *     directories (checkpoints, lint output itself, etc.) that the
- *     listDirectory walker can pick up if they accidentally have
- *     .md files. Hard-skip.
- *
- * Trailing slash convention — match is `startsWith(prefix)` against
- * the slug (NOT absolute path).
- */
-const DEFAULT_IGNORE_PATH_PREFIXES: ReadonlyArray<string> = [
-  "sources/",
-  "raw/",
-  "queries/",
-  ".llm-wiki/",
-  ".llm-wiki-local/",
-]
-
-export interface LintConfig {
-  /** Path prefixes (wiki-relative, no leading slash, trailing slash
-   *  required). Defaults skip raw / queries / app-internal trees. */
-  ignorePathPrefixes: string[]
-}
-
-/**
- * Load the project's lint config from `.llm-wiki/lint-config.json`.
- * Returns the defaults when missing — most projects use them as-is
- * and don't need a config file. The file shape is:
- *
- *   {
- *     "ignorePathPrefixes": ["sources/", "raw/", "queries/"],
- *     "extraIgnorePathPrefixes": ["legacy-imports/"]
- *   }
- *
- *   - `ignorePathPrefixes` REPLACES the default list (advanced users
- *     who want to lint queries/ etc. set this to []).
- *   - `extraIgnorePathPrefixes` is added on top of the defaults
- *     (common case: keep defaults, add one more folder).
- */
-export async function loadLintConfig(projectPath: string): Promise<LintConfig> {
-  const pp = normalizePath(projectPath)
-  let parsed: unknown
-  try {
-    const text = await readFile(`${pp}/.llm-wiki/lint-config.json`)
-    parsed = JSON.parse(text)
-  } catch {
-    return { ignorePathPrefixes: DEFAULT_IGNORE_PATH_PREFIXES.slice() }
-  }
-  if (!parsed || typeof parsed !== "object") {
-    return { ignorePathPrefixes: DEFAULT_IGNORE_PATH_PREFIXES.slice() }
-  }
-  const obj = parsed as Record<string, unknown>
-  const replace = Array.isArray(obj.ignorePathPrefixes)
-    ? (obj.ignorePathPrefixes as unknown[]).filter(
-        (s): s is string => typeof s === "string" && s.length > 0,
-      )
-    : null
-  const extra = Array.isArray(obj.extraIgnorePathPrefixes)
-    ? (obj.extraIgnorePathPrefixes as unknown[]).filter(
-        (s): s is string => typeof s === "string" && s.length > 0,
-      )
-    : []
-  const base = replace ?? DEFAULT_IGNORE_PATH_PREFIXES.slice()
-  // Dedup + normalise trailing slash so config writers can leave it off.
-  const normalised = Array.from(
-    new Set([...base, ...extra].map((p) => (p.endsWith("/") ? p : p + "/"))),
-  )
-  return { ignorePathPrefixes: normalised }
-}
-
-/** Lint-time stats for the Lint view header. Returned alongside the
- *  findings so the UI can display "skipped N raw-source items" — a
- *  honest signal that lint is filtering noise rather than missing it. */
-export interface LintStats {
-  scanned: number
-  skipped: number
-  skippedByPathPrefix: Map<string, number>
-}
 
 export interface LintResult {
-  type: "orphan" | "broken-link" | "no-outlinks" | "semantic" | "frontmatter-type"
+  type: "orphan" | "broken-link" | "no-outlinks" | "semantic"
   severity: "warning" | "info"
   page: string
   detail: string
   affectedPages?: string[]
-  // ── Link-repair suggestions (structural lint only) ────────────────
-  // The original broken wikilink text as the user typed it, e.g.
-  // "transfomer". Carried so the one-click Fix knows what to rewrite.
   brokenTarget?: string
-  // The best-guess existing page (wiki-relative path, e.g.
-  // "entities/transformer.md") that this finding should link TO —
-  // populated for broken-link (closest fuzzy match) and no-outlinks
-  // (most topically-related page). Empty when no confident match.
   suggestedTarget?: string
-  // The best-guess existing page that should link INTO an orphan
-  // (wiki-relative path). The Fix appends a wikilink there.
   suggestedSource?: string
 }
 
-// Confidence thresholds for the link-repair suggestion engine. Tuned
-// against a real ~250-page wiki so that suggestions stay actionable
-// rather than noisy — a wrong suggestion is worse than none because
-// the one-click Fix acts on it.
-//   - BROKEN_LINK: fuzzy string match between the broken target and an
-//     existing page must clear this before we offer a rename.
-//   - RELATED_PAGE: token-overlap (cosine-ish) score for orphan /
-//     no-outlinks "related page" suggestions. Deliberately low — even
-//     a weak topical link beats a fully unlinked page.
-//   - SAME_FOLDER_SCORE_BONUS: nudge co-located pages up; siblings in
-//     the same folder are usually about the same sub-topic.
-//   - SINGLE_CJK_TOKEN_WEIGHT: a lone CJK character is a weaker signal
-//     than a multi-char word, so it counts for less in the overlap sum.
-//   - SUGGESTION_TOKEN_WINDOW: only the first N chars of a page body
-//     feed the token set (keeps long imports from dominating).
-//   - SAME_BASENAME / CONTAINS_TARGET: short-circuit scores for the
-//     two highest-confidence broken-link cases (same filename, or one
-//     target is a substring of the other).
 const BROKEN_LINK_SUGGESTION_MIN_SCORE = 0.74
 const RELATED_PAGE_SUGGESTION_MIN_SCORE = 0.08
 const SAME_FOLDER_SCORE_BONUS = 0.08
@@ -180,12 +54,6 @@ function relativeToSlug(relativePath: string): string {
   return relativePath.replace(/\.md$/, "")
 }
 
-// ── Link-repair suggestion helpers ─────────────────────────────────────────────
-
-/** Canonicalise a wikilink target / path for comparison: drop the
- *  optional `wiki/` prefix and `.md` suffix, trim, lowercase. So
- *  "wiki/Entities/Transformer.md" and "entities/transformer" compare
- *  equal. */
 function normalizeLinkTarget(target: string): string {
   return normalizePath(target)
     .replace(/^wiki\//i, "")
@@ -194,9 +62,6 @@ function normalizeLinkTarget(target: string): string {
     .toLowerCase()
 }
 
-/** Best human-readable title for a page: frontmatter `title:`, else the
- *  first H1, else the de-slugged filename. Used to widen the fuzzy
- *  match surface for broken-link suggestions. */
 function extractTitle(content: string, fallbackPath: string): string {
   const frontmatter = content.match(/^---\s*\n([\s\S]*?)\n---/)
   if (frontmatter) {
@@ -210,25 +75,19 @@ function extractTitle(content: string, fallbackPath: string): string {
     .replace(/[-_]+/g, " ")
 }
 
-/** Tokenise text for topical-overlap scoring. Words of length ≥ 2 plus,
- *  for CJK runs, each individual character (so two pages sharing a
- *  Chinese term still overlap even when word boundaries are absent).
- *  NFKC-normalised + lowercased for stable comparison. */
 function tokenizeForSuggestion(text: string): Set<string> {
   const tokens = new Set<string>()
   const normalized = text.normalize("NFKC").toLowerCase()
   for (const match of normalized.matchAll(/[\p{L}\p{N}]+/gu)) {
     const token = match[0]
     if (token.length >= 2) tokens.add(token)
-    if (/[㐀-鿿]/u.test(token)) {
+    if (/[\u3400-\u9fff]/u.test(token)) {
       for (const char of Array.from(token)) tokens.add(char)
     }
   }
   return tokens
 }
 
-/** Plain Levenshtein edit distance (two-row DP). Used by the broken-link
- *  fuzzy matcher to catch typos like "transfomer" → "transformer". */
 function levenshtein(a: string, b: string): number {
   if (a === b) return 0
   if (!a) return b.length
@@ -250,11 +109,6 @@ function levenshtein(a: string, b: string): number {
   return previous[b.length]
 }
 
-/** 0..1 similarity between a broken target and a candidate page key.
- *  Short-circuits the high-confidence cases (exact / same basename /
- *  substring) before falling back to a length-normalised edit-distance
- *  ratio. Very short basenames (< 5 chars) get a 0 to avoid wiring up
- *  bogus links like cat → bat. */
 function stringSimilarity(a: string, b: string): number {
   const left = normalizeLinkTarget(a)
   const right = normalizeLinkTarget(b)
@@ -294,74 +148,21 @@ function buildSlugMap(
 // ── Structural lint ───────────────────────────────────────────────────────────
 
 export async function runStructuralLint(projectPath: string): Promise<LintResult[]> {
-  const { findings } = await runStructuralLintWithStats(projectPath)
-  return findings
-}
-
-/**
- * Same as runStructuralLint, but also returns counter stats for the
- * UI ("skipped N items"). Useful for surfacing why the lint count
- * dropped after a config tweak.
- */
-export async function runStructuralLintWithStats(
-  projectPath: string,
-): Promise<{ findings: LintResult[]; stats: LintStats }> {
   const wikiRoot = `${normalizePath(projectPath)}/wiki`
   let tree: FileNode[]
   try {
     tree = await listDirectory(wikiRoot)
   } catch {
-    return {
-      findings: [],
-      stats: { scanned: 0, skipped: 0, skippedByPathPrefix: new Map() },
-    }
+    return []
   }
 
-  const config = await loadLintConfig(projectPath)
   const wikiFiles = flattenMdFiles(tree)
-  // Exclude structural pages from orphan / no-outlinks / broken-link
-  // checks, plus all files under config-ignored path prefixes
-  // (default raw / queries / etc). Structural pages = the wiki's
-  // entry / TOC / change-log / overview / project framing —
-  // they're MEANT to be entry points, not knowledge nodes in the
-  // graph, so flagging them as orphan is a false positive that
-  // bulk-fix will gladly act on (it has happened: a user saw
-  // overview.md flagged as orphan and the cleanup deleted it).
-  // Keep this list aligned with
-  // agent-ingest/wiki-access.ts STRUCTURAL_PAGES and
-  // project-file-sync.ts. Match is on basename only — a per-folder
-  // `concepts/index.md` is still a real page.
-  const STRUCTURAL_BASENAMES: ReadonlySet<string> = new Set([
-    "index.md",
-    "log.md",
-    "overview.md",
-    "purpose.md",
-    "schema.md",
-  ])
-  const skippedByPathPrefix = new Map<string, number>()
-  const contentFiles = wikiFiles.filter((f) => {
-    if (STRUCTURAL_BASENAMES.has(f.name.toLowerCase())) return false
-    const slug = relativeToSlug(getRelativePath(f.path, wikiRoot))
-    for (const prefix of config.ignorePathPrefixes) {
-      if (slug.startsWith(prefix)) {
-        skippedByPathPrefix.set(prefix, (skippedByPathPrefix.get(prefix) ?? 0) + 1)
-        return false
-      }
-    }
-    return true
-  })
-  const stats: LintStats = {
-    scanned: contentFiles.length,
-    skipped: wikiFiles.length - contentFiles.length,
-    skippedByPathPrefix,
-  }
+  // Exclude index.md and log.md from orphan checks
+  const contentFiles = wikiFiles.filter(
+    (f) => f.name !== "index.md" && f.name !== "log.md"
+  )
 
-  // slugMap MUST include structural pages too — a wikilink from a
-  // knowledge page to `[[overview]]` or `[[index]]` is valid (the
-  // file exists), just not subject to orphan / no-outlinks checks.
-  // Without including them here, every such link would be flagged
-  // as broken.
-  const slugMap = buildSlugMap(wikiFiles, wikiRoot)
+  const slugMap = buildSlugMap(contentFiles, wikiRoot)
 
   // Read all content files
   type PageData = {
@@ -390,10 +191,6 @@ export async function runStructuralLintWithStats(
     }
   }
 
-  // Suggest the closest EXISTING page for a broken wikilink target —
-  // fuzzy-matched against each page's slug, wiki-relative path, and
-  // title. Returns undefined unless the best score clears the
-  // confidence threshold (a wrong rename is worse than none).
   function suggestBrokenTarget(target: string): PageData | undefined {
     let best: { page: PageData; score: number } | undefined
     for (const candidate of pages) {
@@ -407,11 +204,6 @@ export async function runStructuralLintWithStats(
     return best && best.score >= BROKEN_LINK_SUGGESTION_MIN_SCORE ? best.page : undefined
   }
 
-  // Suggest a topically-related page for orphan ("source" = a page that
-  // should link INTO this one) and no-outlinks ("target" = a page this
-  // one should link OUT to). Scored by token overlap with a same-folder
-  // bonus. For the "target" direction we skip pages this page already
-  // links to, so we never suggest a redundant link.
   function suggestRelatedPage(page: PageData, direction: "source" | "target"): PageData | undefined {
     const existingOutlinks = new Set(page.outlinks.map(normalizeLinkTarget))
     let best: { page: PageData; score: number } | undefined
@@ -455,35 +247,8 @@ export async function runStructuralLintWithStats(
 
   const results: LintResult[] = []
 
-  // Broken links are GROUPED by target: a single missing target page
-  // referenced from N source pages produces ONE lint item, with
-  // `affectedPages` carrying the source list. Without this grouping,
-  // a popular missing page (e.g. `[[领导梯队模型]]` referenced from
-  // 7 different reports) generates 7 lint rows — readable as "the
-  // same problem 7 times" — which floods the Lint view and makes
-  // bulk AI fix expensive (each row would launch a separate agent
-  // run repeating the same diagnosis).
-  //
-  // Key = the LOWERCASED link text the user typed. We dedupe on this
-  // so case-variant references to the same name (`[[Foo]]` and
-  // `[[foo]]`) collapse, but keep the FIRST-seen original casing in
-  // `target` so the lint row reads like the wiki.
-  const brokenByTarget = new Map<string, { target: string; pages: Set<string> }>()
-
-  // Build the canonical type set ONCE per lint run. Sources from
-  // WIKI_TYPE_OPTIONS (the same list the type selector + write-time
-  // validation use) plus `overview` (the wiki's framing page, has
-  // its own type even though the selector hides it) and `other`
-  // (the explicit escape hatch). Any frontmatter `type:` outside
-  // this set is suggested for normalisation.
-  const canonicalTypes: ReadonlySet<string> = new Set([
-    ...WIKI_TYPE_OPTIONS.map((o) => o.value),
-    "overview",
-    "other",
-  ])
-
   for (const p of pages) {
-    const shortName = getRelativePath(p.path, wikiRoot)
+    const shortName = p.shortName
 
     // Orphan: no inbound links (lowercased slug for case-insensitive match)
     const inbound = inboundCounts.get(p.slug.toLowerCase()) ?? 0
@@ -495,35 +260,6 @@ export async function runStructuralLintWithStats(
         page: shortName,
         detail: "No other pages link to this page.",
         suggestedSource: suggestedSource?.shortName,
-      })
-    }
-
-    // Frontmatter type check — every page should declare a canonical
-    // `type:` so the knowledge tree, lint, and reconcile can place
-    // it. Two failure modes:
-    //   - missing → warning (no `type:` at all, page is a "lost
-    //     resource" the system can't classify)
-    //   - non-canonical → info (LLM or legacy import emitted a
-    //     synonym like `type: 笔记` — works through alias
-    //     normalisation but should be cleaned up for clarity)
-    const { frontmatter: fm } = parseFrontmatter(p.content)
-    const rawType =
-      fm && typeof fm === "object" && typeof (fm as Record<string, unknown>).type === "string"
-        ? ((fm as Record<string, unknown>).type as string).trim()
-        : ""
-    if (rawType.length === 0) {
-      results.push({
-        type: "frontmatter-type",
-        severity: "warning",
-        page: shortName,
-        detail: "Missing frontmatter `type:` — set one of the canonical types (concept / entity / note / report / ...).",
-      })
-    } else if (!canonicalTypes.has(rawType)) {
-      results.push({
-        type: "frontmatter-type",
-        severity: "info",
-        page: shortName,
-        detail: `Non-canonical \`type: ${rawType}\` — rename to a canonical slug from WIKI_TYPE_OPTIONS (e.g. note / report / article).`,
       })
     }
 
@@ -539,51 +275,26 @@ export async function runStructuralLintWithStats(
       })
     }
 
-    // Broken links — case-insensitive matching. Accumulated into the
-    // by-target map; emitted once below.
+    // Broken links — case-insensitive matching.
     for (const link of p.outlinks) {
       const lookup = link.toLowerCase()
       const basename = getFileName(link).replace(/\.md$/, "").toLowerCase()
       const exists = slugMap.has(lookup) || slugMap.has(basename)
-      if (exists) continue
-      const key = lookup
-      const entry = brokenByTarget.get(key) ?? { target: link, pages: new Set<string>() }
-      entry.pages.add(shortName)
-      brokenByTarget.set(key, entry)
+      if (!exists) {
+        const suggestedTarget = suggestBrokenTarget(link)
+        results.push({
+          type: "broken-link",
+          severity: "warning",
+          page: shortName,
+          detail: `Broken link: [[${link}]] — target page not found.`,
+          brokenTarget: link,
+          suggestedTarget: suggestedTarget?.shortName,
+        })
+      }
     }
   }
 
-  // Emit one broken-link row per missing target. Sort the affected-
-  // pages list so the output is stable across runs (the input page
-  // order depends on the OS's directory enumeration, which isn't).
-  //
-  // `brokenTarget` (the original typed link) + `suggestedTarget` (the
-  // closest existing page, if any) drive the one-click link repair:
-  // rewrite the link to the suggestion, or stub out the missing page.
-  // Suggestion is computed ONCE per target — the grouping means a
-  // popular typo is fuzzy-matched a single time, not once per source.
-  for (const { target, pages: sourcePages } of brokenByTarget.values()) {
-    const pageList = Array.from(sourcePages).sort()
-    const detail =
-      pageList.length === 1
-        ? `Broken link: [[${target}]] — target page not found.`
-        : `Broken link: [[${target}]] — target page not found, referenced from ${pageList.length} pages.`
-    const suggestedTarget = suggestBrokenTarget(target)
-    results.push({
-      type: "broken-link",
-      severity: "warning",
-      // `page` is the "primary" row anchor (first affected source);
-      // the full list lives in affectedPages. UI shows page first
-      // then expands to the rest.
-      page: pageList[0],
-      detail,
-      brokenTarget: target,
-      suggestedTarget: suggestedTarget?.shortName,
-      ...(pageList.length > 1 ? { affectedPages: pageList } : {}),
-    })
-  }
-
-  return { findings: results, stats }
+  return results
 }
 
 // ── Semantic lint ─────────────────────────────────────────────────────────────

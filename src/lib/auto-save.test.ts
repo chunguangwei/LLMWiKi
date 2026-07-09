@@ -12,17 +12,14 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest"
 
-// Fork-local: our auto-save also persists the activity store, so the persist
-// mock must stub saveActivityItems too (flushAndSuspendAutoSave calls it).
-const { saveReviewItems, saveLintItems, saveChatHistory, saveChatPreferences, saveActivityItems } = vi.hoisted(() => ({
+const { saveReviewItems, saveLintItems, saveChatHistory, saveChatPreferences } = vi.hoisted(() => ({
   saveReviewItems: vi.fn().mockResolvedValue(undefined),
   saveLintItems: vi.fn().mockResolvedValue(undefined),
   saveChatHistory: vi.fn().mockResolvedValue(undefined),
   saveChatPreferences: vi.fn().mockResolvedValue(undefined),
-  saveActivityItems: vi.fn().mockResolvedValue(undefined),
 }))
 
-vi.mock("./persist", () => ({ saveReviewItems, saveLintItems, saveChatHistory, saveChatPreferences, saveActivityItems }))
+vi.mock("./persist", () => ({ saveReviewItems, saveLintItems, saveChatHistory, saveChatPreferences }))
 
 import {
   setupAutoSave,
@@ -51,7 +48,6 @@ beforeEach(() => {
   saveLintItems.mockClear()
   saveChatHistory.mockClear()
   saveChatPreferences.mockClear()
-  saveActivityItems.mockClear()
   useReviewStore.setState({ items: [] })
   useLintStore.setState({ items: [] })
   useChatStore.setState({ conversations: [], messages: [], isStreaming: false })
@@ -144,18 +140,25 @@ describe("auto-save project-switch guard", () => {
     await flushAndSuspendAutoSave()
 
     expect(saveChatHistory).not.toHaveBeenCalled()
-    // Search prefs are tiny + unrelated to streaming, so they DO flush.
     expect(saveChatPreferences).toHaveBeenCalledWith("/proj/A", {
       useWebSearch: false,
       useAnyTxtSearch: false,
       agentMode: "standard",
+      selectedSkills: [],
+      disabledSkills: [],
     })
     expect(saveReviewItems).toHaveBeenCalled()
   })
 
   it("persists chat search preferences on flush", async () => {
     setProjectPath("/proj/A")
-    useChatStore.setState({ useWebSearch: true, useAnyTxtSearch: true, agentMode: "local_first" })
+    useChatStore.setState({
+      useWebSearch: true,
+      useAnyTxtSearch: true,
+      agentMode: "local_first",
+      selectedSkills: ["reviewer"],
+      disabledSkills: [],
+    })
 
     await flushAndSuspendAutoSave()
 
@@ -163,6 +166,8 @@ describe("auto-save project-switch guard", () => {
       useWebSearch: true,
       useAnyTxtSearch: true,
       agentMode: "local_first",
+      selectedSkills: ["reviewer"],
+      disabledSkills: [],
     })
   })
 })

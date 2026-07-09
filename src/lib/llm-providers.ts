@@ -119,6 +119,25 @@ export function localLlmOriginHeader(): Record<string, string> {
   return { Origin: "http://localhost" }
 }
 
+export function isLocalOrPrivateHttpEndpoint(endpoint: string): boolean {
+  try {
+    const url = new URL(endpoint)
+    const host = url.hostname.toLowerCase()
+    if (host === "localhost" || host.endsWith(".localhost")) return true
+    if (host === "127.0.0.1" || host === "::1" || host === "[::1]") return true
+    if (/^10\./.test(host)) return true
+    if (/^192\.168\./.test(host)) return true
+    const m = host.match(/^172\.(\d+)\./)
+    if (m) {
+      const second = Number(m[1])
+      if (second >= 16 && second <= 31) return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
 function parseOpenAiLine(line: string): string | null {
   // Accept both `data: {...}` (standard SSE, space after colon) and
   // `data:{...}` (some third-party gateways, e.g. Kimi Coding Plan, omit
@@ -273,6 +292,10 @@ function isDeepSeekEndpoint(config: LlmConfig): boolean {
   return /deepseek/i.test(config.model) || /deepseek/i.test(config.customEndpoint)
 }
 
+function supportsDeepSeekThinkingParam(config: LlmConfig): boolean {
+  return /deepseek[-_]?v4/i.test(config.model)
+}
+
 function isQwenThinkingModel(model: string): boolean {
   return /qwen[-_]?3/i.test(model)
 }
@@ -409,12 +432,14 @@ function buildOpenAiCompatibleBody(
     // important path for ingestion/rewrite tasks: it prevents the model
     // from spending the whole response on `reasoning_content` with no
     // final `content`.
-    if (reasoning.mode === "off") {
-      body.thinking = { type: "disabled" }
-    } else if (reasoning.mode !== "auto") {
-      body.thinking = { type: "enabled" }
-      if (reasoning.mode === "high" || reasoning.mode === "max") {
-        body.reasoning_effort = reasoning.mode
+    if (supportsDeepSeekThinkingParam(config)) {
+      if (reasoning.mode === "off") {
+        body.thinking = { type: "disabled" }
+      } else if (reasoning.mode !== "auto") {
+        body.thinking = { type: "enabled" }
+        if (reasoning.mode === "high" || reasoning.mode === "max") {
+          body.reasoning_effort = reasoning.mode
+        }
       }
     }
     return body
@@ -513,6 +538,10 @@ function flattenAnthropicSystem(content: string | ContentBlock[]): string {
  * the (large, stable) system prompt across requests. Returns undefined
  * for an empty system prompt so we omit the field entirely rather than
  * sending an empty cache breakpoint.
+ *
+ * Anthropic Messages wire only. OpenAI/Gemini-compatible providers
+ * use different system-prompt shapes and do not understand this
+ * cache_control marker.
  */
 function buildAnthropicSystem(systemText: string): unknown[] | undefined {
   if (!systemText) return undefined
@@ -864,10 +893,13 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       return {
         url,
         headers: buildAnthropicHeaders(apiKey, url),
-        buildBody: (messages, overrides) => ({
-          ...buildAnthropicBodyWithReasoning(config, messages, overrides),
-          model,
-        }),
+        buildBody: (messages, overrides) => {
+          assertMiniMaxImageSupport(url, model, messages)
+          return {
+            ...buildAnthropicBodyWithReasoning(config, messages, overrides),
+            model,
+          }
+        },
         parseStream: parseAnthropicLine,
       }
     }
@@ -1028,11 +1060,11 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
               ? { "api-key": apiKey }
               : { Authorization: `Bearer ${apiKey}` }
             : {}),
-          // Local OpenAI-compatible servers (LM Studio, llama.cpp,
-          // vLLM, LocalAI) often share Ollama's CORS sensitivity.
-          // Same rationale as the `ollama` branch above. Azure
-          // endpoints don't need the local-LLM CORS headers.
-          ...(azureAuthStyle ? {} : localLlmOriginHeader()),
+          // Only local/LAN OpenAI-compatible servers (LM Studio,
+          // llama.cpp, vLLM, LocalAI) need the Ollama-style Origin
+          // workaround. Public custom gateways may reject unexpected
+          // browser Origin headers, so leave them untouched.
+          ...(!azureAuthStyle && isLocalOrPrivateHttpEndpoint(url) ? localLlmOriginHeader() : {}),
         },
         buildBody: (messages, overrides) => {
           const body = buildOpenAiCompatibleBody(config, messages, overrides)

@@ -1,12 +1,25 @@
 import JSZip from "jszip"
 import type { MineruConfig } from "@/stores/wiki-store"
-import { getFileSize, readFileAsBase64 } from "@/commands/fs"
+import { createDirectory, getFileSize, readFileAsBase64, writeFileBase64 } from "@/commands/fs"
 import { getHttpFetch } from "@/lib/tauri-fetch"
+import { getFileName, normalizePath } from "@/lib/path-utils"
+import type { SavedImage } from "@/lib/extract-source-images"
 
 const API_BASE = "https://mineru.net/api/v4"
 const POLL_INTERVAL_MS = 3_000
 const POLL_TIMEOUT_MS = 300_000 // 5 minutes
 const MAX_ACCURATE_PARSE_BYTES = 200 * 1024 * 1024
+const MINERU_IMAGE_EXTS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "svg",
+  "tif",
+  "tiff",
+])
 
 // ── Types ──
 
@@ -51,6 +64,16 @@ interface UploadUrlResponse {
     file_urls: string[]
   }
   msg: string
+}
+
+interface MineruAssetOptions {
+  projectPath: string
+  sourceSummarySlug: string
+}
+
+interface MineruExtractedMarkdown {
+  markdown: string
+  savedImages: SavedImage[]
 }
 
 // ── API calls ──
@@ -108,6 +131,246 @@ function bytesToUploadBody(bytes: Uint8Array): ArrayBuffer {
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,
   ) as ArrayBuffer
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ""
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
+async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytesToUploadBody(bytes))
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+function mineruImageMimeType(path: string): string {
+  const ext = getFileName(path).split(".").pop()?.toLowerCase() ?? ""
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg"
+    case "png":
+      return "image/png"
+    case "gif":
+      return "image/gif"
+    case "webp":
+      return "image/webp"
+    case "bmp":
+      return "image/bmp"
+    case "svg":
+      return "image/svg+xml"
+    case "tif":
+    case "tiff":
+      return "image/tiff"
+    default:
+      return "application/octet-stream"
+  }
+}
+
+function safeMineruAssetSegment(segment: string): string {
+  const decoded = (() => {
+    try {
+      return decodeURIComponent(segment)
+    } catch {
+      return segment
+    }
+  })()
+  const cleaned = decoded
+    .replace(/[<>:"|?*\x00-\x1f]/g, "_")
+    .replace(/[\\/]+/g, "_")
+    .replace(/^\.+$/, "_")
+    .replace(/[. ]+$/g, "_")
+  if (!cleaned) return "asset"
+  if (cleaned.length <= 80) return cleaned
+
+  const dot = cleaned.lastIndexOf(".")
+  if (dot > 0 && dot < cleaned.length - 1) {
+    const ext = cleaned.slice(dot).slice(0, 16)
+    return `${cleaned.slice(0, Math.max(1, 80 - ext.length))}${ext}`
+  }
+  return cleaned.slice(0, 80)
+}
+
+function normalizeMineruZipPath(path: string): string {
+  return normalizePath(path)
+    .replace(/^\.\/+/, "")
+    .split("/")
+    .filter((part) => part && part !== "." && part !== "..")
+    .join("/")
+}
+
+function decodeMineruPath(path: string): string {
+  try {
+    return decodeURIComponent(path)
+  } catch {
+    return path
+  }
+}
+
+function isMineruImagePath(path: string): boolean {
+  const ext = getFileName(path).split(".").pop()?.toLowerCase() ?? ""
+  return MINERU_IMAGE_EXTS.has(ext)
+}
+
+function mineruAssetRelPath(sourceSummarySlug: string, zipPath: string): string {
+  const safeParts = normalizeMineruZipPath(zipPath)
+    .split("/")
+    .map(safeMineruAssetSegment)
+    .filter(Boolean)
+  const safePath = safeParts.length > 0 ? safeParts.join("/") : "image.png"
+  return `media/${sourceSummarySlug}/mineru/${safePath}`
+}
+
+function isExternalOrDataUrl(url: string): boolean {
+  return /^(https?:|data:|blob:|file:|tauri:|asset:)/i.test(url)
+}
+
+function decodeHtmlEntities(text: string): string {
+  const safeCodePoint = (raw: string, radix: 10 | 16): string => {
+    const n = Number.parseInt(raw, radix)
+    if (!Number.isFinite(n) || n < 0 || n > 0x10ffff) return radix === 16 ? `&#x${raw};` : `&#${raw};`
+    try {
+      return String.fromCodePoint(n)
+    } catch {
+      return radix === 16 ? `&#x${raw};` : `&#${raw};`
+    }
+  }
+
+  return text
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_m, code: string) => safeCodePoint(code, 10))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, code: string) => safeCodePoint(code, 16))
+}
+
+function htmlImgTagsToMarkdown(html: string): string {
+  return html.replace(/<img\b[^>]*\bsrc=(["'])([^"']+)\1[^>]*>/gi, (full, _quote: string, src: string) => {
+    const alt = full.match(/\balt=(["'])([^"']*)\1/i)?.[2] ?? ""
+    return `![${alt}](${src})`
+  })
+}
+
+function htmlCellToMarkdown(cell: string): string {
+  return decodeHtmlEntities(
+    htmlImgTagsToMarkdown(cell)
+      .replace(/<br\s*\/?>/gi, "<br>")
+      .replace(/<\/p\s*>/gi, "<br>")
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s*<br>\s*/gi, "<br>")
+      .replace(/\s+/g, " ")
+      .trim(),
+  ).replace(/\|/g, "\\|")
+}
+
+function convertHtmlTablesInSegment(segment: string): string {
+  return segment.replace(/<table\b[\s\S]*?<\/table>/gi, (tableHtml) => {
+    const rows: string[][] = []
+    for (const rowMatch of tableHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+      const rowHtml = rowMatch[1] ?? ""
+      const cells: string[] = []
+      for (const cellMatch of rowHtml.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)) {
+        cells.push(htmlCellToMarkdown(cellMatch[1] ?? ""))
+      }
+      if (cells.length > 0) rows.push(cells)
+    }
+    if (rows.length === 0) return tableHtml
+
+    const width = Math.max(...rows.map((row) => row.length))
+    const padded = rows.map((row) => {
+      const out = [...row]
+      while (out.length < width) out.push("")
+      return out
+    })
+    const header = padded[0]
+    const separator = Array.from({ length: width }, () => "---")
+    const body = padded.slice(1)
+    return [
+      "",
+      `| ${header.join(" | ")} |`,
+      `| ${separator.join(" | ")} |`,
+      ...body.map((row) => `| ${row.join(" | ")} |`),
+      "",
+    ].join("\n")
+  })
+}
+
+function convertHtmlTablesToMarkdown(markdown: string): string {
+  return markdown
+    .split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g)
+    .map((segment) => (
+      segment.startsWith("```") || segment.startsWith("~~~")
+        ? segment
+        : convertHtmlTablesInSegment(segment)
+    ))
+    .join("")
+}
+
+function encodeMarkdownImageUrl(relPath: string): string {
+  return relPath
+    .split("/")
+    .map((part) =>
+      encodeURIComponent(part).replace(/[!'()*]/g, (char) =>
+        `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+      ),
+    )
+    .join("/")
+}
+
+function rewriteMineruMarkdownImages(markdown: string, pathMap: Map<string, string>): string {
+  const lookup = (rawUrl: string): string | null => {
+    if (!rawUrl || isExternalOrDataUrl(rawUrl)) return null
+    const cleaned = normalizeMineruZipPath(rawUrl.split("#")[0])
+    if (!cleaned) return null
+    const decoded = decodeMineruPath(cleaned)
+    return pathMap.get(cleaned) ?? pathMap.get(decoded) ?? pathMap.get(getFileName(decoded)) ?? null
+  }
+
+  const withMarkdownImages = markdown.replace(
+    /!\[([^\]]*)]\(((?:[^()]|\([^()]*\))*)\)/g,
+    (full, alt: string, target: string) => {
+      const trimmed = target.trim()
+      const candidates: Array<{ url: string; suffix: string }> = []
+      if (trimmed.startsWith("<") && trimmed.includes(">")) {
+        const end = trimmed.indexOf(">")
+        candidates.push({ url: trimmed.slice(1, end), suffix: trimmed.slice(end + 1) })
+      } else {
+        const titleMatch = trimmed.match(/^([\s\S]+?)(\s+["'][^"']*["']\s*)$/)
+        if (titleMatch) candidates.push({ url: titleMatch[1].trim(), suffix: titleMatch[2] })
+        candidates.push({ url: trimmed, suffix: "" })
+        const tokenMatch = trimmed.match(/^(\S+)([\s\S]*)$/)
+        if (tokenMatch) candidates.push({ url: tokenMatch[1], suffix: tokenMatch[2] })
+      }
+
+      for (const candidate of candidates) {
+        const rel = lookup(candidate.url)
+        if (!rel) continue
+        const rewrittenTarget = `${encodeMarkdownImageUrl(rel)}${candidate.suffix}`
+        return `![${alt}](${rewrittenTarget})`
+      }
+      return full
+    },
+  )
+
+  return withMarkdownImages.replace(
+    /<img\b[^>]*\bsrc=(["'])([^"']+)\1[^>]*>/gi,
+    (full, _quote: string, src: string) => {
+      const rel = lookup(src)
+      if (!rel) return full
+      const alt = full.match(/\balt=(["'])([^"']*)\1/i)?.[2] ?? ""
+      return `![${alt}](${encodeMarkdownImageUrl(rel)})`
+    },
+  )
 }
 
 async function submitUrlTask(
@@ -254,7 +517,63 @@ async function pollBatchTask(
   throw new Error("MinerU parsing timed out after 5 minutes")
 }
 
-async function downloadAndExtractMarkdown(zipUrl: string, signal?: AbortSignal): Promise<string> {
+async function saveMineruZipImages(
+  zip: JSZip,
+  options: MineruAssetOptions,
+  signal?: AbortSignal,
+): Promise<{ pathMap: Map<string, string>; savedImages: SavedImage[] }> {
+  const pp = normalizePath(options.projectPath)
+  const rootDir = `${pp}/wiki/media/${options.sourceSummarySlug}/mineru`
+  const pathMap = new Map<string, string>()
+  const savedImages: SavedImage[] = []
+  const imageEntries: Array<[string, JSZip.JSZipObject]> = []
+  const basenameCounts = new Map<string, number>()
+
+  zip.forEach((relativePath, file) => {
+    const normalized = normalizeMineruZipPath(relativePath)
+    if (!file.dir && normalized && isMineruImagePath(normalized)) {
+      imageEntries.push([normalized, file])
+      const basename = getFileName(normalized)
+      basenameCounts.set(basename, (basenameCounts.get(basename) ?? 0) + 1)
+    }
+  })
+
+  if (imageEntries.length === 0) return { pathMap, savedImages }
+
+  await createDirectory(rootDir)
+  for (const [zipPath, file] of imageEntries) {
+    throwIfAborted(signal)
+    const relPath = mineruAssetRelPath(options.sourceSummarySlug, zipPath)
+    const absPath = `${pp}/wiki/${relPath}`
+    const bytes = await file.async("uint8array")
+    await writeFileBase64(absPath, bytesToBase64(bytes))
+    pathMap.set(zipPath, relPath)
+    pathMap.set(decodeMineruPath(zipPath), relPath)
+    const basename = getFileName(zipPath)
+    if (basenameCounts.get(basename) === 1) {
+      pathMap.set(basename, relPath)
+      pathMap.set(decodeMineruPath(basename), relPath)
+    }
+    savedImages.push({
+      index: savedImages.length + 1,
+      mimeType: mineruImageMimeType(relPath),
+      page: null,
+      width: 0,
+      height: 0,
+      relPath,
+      absPath,
+      sha256: await sha256OfBytes(bytes),
+    })
+  }
+
+  return { pathMap, savedImages }
+}
+
+async function downloadAndExtractMarkdown(
+  zipUrl: string,
+  signal?: AbortSignal,
+  assetOptions?: MineruAssetOptions,
+): Promise<MineruExtractedMarkdown> {
   const httpFetch = await getHttpFetch()
   throwIfAborted(signal)
   const res = await httpFetch(zipUrl, { signal })
@@ -280,7 +599,26 @@ async function downloadAndExtractMarkdown(zipUrl: string, signal?: AbortSignal):
   const fullMd = mdEntries.find(([relativePath]) =>
     relativePath.split("/").pop()?.toLowerCase() === "full.md"
   )
-  return await (fullMd ?? mdEntries[0])[1].async("string")
+  const markdown = await (fullMd ?? mdEntries[0])[1].async("string")
+  const markdownWithTables = convertHtmlTablesToMarkdown(markdown)
+  if (!assetOptions) return { markdown: markdownWithTables, savedImages: [] }
+
+  try {
+    const { pathMap, savedImages } = await saveMineruZipImages(zip, assetOptions, signal)
+    return {
+      markdown: pathMap.size > 0
+      ? rewriteMineruMarkdownImages(markdownWithTables, pathMap)
+      : markdownWithTables,
+      savedImages,
+    }
+  } catch (err) {
+    if (signal?.aborted) throw err
+    console.warn(
+      "[MinerU] failed to save extracted images; keeping parsed Markdown text:",
+      err instanceof Error ? err.message : err,
+    )
+    return { markdown: markdownWithTables, savedImages: [] }
+  }
 }
 
 // ── Public API ──
@@ -300,7 +638,19 @@ export async function parseWithMineru(
   sourceUrl?: string,
   onProgress?: (msg: string) => void,
   signal?: AbortSignal,
+  assetOptions?: MineruAssetOptions,
 ): Promise<string> {
+  return (await parseWithMineruResult(config, sourcePath, sourceUrl, onProgress, signal, assetOptions)).markdown
+}
+
+export async function parseWithMineruResult(
+  config: MineruConfig,
+  sourcePath: string,
+  sourceUrl?: string,
+  onProgress?: (msg: string) => void,
+  signal?: AbortSignal,
+  assetOptions?: MineruAssetOptions,
+): Promise<MineruExtractedMarkdown> {
   throwIfAborted(signal)
   if (!config.token) throw new Error("MinerU API token not configured")
   if (config.modelVersion !== "pipeline" && config.modelVersion !== "vlm") {
@@ -339,10 +689,10 @@ export async function parseWithMineru(
   }
 
   onProgress?.("Downloading parsed result...")
-  const markdown = await downloadAndExtractMarkdown(zipUrl, signal)
+  const result = await downloadAndExtractMarkdown(zipUrl, signal, assetOptions)
   onProgress?.("Done")
 
-  return markdown
+  return result
 }
 
 /**
@@ -371,8 +721,15 @@ export async function testMineruConnection(token: string): Promise<void> {
 
 // Test-only hooks for MinerU's browser/Tauri boundary helpers.
 export const __mineruTest = {
-  downloadAndExtractMarkdown,
+  downloadAndExtractMarkdown: async (
+    zipUrl: string,
+    signal?: AbortSignal,
+    assetOptions?: MineruAssetOptions,
+  ) => (await downloadAndExtractMarkdown(zipUrl, signal, assetOptions)).markdown,
+  downloadAndExtractMarkdownResult: downloadAndExtractMarkdown,
   mineruApiErrorMessage,
   decodeBase64ToBytes,
+  rewriteMineruMarkdownImages,
+  convertHtmlTablesToMarkdown,
   MAX_ACCURATE_PARSE_BYTES,
 }

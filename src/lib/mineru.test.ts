@@ -8,16 +8,20 @@ vi.mock("@/lib/tauri-fetch", () => ({
 }))
 
 const fsMocks = vi.hoisted(() => ({
+  createDirectory: vi.fn<() => Promise<void>>(),
   getFileSize: vi.fn<() => Promise<number>>(),
   readFileAsBase64: vi.fn<() => Promise<{ base64: string; mimeType: string }>>(),
+  writeFileBase64: vi.fn<() => Promise<void>>(),
 }))
 
 vi.mock("@/commands/fs", () => ({
+  createDirectory: fsMocks.createDirectory,
   getFileSize: fsMocks.getFileSize,
   readFileAsBase64: fsMocks.readFileAsBase64,
+  writeFileBase64: fsMocks.writeFileBase64,
 }))
 
-import { __mineruTest, parseWithMineru, testMineruConnection } from "./mineru"
+import { __mineruTest, parseWithMineru, parseWithMineruResult, testMineruConnection } from "./mineru"
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -42,13 +46,17 @@ async function zipResponse(files: Record<string, string>): Promise<Response> {
 
 beforeEach(() => {
   mockHttpFetch.mockReset()
+  fsMocks.createDirectory.mockReset()
   fsMocks.getFileSize.mockReset()
   fsMocks.readFileAsBase64.mockReset()
+  fsMocks.writeFileBase64.mockReset()
+  fsMocks.createDirectory.mockResolvedValue(undefined)
   fsMocks.getFileSize.mockResolvedValue(1024)
   fsMocks.readFileAsBase64.mockResolvedValue({
     base64: btoa("pdf bytes"),
     mimeType: "application/pdf",
   })
+  fsMocks.writeFileBase64.mockResolvedValue(undefined)
 })
 
 describe("MinerU API helpers", () => {
@@ -87,6 +95,257 @@ describe("MinerU API helpers", () => {
 
     await expect(__mineruTest.downloadAndExtractMarkdown("https://cdn/result.zip"))
       .rejects.toThrow("No Markdown file")
+  })
+
+  it("converts MinerU HTML tables inside full.md to Markdown tables", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": [
+        "# Parsed",
+        "<table>",
+        "<tr><th>Name</th><th>Value</th></tr>",
+        "<tr><td>A&amp;B</td><td>1|2</td></tr>",
+        "</table>",
+      ].join("\n"),
+    }))
+
+    await expect(__mineruTest.downloadAndExtractMarkdown("https://cdn/result.zip"))
+      .resolves.toContain("| Name | Value |\n| --- | --- |\n| A&B | 1\\|2 |")
+  })
+
+  it("keeps malformed numeric HTML entities from crashing table conversion", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": [
+        "<table>",
+        "<tr><td>&#65;</td><td>&#9999999999;</td><td>&#x41;</td><td>&#xFFFFFFF;</td></tr>",
+        "</table>",
+      ].join("\n"),
+    }))
+
+    await expect(__mineruTest.downloadAndExtractMarkdown("https://cdn/result.zip"))
+      .resolves.toContain("| A | &#9999999999; | A | &#xFFFFFFF; |")
+  })
+
+  it("does not convert HTML tables inside fenced code blocks", async () => {
+    const code = [
+      "```html",
+      "<table><tr><td>Keep raw</td></tr></table>",
+      "```",
+    ].join("\n")
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": `${code}\n\n<table><tr><td>Convert me</td></tr></table>`,
+    }))
+
+    const markdown = await __mineruTest.downloadAndExtractMarkdown("https://cdn/result.zip")
+
+    expect(markdown).toContain(code)
+    expect(markdown).toContain("| Convert me |")
+  })
+
+  it("preserves and rewrites images inside MinerU HTML table cells", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": [
+        "<table>",
+        "<tr><th>Figure</th><th>Note</th></tr>",
+        "<tr><td><img src=\"images/chart.png\" alt=\"Chart\"></td><td>A</td></tr>",
+        "</table>",
+      ].join("\n"),
+      "images/chart.png": "chart-bytes",
+    }))
+
+    const markdown = await __mineruTest.downloadAndExtractMarkdown(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(markdown).toContain("| ![Chart](media/paper/mineru/images/chart.png) | A |")
+  })
+
+  it("extracts MinerU zip images and rewrites Markdown image references", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": [
+        "# Parsed",
+        "![Chart](images/chart.png)",
+        "<img src=\"figures/table 1.jpg\" alt=\"Table\">",
+        "![Remote](https://example.test/x.png)",
+      ].join("\n"),
+      "images/chart.png": "chart-bytes",
+      "figures/table 1.jpg": "table-bytes",
+    }))
+
+    const markdown = await __mineruTest.downloadAndExtractMarkdown(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(fsMocks.createDirectory).toHaveBeenCalledWith("/project/wiki/media/paper/mineru")
+    expect(fsMocks.writeFileBase64).toHaveBeenCalledWith(
+      "/project/wiki/media/paper/mineru/images/chart.png",
+      btoa("chart-bytes"),
+    )
+    expect(fsMocks.writeFileBase64).toHaveBeenCalledWith(
+      "/project/wiki/media/paper/mineru/figures/table 1.jpg",
+      btoa("table-bytes"),
+    )
+    expect(markdown).toContain("![Chart](media/paper/mineru/images/chart.png)")
+    expect(markdown).toContain("![Table](media/paper/mineru/figures/table%201.jpg)")
+    expect(markdown).toContain("![Remote](https://example.test/x.png)")
+  })
+
+  it("returns SavedImage metadata for MinerU zip images", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": "![Chart](images/chart.png)",
+      "images/chart.png": "chart-bytes",
+    }))
+
+    const result = await __mineruTest.downloadAndExtractMarkdownResult(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(result.markdown).toBe("![Chart](media/paper/mineru/images/chart.png)")
+    expect(result.savedImages).toHaveLength(1)
+    expect(result.savedImages[0]).toMatchObject({
+      index: 1,
+      mimeType: "image/png",
+      page: null,
+      width: 0,
+      height: 0,
+      relPath: "media/paper/mineru/images/chart.png",
+      absPath: "/project/wiki/media/paper/mineru/images/chart.png",
+    })
+    expect(result.savedImages[0].sha256).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it("rewrites Markdown image paths containing spaces", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": "![Wide chart](images/wide chart.png)",
+      "images/wide chart.png": "chart-bytes",
+    }))
+
+    const markdown = await __mineruTest.downloadAndExtractMarkdown(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(markdown).toBe("![Wide chart](media/paper/mineru/images/wide%20chart.png)")
+  })
+
+  it("rewrites image filenames containing parentheses into balanced encoded links", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": "![Chart](images/chart(1).png)",
+      "images/chart(1).png": "chart-bytes",
+    }))
+
+    const markdown = await __mineruTest.downloadAndExtractMarkdown(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(markdown).toBe("![Chart](media/paper/mineru/images/chart%281%29.png)")
+  })
+
+  it("writes large extracted images with exact base64 content", async () => {
+    const bytes = "x".repeat(40_000)
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": "![Large](images/large.png)",
+      "images/large.png": bytes,
+    }))
+
+    await __mineruTest.downloadAndExtractMarkdown(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(fsMocks.writeFileBase64).toHaveBeenCalledWith(
+      "/project/wiki/media/paper/mineru/images/large.png",
+      btoa(bytes),
+    )
+  })
+
+  it("rewrites image links by basename when MinerU Markdown omits image directories", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "result/full.md": "![Chart](chart.png)",
+      "result/images/chart.png": "chart-bytes",
+    }))
+
+    const markdown = await __mineruTest.downloadAndExtractMarkdown(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(markdown).toBe("![Chart](media/paper/mineru/result/images/chart.png)")
+  })
+
+  it("keeps extracted zip paths inside the MinerU media directory", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": "![Evil](evil.png)",
+      "../../evil.png": "evil-bytes",
+    }))
+
+    const markdown = await __mineruTest.downloadAndExtractMarkdown(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(fsMocks.writeFileBase64).toHaveBeenCalledWith(
+      "/project/wiki/media/paper/mineru/evil.png",
+      btoa("evil-bytes"),
+    )
+    expect(markdown).toBe("![Evil](media/paper/mineru/evil.png)")
+  })
+
+  it("does not use basename fallback when zip image basenames collide", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": "![Ambiguous](chart.png)\n![A](a/chart.png)",
+      "a/chart.png": "a-bytes",
+      "b/chart.png": "b-bytes",
+    }))
+
+    const markdown = await __mineruTest.downloadAndExtractMarkdown(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(markdown).toContain("![Ambiguous](chart.png)")
+    expect(markdown).toContain("![A](media/paper/mineru/a/chart.png)")
+  })
+
+  it("keeps parsed Markdown when extracted image saving fails", async () => {
+    fsMocks.writeFileBase64.mockRejectedValueOnce(new Error("disk full"))
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": "![Chart](images/chart.png)\nBody",
+      "images/chart.png": "chart-bytes",
+    }))
+
+    await expect(__mineruTest.downloadAndExtractMarkdown(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )).resolves.toBe("![Chart](images/chart.png)\nBody")
+  })
+
+  it("leaves external HTML image tags untouched", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": "<img src=\"https://example.test/x.png\" alt=\"Remote\">",
+      "images/local.png": "local-bytes",
+    }))
+
+    const markdown = await __mineruTest.downloadAndExtractMarkdown(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(markdown).toBe("<img src=\"https://example.test/x.png\" alt=\"Remote\">")
   })
 })
 
@@ -173,6 +432,78 @@ describe("parseWithMineru", () => {
     const uploadBody = mockHttpFetch.mock.calls[1]?.[1]?.body
     expect(uploadBody).toBeInstanceOf(ArrayBuffer)
     expect(new TextDecoder().decode(uploadBody as ArrayBuffer)).toBe("custom pdf bytes")
+  })
+
+  it("passes asset options through local MinerU parsing so images can be saved", async () => {
+    mockHttpFetch
+      .mockResolvedValueOnce(jsonResponse({
+        code: 0,
+        msg: "ok",
+        data: { batch_id: "batch-1", file_urls: ["https://upload"] },
+      }))
+      .mockResolvedValueOnce(new Response("", { status: 200 }))
+      .mockResolvedValueOnce(jsonResponse({
+        code: 0,
+        msg: "ok",
+        data: {
+          batch_id: "batch-1",
+          extract_result: [{ file_name: "doc.pdf", state: "done", full_zip_url: "https://zip" }],
+        },
+      }))
+      .mockResolvedValueOnce(await zipResponse({
+        "full.md": "![Chart](images/chart.png)",
+        "images/chart.png": "chart-bytes",
+      }))
+
+    await expect(parseWithMineru({
+      enabled: true,
+      token: "token",
+      modelVersion: "vlm",
+    }, "/tmp/doc.pdf", undefined, undefined, undefined, {
+      projectPath: "/project",
+      sourceSummarySlug: "doc",
+    })).resolves.toBe("![Chart](media/doc/mineru/images/chart.png)")
+
+    expect(fsMocks.writeFileBase64).toHaveBeenCalledWith(
+      "/project/wiki/media/doc/mineru/images/chart.png",
+      btoa("chart-bytes"),
+    )
+  })
+
+  it("returns saved MinerU images from local parsing result", async () => {
+    mockHttpFetch
+      .mockResolvedValueOnce(jsonResponse({
+        code: 0,
+        msg: "ok",
+        data: { batch_id: "batch-1", file_urls: ["https://upload"] },
+      }))
+      .mockResolvedValueOnce(new Response("", { status: 200 }))
+      .mockResolvedValueOnce(jsonResponse({
+        code: 0,
+        msg: "ok",
+        data: {
+          batch_id: "batch-1",
+          extract_result: [{ file_name: "doc.pdf", state: "done", full_zip_url: "https://zip" }],
+        },
+      }))
+      .mockResolvedValueOnce(await zipResponse({
+        "full.md": "![Chart](images/chart.png)",
+        "images/chart.png": "chart-bytes",
+      }))
+
+    const result = await parseWithMineruResult({
+      enabled: true,
+      token: "token",
+      modelVersion: "vlm",
+    }, "/tmp/doc.pdf", undefined, undefined, undefined, {
+      projectPath: "/project",
+      sourceSummarySlug: "doc",
+    })
+
+    expect(result.markdown).toBe("![Chart](media/doc/mineru/images/chart.png)")
+    expect(result.savedImages.map((image) => image.relPath)).toEqual([
+      "media/doc/mineru/images/chart.png",
+    ])
   })
 
   it("submits URL tasks without reading or uploading a local file", async () => {

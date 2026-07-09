@@ -138,6 +138,9 @@ function PresetRow({
   const azureModelFamily = ov.azureModelFamily ?? preset.azureModelFamily ?? "auto"
   const context = ov.maxContextSize ?? preset.suggestedContextSize ?? 131072
   const reasoning = ov.reasoning ?? { mode: "auto" as const }
+  const localCliIsolation = ov.localCliIsolation === true
+  const codexCliTimeoutMinutes = Math.max(1, Math.min(240, ov.codexCliTimeoutMinutes ?? 10))
+  const isLocalCliProvider = preset.provider === "claude-code" || preset.provider === "codex-cli"
   const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
   const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily
   // Local CLI providers authenticate via their own existing login state
@@ -319,6 +322,76 @@ function PresetRow({
 
           {preset.provider === "claude-code" && <ClaudeCliStatusPill />}
           {preset.provider === "codex-cli" && <CodexCliStatusPill />}
+
+          {isLocalCliProvider && (
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">
+                    {t("settings.sections.llm.localCliIsolation")}
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("settings.sections.llm.localCliIsolationHint")}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onChange({ localCliIsolation: !localCliIsolation })}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+                    localCliIsolation
+                      ? "border-primary bg-primary"
+                      : "border-muted-foreground/30 bg-muted-foreground/20 hover:bg-muted-foreground/30"
+                  }`}
+                  title={
+                    localCliIsolation
+                      ? t("settings.sections.llm.localCliIsolationOn")
+                      : t("settings.sections.llm.localCliIsolationOff")
+                  }
+                  aria-label={t("settings.sections.llm.localCliIsolation")}
+                >
+                  <span
+                    className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-transform ${
+                      localCliIsolation ? "translate-x-4" : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
+              </div>
+              <div className="rounded-md bg-muted/50 px-2 py-1.5 text-xs text-muted-foreground">
+                {localCliIsolation
+                  ? t("settings.sections.llm.localCliIsolationOn")
+                  : t("settings.sections.llm.localCliIsolationOff")}
+              </div>
+            </div>
+          )}
+
+          {preset.provider === "codex-cli" && (
+            <div className="space-y-2 rounded-md border p-3">
+              <Label>{t("settings.sections.llm.codexCliTimeout")}</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={240}
+                  className="w-28"
+                  value={codexCliTimeoutMinutes}
+                  onChange={(e) => {
+                    const n = Number(e.target.value)
+                    onChange({
+                      codexCliTimeoutMinutes: Number.isFinite(n)
+                        ? Math.max(1, Math.min(240, Math.floor(n)))
+                        : undefined,
+                    })
+                  }}
+                />
+                <span className="text-xs text-muted-foreground">
+                  {t("settings.sections.llm.codexCliTimeoutUnit")}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sections.llm.codexCliTimeoutHint")}
+              </p>
+            </div>
+          )}
 
           {needsApiKey && (
             <div className="space-y-2">

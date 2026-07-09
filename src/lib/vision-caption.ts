@@ -159,6 +159,10 @@ export async function captionImage(
   signal?: AbortSignal,
   options?: CaptionOptions,
 ): Promise<string> {
+  if (llmConfig.provider === "codex-cli") {
+    throw new Error("Codex CLI transport does not support image input for captioning yet.")
+  }
+
   // Pick the context-aware prompt iff EITHER side has non-trivial
   // content. Whitespace-only context is treated as "no context" so a
   // caller passing untrimmed slices doesn't accidentally upgrade to
@@ -198,6 +202,12 @@ export async function captionImage(
     {
       temperature: options?.temperature ?? 0,
       max_tokens: options?.maxTokens ?? 4096,
+      // Captioning is a short factual vision task. If the main LLM is
+      // configured as a reasoning model, inheriting that setting here
+      // often burns the small caption budget on thinking and produces
+      // no usable alt text. Disable reasoning for caption calls unless
+      // this helper grows an explicit caption-reasoning option.
+      reasoning: { mode: "off" },
     },
   )
 

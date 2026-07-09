@@ -19,6 +19,7 @@ export interface SettingsDraft {
   maxContextSize: number
   apiMode: CustomApiMode | undefined
   reasoning: ReasoningConfig | undefined
+  localCliIsolation: boolean
 
   // Embedding
   embeddingEnabled: boolean
@@ -67,6 +68,11 @@ export interface SettingsDraft {
   uiLanguage: string
   /** Interface zoom level as a decimal (1 = 100%). Persisted globally. */
   zoomLevel: number
+  theme: "light" | "dark" | "system"
+
+  // General app behavior
+  autostart: boolean
+  closeBehavior: CloseBehavior
 
   // Source folder auto watch
   sourceWatchConfig: SourceWatchConfig
@@ -79,12 +85,9 @@ export interface SettingsDraft {
   // Local HTTP API server
   apiEnabled: boolean
   apiAllowUnauthenticated: boolean
+  apiAllowLanAccess: boolean
   apiMcpEnabled: boolean
   apiToken: string
-
-  // General app behavior (launch-at-startup + window-close behavior)
-  autostart: boolean
-  closeBehavior: CloseBehavior
 }
 
 export type DraftSetter = <K extends keyof SettingsDraft>(

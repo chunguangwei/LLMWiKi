@@ -61,25 +61,65 @@ describe("resolveMarkdownImageSrc", () => {
     ).toBe("tauri-asset:/Users/me/MyWiki/wiki/entities/transformer/diagram.png")
   })
 
-  it("treats an absolute POSIX path as a literal filesystem path", () => {
-    // Some user content may legitimately reference an image outside
-    // the wiki root (a system-wide asset, a mounted drive). Don't
-    // re-anchor — just convert.
+  it("converts an absolute POSIX path only when it stays inside the project", () => {
     expect(
-      resolveMarkdownImageSrc("/var/data/screenshot.png", PROJECT),
-    ).toBe("tauri-asset:/var/data/screenshot.png")
+      resolveMarkdownImageSrc("/Users/me/MyWiki/raw/assets/screenshot.png", PROJECT),
+    ).toBe("tauri-asset:/Users/me/MyWiki/raw/assets/screenshot.png")
   })
 
-  it("treats a Windows drive-letter path as absolute", () => {
+  it("decodes percent-encoded CJK in absolute in-project paths", () => {
     expect(
-      resolveMarkdownImageSrc("C:/Users/me/Pictures/x.png", PROJECT),
-    ).toBe("tauri-asset:C:/Users/me/Pictures/x.png")
+      resolveMarkdownImageSrc(
+        "/Users/me/MyWiki/wiki/media/%E4%B8%AD%E6%96%87/x.png",
+        PROJECT,
+      ),
+    ).toBe("tauri-asset:/Users/me/MyWiki/wiki/media/中文/x.png")
   })
 
-  it("treats a UNC path as absolute", () => {
+  it("decodes percent-encoded CJK when the project path itself contains CJK", () => {
+    expect(
+      resolveMarkdownImageSrc(
+        "/Users/me/%E6%88%91%E7%9A%84Wiki/wiki/media/x.png",
+        "/Users/me/我的Wiki",
+      ),
+    ).toBe("tauri-asset:/Users/me/我的Wiki/wiki/media/x.png")
+  })
+
+  it("does not convert an absolute POSIX path outside the project", () => {
+    expect(resolveMarkdownImageSrc("/var/data/screenshot.png", PROJECT)).toBe(
+      "/var/data/screenshot.png",
+    )
+  })
+
+  it("does not convert an absolute POSIX path that escapes via .. segments", () => {
+    const src = "/Users/me/MyWiki/../../../etc/passwd.png"
+    expect(resolveMarkdownImageSrc(src, PROJECT)).toBe(src)
+  })
+
+  it("does not treat a sibling path with the same prefix as inside the project", () => {
+    const src = "/Users/me/MyWikiSecret/screenshot.png"
+    expect(resolveMarkdownImageSrc(src, PROJECT)).toBe(src)
+  })
+
+  it("converts a Windows drive-letter path only when it stays inside the project", () => {
+    expect(
+      resolveMarkdownImageSrc(
+        "C:/Users/me/MyWiki/raw/assets/x.png",
+        "C:/Users/me/MyWiki",
+      ),
+    ).toBe("tauri-asset:C:/Users/me/MyWiki/raw/assets/x.png")
+  })
+
+  it("does not convert a Windows drive-letter path outside the project", () => {
+    expect(
+      resolveMarkdownImageSrc("C:/Users/me/Pictures/x.png", "C:/Users/me/MyWiki"),
+    ).toBe("C:/Users/me/Pictures/x.png")
+  })
+
+  it("does not convert a UNC path outside the project", () => {
     expect(
       resolveMarkdownImageSrc("\\\\share\\folder\\img.png", PROJECT),
-    ).toBe("tauri-asset:\\\\share\\folder\\img.png")
+    ).toBe("\\\\share\\folder\\img.png")
   })
 
   it("returns the raw src unchanged when no project is loaded", () => {
@@ -166,24 +206,24 @@ describe("resolveMarkdownImageSrc", () => {
       ).toBe("tauri-asset:C:/Users/me/MyWiki/raw/assets/x.png")
     })
 
-    it("collapses `..` segments against the file dir", () => {
-      // From /Users/me/MyWiki/raw/sources, four `..` pop
-      // sources, raw, MyWiki, me — landing in /Users.
+    it("does not convert a file-relative path that escapes the project", () => {
       expect(
         resolveMarkdownImageSrc("../../../../etc/x.png", PROJECT, `${PROJECT}/raw/sources`),
-      ).toBe("tauri-asset:/Users/etc/x.png")
+      ).toBe("../../../../etc/x.png")
     })
 
-    it("clamps `..` at the filesystem root rather than producing ../ garbage", () => {
-      // More `..` than there are segments → clamped at root.
+    it("does not convert paths that climb above the project root", () => {
       expect(
-        resolveMarkdownImageSrc("../../x.png", PROJECT, "/a"),
-      ).toBe("tauri-asset:/x.png")
+        resolveMarkdownImageSrc("../../../x.png", PROJECT, `${PROJECT}/wiki/concepts`),
+      ).toBe("../../../x.png")
     })
 
     it("still uses wiki-root fallback when no currentFileDir is given", () => {
       // The canonical generated-wiki case is unchanged.
       expect(resolveMarkdownImageSrc("media/slug/img-1.png", PROJECT)).toBe(
+        "tauri-asset:/Users/me/MyWiki/wiki/media/slug/img-1.png",
+      )
+      expect(resolveMarkdownImageSrc("../media/slug/img-1.png", PROJECT)).toBe(
         "tauri-asset:/Users/me/MyWiki/wiki/media/slug/img-1.png",
       )
     })
@@ -197,6 +237,15 @@ describe("resolveMarkdownImageSrc", () => {
       expect(
         resolveMarkdownImageSrc(
           "media/易配置平台2.0培训-1/001-abc.jpg",
+          PROJECT,
+          `${PROJECT}/wiki/sources`,
+        ),
+      ).toBe(
+        "tauri-asset:/Users/me/MyWiki/wiki/media/易配置平台2.0培训-1/001-abc.jpg",
+      )
+      expect(
+        resolveMarkdownImageSrc(
+          "../media/易配置平台2.0培训-1/001-abc.jpg",
           PROJECT,
           `${PROJECT}/wiki/sources`,
         ),
@@ -249,10 +298,10 @@ describe("resolveMarkdownImageSrc", () => {
       ).toBe("tauri-asset:/Users/me/MyWiki/wiki/media/slug/img-2.png")
     })
 
-    it("passes absolute srcs through convertFileSrc even with a file dir set", () => {
+    it("does not convert project-external absolute srcs even with a file dir set", () => {
       expect(
         resolveMarkdownImageSrc("/var/data/x.png", PROJECT, `${PROJECT}/raw/sources`),
-      ).toBe("tauri-asset:/var/data/x.png")
+      ).toBe("/var/data/x.png")
     })
   })
 })

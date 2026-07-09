@@ -1,20 +1,12 @@
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
-import { useActivityStore } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import {
-  saveReviewItems,
-  saveLintItems,
-  saveChatHistory,
-  saveChatPreferences,
-  saveActivityItems,
-} from "./persist"
+import { saveReviewItems, saveLintItems, saveChatHistory, saveChatPreferences } from "./persist"
 
 let reviewTimer: ReturnType<typeof setTimeout> | null = null
 let lintTimer: ReturnType<typeof setTimeout> | null = null
 let chatTimer: ReturnType<typeof setTimeout> | null = null
-let activityTimer: ReturnType<typeof setTimeout> | null = null
 
 // While suspended, the store subscriptions skip writing. This is essential
 // during a project switch: resetProjectState() clears every store to empty,
@@ -28,9 +20,6 @@ function clearTimers(): void {
   if (reviewTimer) { clearTimeout(reviewTimer); reviewTimer = null }
   if (lintTimer) { clearTimeout(lintTimer); lintTimer = null }
   if (chatTimer) { clearTimeout(chatTimer); chatTimer = null }
-  // Fork-local: the activity store also auto-saves. Cancel its pending
-  // write too so a suspend can't let a stale activity flush slip through.
-  if (activityTimer) { clearTimeout(activityTimer); activityTimer = null }
 }
 
 /**
@@ -46,23 +35,19 @@ export async function flushAndSuspendAutoSave(): Promise<void> {
   const review = useReviewStore.getState().items
   const lint = useLintStore.getState().items
   const chat = useChatStore.getState()
-  const activity = useActivityStore.getState().items
   await Promise.allSettled([
     saveReviewItems(projectPath, review),
     saveLintItems(projectPath, lint),
-    // Chat search toggles persist even mid-stream — they're tiny prefs,
-    // unrelated to the streaming-skip that protects in-flight messages.
     saveChatPreferences(projectPath, {
       useWebSearch: chat.useWebSearch,
       useAnyTxtSearch: chat.useAnyTxtSearch,
       agentMode: chat.agentMode,
+      selectedSkills: chat.selectedSkills,
+      disabledSkills: chat.disabledSkills,
     }),
     chat.isStreaming
       ? Promise.resolve()
       : saveChatHistory(projectPath, chat.conversations, chat.messages),
-    // Fork-local: flush activity items alongside the upstream trio so the
-    // outgoing project keeps its terminal task state across a switch.
-    saveActivityItems(projectPath, activity),
   ])
 }
 
@@ -74,11 +59,6 @@ export function resumeAutoSave(): void {
  * Run a project-switch/open operation while auto-save is suspended. If the
  * operation fails, onFailure runs before auto-save resumes so callers can clear
  * any half-loaded project path before store changes are allowed to persist.
- *
- * Built on flushAndSuspendAutoSave() + resumeAutoSave(): the flush persists the
- * outgoing project's real state, then the finally guarantees resume even if the
- * open throws partway through (so a failed open can never leave auto-save armed
- * but permanently suspended).
  */
 export async function runWithSuspendedAutoSave<T>(
   action: () => Promise<T>,
@@ -103,11 +83,11 @@ export function setupAutoSave(): void {
   // Auto-save review items (debounced 1s)
   useReviewStore.subscribe((state) => {
     if (suspended) return
+    const projectPath = useWikiStore.getState().project?.path
     if (reviewTimer) clearTimeout(reviewTimer)
     reviewTimer = setTimeout(() => {
-      const project = useWikiStore.getState().project
-      if (project) {
-        saveReviewItems(project.path, state.items).catch(() => {})
+      if (projectPath) {
+        saveReviewItems(projectPath, state.items).catch(() => {})
       }
     }, 1000)
   })
@@ -128,34 +108,21 @@ export function setupAutoSave(): void {
   useChatStore.subscribe((state) => {
     if (suspended) return
     if (state.isStreaming) return
+    const projectPath = useWikiStore.getState().project?.path
     if (chatTimer) clearTimeout(chatTimer)
     chatTimer = setTimeout(() => {
-      const project = useWikiStore.getState().project
-      if (project) {
+      if (projectPath) {
         Promise.allSettled([
-          saveChatPreferences(project.path, {
+          saveChatPreferences(projectPath, {
             useWebSearch: state.useWebSearch,
             useAnyTxtSearch: state.useAnyTxtSearch,
             agentMode: state.agentMode,
+            selectedSkills: state.selectedSkills,
+            disabledSkills: state.disabledSkills,
           }),
-          saveChatHistory(project.path, state.conversations, state.messages),
+          saveChatHistory(projectPath, state.conversations, state.messages),
         ]).catch(() => {})
       }
     }, 2000)
-  })
-
-  // Auto-save activity items (debounced 3s). Running tasks emit updates
-  // every few seconds; debouncing avoids hammering disk during a tight
-  // ingest progress loop while still capturing terminal state for the
-  // reload-survives path.
-  useActivityStore.subscribe((state) => {
-    if (suspended) return
-    if (activityTimer) clearTimeout(activityTimer)
-    activityTimer = setTimeout(() => {
-      const project = useWikiStore.getState().project
-      if (project) {
-        saveActivityItems(project.path, state.items).catch(() => {})
-      }
-    }, 3000)
   })
 }

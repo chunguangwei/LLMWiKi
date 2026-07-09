@@ -524,10 +524,26 @@ describe("Ollama / custom (chat_completions) — vision content", () => {
 })
 
 describe("reasoning controls", () => {
-  it("maps DeepSeek-compatible custom endpoints to thinking disabled for structured tasks", () => {
+  it("does not send thinking to legacy DeepSeek chat models that reject the field", () => {
     const cfg = mkConfig({
       provider: "custom",
       model: "deepseek-chat",
+      customEndpoint: "https://api.deepseek.com/v1",
+      apiMode: "chat_completions",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+
+    expect(body.thinking).toBeUndefined()
+    expect(body.reasoning).toBeUndefined()
+  })
+
+  it("maps DeepSeek V4 reasoning off to thinking disabled for structured tasks", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "deepseek-v4-flash",
       customEndpoint: "https://api.deepseek.com/v1",
       apiMode: "chat_completions",
     })
@@ -540,10 +556,10 @@ describe("reasoning controls", () => {
     expect(body.reasoning).toBeUndefined()
   })
 
-  it("maps DeepSeek high reasoning to thinking enabled plus reasoning_effort", () => {
+  it("maps DeepSeek V4 high reasoning to thinking enabled plus reasoning_effort", () => {
     const cfg = mkConfig({
       provider: "custom",
-      model: "deepseek-reasoner",
+      model: "deepseek-v4-pro",
       customEndpoint: "https://api.deepseek.com/v1",
       apiMode: "chat_completions",
     })
@@ -559,7 +575,7 @@ describe("reasoning controls", () => {
   it("does not send an undocumented DeepSeek max_reasoning_tokens field", () => {
     const cfg = mkConfig({
       provider: "custom",
-      model: "deepseek-reasoner",
+      model: "deepseek-v4-pro",
       customEndpoint: "https://api.deepseek.com/v1",
       apiMode: "chat_completions",
     })
@@ -718,6 +734,27 @@ describe("reasoning controls", () => {
     ) as Record<string, unknown>
 
     expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 2048 })
+    expect(body.temperature).toBeUndefined()
+  })
+
+  it("keeps cacheable system blocks when Anthropic extended thinking is enabled", () => {
+    const cfg = mkConfig({ provider: "anthropic", model: "claude-sonnet-4-5-20250929" })
+    const body = getProviderConfig(cfg).buildBody(
+      [
+        { role: "system", content: "Persistent project context." },
+        { role: "user", content: "hi" },
+      ],
+      { reasoning: { mode: "low" }, temperature: 0.1, max_tokens: 4096 },
+    ) as Record<string, unknown>
+
+    expect(body.system).toEqual([
+      {
+        type: "text",
+        text: "Persistent project context.",
+        cache_control: { type: "ephemeral" },
+      },
+    ])
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 1024 })
     expect(body.temperature).toBeUndefined()
   })
 

@@ -3,6 +3,7 @@ import { getFileName, normalizePath } from "@/lib/path-utils"
 const RAW_SOURCES_PREFIX = "raw/sources/"
 const RAW_SOURCES_MARKER = "/raw/sources/"
 const MAX_SOURCE_SUMMARY_SLUG_LENGTH = 120
+const FALLBACK_SOURCE_PART = "source"
 
 export function sourceIdentityForPath(projectPath: string, sourcePath: string): string {
   const pp = normalizePath(projectPath).replace(/\/+$/, "")
@@ -48,11 +49,8 @@ export function sourceSummarySlugFromIdentity(sourceIdentity: string): string {
 
   const hash = stableSlugHash(sourceIdentity)
   const slug = parts.map((part) => {
-    const encoded = encodeURIComponent(part).replace(
-      /[!'()*]/g,
-      (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
-    )
-    return `${encoded.length}-${encoded}`
+    const { readable, structuralLength } = readableSlugPart(part)
+    return `${structuralLength}-${readable}`
   }).join("--")
   const fullSlug = `${slug}--${hash}`
   if (fullSlug.length <= MAX_SOURCE_SUMMARY_SLUG_LENGTH) {
@@ -60,14 +58,75 @@ export function sourceSummarySlugFromIdentity(sourceIdentity: string): string {
   }
 
   const readableLimit = MAX_SOURCE_SUMMARY_SLUG_LENGTH - hash.length - 2
-  const readablePrefix = trimIncompletePercentEncoding(slug.slice(0, readableLimit))
-    .replace(/-+$/, "")
-    .replace(/%$/, "")
+  const readablePrefix = slug.slice(0, readableLimit).replace(/-+$/, "")
   return `${readablePrefix || "source"}--${hash}`
 }
 
-function trimIncompletePercentEncoding(value: string): string {
-  return value.replace(/%(?:[0-9A-F])?$/i, "")
+export function legacySourceSummarySlugFromIdentity(sourceIdentity: string): string {
+  const withoutExt = sourceIdentity.replace(/\.[^/.]+$/, "")
+  const parts = withoutExt
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  if (parts.length <= 1) {
+    return parts[0] || "source"
+  }
+
+  const hash = stableSlugHash(sourceIdentity)
+  const slug = parts.map((part) => {
+    const encoded = encodeURIComponent(part)
+    return `${encoded.length}-${encoded}`
+  }).join("--")
+  return `${slug}--${hash}`
+}
+
+export function sourceSummarySlugCandidatesFromIdentity(sourceIdentity: string): string[] {
+  const canonical = sourceSummarySlugFromIdentity(sourceIdentity)
+  const previousReadable = previousReadableSourceSummarySlugFromIdentity(sourceIdentity)
+  const legacy = legacySourceSummarySlugFromIdentity(sourceIdentity)
+  return Array.from(new Set([canonical, previousReadable, legacy]))
+}
+
+function previousReadableSourceSummarySlugFromIdentity(sourceIdentity: string): string {
+  const withoutExt = sourceIdentity.replace(/\.[^/.]+$/, "")
+  const parts = withoutExt
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  if (parts.length <= 1) {
+    return parts[0] || "source"
+  }
+
+  const hash = stableSlugHash(sourceIdentity)
+  const slug = parts.map((part) => {
+    const { readable } = readableSlugPart(part)
+    return `${Array.from(readable).length}-${readable}`
+  }).join("--")
+  const fullSlug = `${slug}--${hash}`
+  if (fullSlug.length <= MAX_SOURCE_SUMMARY_SLUG_LENGTH) {
+    return fullSlug
+  }
+
+  const readableLimit = MAX_SOURCE_SUMMARY_SLUG_LENGTH - hash.length - 2
+  const readablePrefix = slug.slice(0, readableLimit).replace(/-+$/, "")
+  return `${readablePrefix || "source"}--${hash}`
+}
+
+function readableSlugPart(part: string): { readable: string; structuralLength: number } {
+  const structural = part
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^\p{L}\p{N}-]/gu, "")
+    .replace(/^-|-$/g, "")
+    .toLowerCase()
+  const readable = structural.replace(/-+/g, "-") || FALLBACK_SOURCE_PART
+  return {
+    readable,
+    structuralLength: Math.max(1, Array.from(structural || FALLBACK_SOURCE_PART).length),
+  }
 }
 
 function stableSlugHash(value: string): string {

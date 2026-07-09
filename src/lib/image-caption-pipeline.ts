@@ -307,6 +307,18 @@ export async function captionMarkdownImages(
     }
   }
 
+  if (llmConfig.provider === "codex-cli") {
+    console.warn(
+      "[caption-pipeline] skipped image captioning: Codex CLI transport does not support image input yet.",
+    )
+    return {
+      enrichedMarkdown: markdown,
+      freshCaptions: 0,
+      cachedCaptions: 0,
+      failed: targetRefs.length,
+    }
+  }
+
   const cache = await readCache(projectPath)
   let freshCaptions = 0
   let cachedCaptions = 0

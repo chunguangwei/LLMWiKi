@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label"
 import {
   useWikiStore,
   type AnyTxtConfig,
+  type DeepResearchSource,
   type SearchApiConfig,
   type SearchProvider,
   type SearchProviderOverride,
@@ -174,10 +175,14 @@ export function WebSearchSection() {
     }
   }
 
+  function updateDeepResearchSource(deepResearchSource: DeepResearchSource) {
+    persist(resolveSearchConfig({ ...resolvedConfig, deepResearchSource })).catch(() => {})
+  }
+
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-xl font-semibold">{t("settings.sections.webSearch.title")} (Deep Research)</h2>
+        <h2 className="text-xl font-semibold">{t("settings.sections.webSearch.title")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           {t("settings.sections.webSearch.description")}
         </p>
@@ -191,6 +196,35 @@ export function WebSearchSection() {
         index vs. web). Configuring + enabling it here is what makes the
         chat AnyTXT pill usable (chat-panel gates on hasConfiguredAnyTxt).
       */}
+      <div className="space-y-2 rounded-lg border p-3">
+        <div>
+          <Label>{t("settings.sections.webSearch.deepResearchSources")}</Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("settings.sections.webSearch.deepResearchSourcesHint")}
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {([
+            ["web", t("settings.sections.webSearch.sourceWeb")],
+            ["anytxt", t("settings.sections.webSearch.sourceAnyTxt")],
+            ["both", t("settings.sections.webSearch.sourceBoth")],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => updateDeepResearchSource(value)}
+              className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                (resolvedConfig.deepResearchSource ?? "web") === value
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border hover:bg-accent"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="space-y-3 rounded-lg border p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -279,6 +313,7 @@ export function WebSearchSection() {
       </div>
 
       <div className="space-y-2">
+        <Label>{t("settings.sections.webSearch.webProviders")}</Label>
         {SEARCH_PROVIDERS.map((provider) => {
           const override = resolvedConfig.providerConfigs?.[provider.id]
           const isActive = resolvedConfig.provider === provider.id

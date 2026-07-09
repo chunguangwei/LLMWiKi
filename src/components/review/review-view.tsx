@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { queueResearch } from "@/lib/deep-research"
 import {
   AlertTriangle,
@@ -15,12 +15,14 @@ import {
 import { Button } from "@/components/ui/button"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
+import { writeFile, readFile, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
-import { hasConfiguredSearchProvider } from "@/lib/web-search"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 import { makeQueryFileName } from "@/lib/wiki-filename"
 import { createReviewPageDrafts } from "@/lib/review-create-page"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
+import { useTranslation } from "react-i18next"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -31,14 +33,15 @@ const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label
 }
 
 export function ReviewView() {
+  const { t } = useTranslation()
   const items = useReviewStore((s) => s.items)
   const resolveItem = useReviewStore((s) => s.resolveItem)
   const dismissItem = useReviewStore((s) => s.dismissItem)
   const clearResolved = useReviewStore((s) => s.clearResolved)
   const setItems = useReviewStore((s) => s.setItems)
   const project = useWikiStore((s) => s.project)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
   const [refreshing, setRefreshing] = useState(false)
+  const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(() => new Set())
 
   // Reload review items from disk. The review pane has no equivalent of
   // lint's re-run, so external writers — the resolve API, another window,
@@ -51,6 +54,7 @@ export function ReviewView() {
       const { loadReviewItems } = await import("@/lib/persist")
       const loaded = await loadReviewItems(project.path)
       setItems(loaded)
+      setSelectedReviewIds(new Set())
     } catch (err) {
       console.error("Failed to refresh review items:", err)
     } finally {
@@ -61,25 +65,11 @@ export function ReviewView() {
   const handleResolve = useCallback(async (id: string, action: string) => {
     const pp = project ? normalizePath(project.path) : ""
     const item = items.find((i) => i.id === id)
-
-    // Dismissal — Skip / 跳过 / Dismiss / Ignore / Approve — short-circuit
-    // BEFORE the create-page heuristic. The prompt locks the LLM to
-    // OPTIONS: "Create Page | Skip", but models occasionally produce
-    // localized or padded variants ("Skip this contradiction", "跳过 - 忽略",
-    // "Skip and confirm"). Those used to slip through actionIsDismissal
-    // (exact equality) and silently triggered the create-page branch,
-    // which from the user's POV looked like "Skip did nothing" because
-    // the page write happens in the background with no immediate UI shift.
-    if (actionIsDismissal(action)) {
-      resolveItem(id, action)
-      return
-    }
-
     // Deep Research — must be checked FIRST before any fuzzy matching
     if (action === "__deep_research__" && project) {
       const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredSearchProvider(searchConfig)) {
-        window.alert("Web Search not configured. Go to Settings → Web Search to configure a provider first.")
+      if (!hasConfiguredDeepResearchSources(searchConfig)) {
+        window.alert(t("research.notConfigured"))
         return
       }
       if (item) {
@@ -100,13 +90,8 @@ export function ReviewView() {
         const encoded = action.slice(5)
         const content = decodeURIComponent(atob(encoded))
 
-        // Strip hidden comments / thinking blocks and derive the title from the
-        // first VISIBLE line — shared with the chat "Save to Wiki" button so a
-        // Q&A saved from either entry point gets the same title/slug.
         const cleanContent = cleanAssistantContentForWikiSave(content)
         const title = titleFromCleanAssistantContent(cleanContent)
-        // Unicode-aware slug + HHMMSS timestamp suffix so same-day / CJK saves
-        // stay distinct (see src/lib/wiki-filename.ts).
         const { date, fileName } = makeQueryFileName(title)
         const filePath = `${pp}/wiki/queries/${fileName}`
 
@@ -121,8 +106,6 @@ export function ReviewView() {
         const linkTarget = fileName.replace(/\.md$/, "")
         const entry = `- [[queries/${linkTarget}|${title}]]`
         if (indexContent.includes("## Queries")) {
-          // Use a replacer FN so $-sequences in the entry (e.g. a `$1` that
-          // slipped into a title) are inserted literally, not interpreted.
           indexContent = indexContent.replace(/(## Queries\n)/, (match) => `${match}${entry}\n`)
         } else {
           indexContent = indexContent.trimEnd() + "\n\n## Queries\n" + entry + "\n"
@@ -135,14 +118,11 @@ export function ReviewView() {
         try { logContent = await readFile(logPath) } catch { logContent = "# Wiki Log\n" }
         await writeFile(logPath, logContent.trimEnd() + `\n- ${date}: Saved query page \`${fileName}\`\n`)
 
-        // Refresh tree
-        const tree = await listDirectory(pp)
-        setFileTree(tree)
-        // Open the freshly created page in the center preview (switches
-        // to the wiki view) and invalidate cached graphs/views so the
-        // new page shows up immediately.
+        await refreshProjectFileTree(pp, {
+          projectId: project.id,
+          bumpDataVersion: true,
+        })
         useWikiStore.getState().openFileInPreview(filePath, pageContent)
-        useWikiStore.getState().bumpDataVersion()
 
         resolveItem(id, "Saved to Wiki")
       } catch (err) {
@@ -150,7 +130,7 @@ export function ReviewView() {
         resolveItem(id, "Save failed")
       }
     } else if ((action.startsWith("open:") || actionLooksLikeOpen(action)) && project) {
-      // Open a page in the center wiki preview without resolving the
+      // Open a page in the right-side preview without resolving the
       // review item. Viewing is not the same as accepting / fixing it.
       const page = action.startsWith("open:")
         ? action.slice(5)
@@ -176,8 +156,10 @@ export function ReviewView() {
       const filePath = action.slice(7)
       try {
         await deleteFile(filePath)
-        const tree = await listDirectory(pp)
-        setFileTree(tree)
+        await refreshProjectFileTree(pp, {
+          projectId: project.id,
+          bumpDataVersion: true,
+        })
         resolveItem(id, "Deleted")
       } catch (err) {
         console.error("Failed to delete:", err)
@@ -186,8 +168,8 @@ export function ReviewView() {
     } else if (actionLooksLikeResearch(action) && project) {
       // Actions with "research" trigger deep research, not just page creation
       const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredSearchProvider(searchConfig)) {
-        // No search API — fall through to create a page instead
+      if (!hasConfiguredDeepResearchSources(searchConfig)) {
+        // No research source — fall through to create a page instead
         if (item) {
           handleResolve(id, "__create_page__:" + action)
         }
@@ -214,10 +196,6 @@ export function ReviewView() {
         : action
       if (item) {
         try {
-          // A single missing-page review can name several missing pages
-          // ("缺少 X、Y 页面" / "missing pages A and B"). createReviewPageDrafts
-          // splits those into one draft per page (with its detected page type +
-          // target dir); non-missing-page reviews yield exactly one draft.
           const drafts = createReviewPageDrafts(item, realAction)
           const created: Array<{
             title: string
@@ -239,7 +217,7 @@ export function ReviewView() {
             created.push({ title: draft.title, dir: draft.dir, fileName, filePath, pageContent, pageType: draft.pageType, date })
           }
 
-          // Update index — one wikilink per created page.
+          // Update index
           const indexPath = `${pp}/wiki/index.md`
           let indexContent = ""
           try { indexContent = await readFile(indexPath) } catch { indexContent = "# Wiki Index\n" }
@@ -248,7 +226,6 @@ export function ReviewView() {
             const linkTarget = createdPage.fileName.replace(/\.md$/, "")
             const entry = `- [[${createdPage.dir}/${linkTarget}|${createdPage.title}]]`
             if (indexContent.includes(sectionHeader)) {
-              // Replacer FN so $-sequences in the entry are inserted literally.
               indexContent = indexContent.replace(new RegExp(`(${sectionHeader}\n)`), (match) => `${match}${entry}\n`)
             } else {
               indexContent = indexContent.trimEnd() + `\n\n${sectionHeader}\n${entry}\n`
@@ -264,17 +241,12 @@ export function ReviewView() {
           const logDate = created[0]?.date ?? makeQueryFileName("review").date
           await writeFile(logPath, logContent.trimEnd() + `\n- ${logDate}: Created ${created.length} page${created.length === 1 ? "" : "s"} from review: ${createdNames}\n`)
 
-          // Refresh + open the first created page in the center preview
-          // (openFileInPreview switches to the wiki view). Fork note: this
-          // path creates MULTIPLE pages from one review draft (see
-          // createReviewPageDrafts) — we surface the first one.
-          const tree = await listDirectory(pp)
-          setFileTree(tree)
+          await refreshProjectFileTree(pp, {
+            projectId: project.id,
+            bumpDataVersion: true,
+          })
           const first = created[0]
-          if (first) {
-            useWikiStore.getState().openFileInPreview(first.filePath, first.pageContent)
-          }
-          useWikiStore.getState().bumpDataVersion()
+          if (first) useWikiStore.getState().openFileInPreview(first.filePath, first.pageContent)
 
           resolveItem(id, created.length === 1
             ? `Created: wiki/${created[0].dir}/${created[0].fileName}`
@@ -289,16 +261,56 @@ export function ReviewView() {
     } else {
       resolveItem(id, action)
     }
-  }, [project, items, resolveItem, setFileTree])
+  }, [project, items, resolveItem])
 
   const pending = items.filter((i) => !i.resolved)
   const resolved = items.filter((i) => i.resolved)
+  const selectedPendingIds = useMemo(
+    () => pending.map((item) => item.id).filter((id) => selectedReviewIds.has(id)),
+    [pending, selectedReviewIds],
+  )
+  const allPendingSelected = pending.length > 0 && selectedPendingIds.length === pending.length
+
+  const setReviewSelected = useCallback((id: string, selected: boolean) => {
+    setSelectedReviewIds((prev) => {
+      const next = new Set(prev)
+      if (selected) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }, [])
+
+  const toggleAllPending = useCallback(() => {
+    setSelectedReviewIds((prev) => {
+      const next = new Set(prev)
+      if (allPendingSelected) {
+        for (const item of pending) next.delete(item.id)
+      } else {
+        for (const item of pending) next.add(item.id)
+      }
+      return next
+    })
+  }, [allPendingSelected, pending])
+
+  const handleBatchResolve = useCallback(() => {
+    for (const id of selectedPendingIds) {
+      resolveItem(id, "Bulk resolved")
+    }
+    setSelectedReviewIds(new Set())
+  }, [resolveItem, selectedPendingIds])
+
+  const handleBatchDismiss = useCallback(() => {
+    for (const id of selectedPendingIds) {
+      dismissItem(id)
+    }
+    setSelectedReviewIds(new Set())
+  }, [dismissItem, selectedPendingIds])
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">
-          Review
+          {t("review.title")}
           {pending.length > 0 && (
             <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
               {pending.length}
@@ -312,25 +324,60 @@ export function ReviewView() {
             onClick={handleRefresh}
             disabled={refreshing}
             className="text-xs"
-            title="Reload review items from disk"
+            title={t("review.refreshHint", "Reload review items from disk")}
           >
             <RotateCcw className={`mr-1 h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
+            {t("review.refresh", "Refresh")}
           </Button>
           {resolved.length > 0 && (
             <Button variant="ghost" size="sm" onClick={clearResolved} className="text-xs">
               <Trash2 className="mr-1 h-3 w-3" />
-              Clear resolved
+              {t("review.clearResolved")}
             </Button>
           )}
         </div>
       </div>
 
+      {pending.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-2 text-xs">
+          <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5"
+              checked={allPendingSelected}
+              onChange={toggleAllPending}
+            />
+            {t("review.selectPending")}
+          </label>
+          <span className="text-muted-foreground">
+            {t("review.selectedCount", { count: selectedPendingIds.length })}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={selectedPendingIds.length === 0}
+            onClick={handleBatchResolve}
+          >
+            {t("review.markSelectedResolved")}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs text-destructive hover:text-destructive"
+            disabled={selectedPendingIds.length === 0}
+            onClick={handleBatchDismiss}
+          >
+            {t("review.dismissSelected")}
+          </Button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto">
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
-            <p>All clear — nothing to review</p>
+            <p>{t("review.allClear")}</p>
           </div>
         ) : (
           <div className="flex flex-col gap-2 p-3">
@@ -340,11 +387,13 @@ export function ReviewView() {
                 item={item}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
+                selected={selectedReviewIds.has(item.id)}
+                onSelectedChange={setReviewSelected}
               />
             ))}
             {resolved.length > 0 && pending.length > 0 && (
               <div className="my-2 text-center text-xs text-muted-foreground">
-                — Resolved —
+                {t("review.resolvedDivider")}
               </div>
             )}
             {resolved.map((item) => (
@@ -353,6 +402,8 @@ export function ReviewView() {
                 item={item}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
+                selected={selectedReviewIds.has(item.id)}
+                onSelectedChange={setReviewSelected}
               />
             ))}
           </div>
@@ -366,11 +417,16 @@ function ReviewCard({
   item,
   onResolve,
   onDismiss,
+  selected,
+  onSelectedChange,
 }: {
   item: ReviewItem
   onResolve: (id: string, action: string) => void
   onDismiss: (id: string) => void
+  selected: boolean
+  onSelectedChange: (id: string, selected: boolean) => void
 }) {
+  const { t } = useTranslation()
   const config = typeConfig[item.type]
   const Icon = config.icon
 
@@ -382,6 +438,15 @@ function ReviewCard({
     >
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
+          {!item.resolved && (
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5"
+              checked={selected}
+              onChange={(event) => onSelectedChange(item.id, event.target.checked)}
+              aria-label={t("review.selectItem", { title: item.title })}
+            />
+          )}
           <Icon className={`h-4 w-4 shrink-0 ${config.color}`} />
           <span className="font-medium">{item.title}</span>
         </div>
@@ -410,7 +475,7 @@ function ReviewCard({
               className="h-7 text-xs gap-1"
               onClick={() => onResolve(item.id, "__deep_research__")}
             >
-              🔍 Deep Research
+              🔍 {t("research.title")}
             </Button>
           )}
           {item.options.map((opt) => (
@@ -426,7 +491,7 @@ function ReviewCard({
           ))}
         </div>
       ) : (
-        <div className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+        <div className="flex items-center gap-1 text-xs text-emerald-600">
           <Check className="h-3 w-3" />
           {item.resolvedAction}
         </div>
@@ -452,48 +517,28 @@ function actionLooksLikeResearch(action: string): boolean {
 }
 
 function actionLooksLikeOpen(action: string): boolean {
-  // Prefix match — the OPTIONS-line prompt asks for short labels but the
-  // LLM still emits localized / padded forms ("Open in editor", "Open page",
-  // "打开编辑", "查看页面", "Edit"). Exact equality silently dropped these
-  // and the click looked like a no-op.
   const lower = action.trim().toLowerCase()
-  if (!lower) return false
-  const prefixes = [
-    "open",
-    "view",
-    "edit",
-    "打开",
-    "查看",
-    "编辑",
-  ]
-  return prefixes.some((p) => lower.startsWith(p))
+  return (
+    lower === "open" ||
+    lower === "view" ||
+    lower === "open page" ||
+    lower === "view page" ||
+    lower === "打开" ||
+    lower === "查看" ||
+    lower === "打开页面" ||
+    lower === "查看页面"
+  )
 }
 
-/** Detect if an action is a dismissal (no-op) or should create a page.
- *
- * Match policy: STARTSWITH (prefix) rather than equality. The OPTIONS-line
- * prompt locks the LLM to the literal "Skip" label, but live models
- * occasionally produce localized or padded forms ("Skip this", "Skip —
- * keep as is", "跳过 - 忽略此项"). Exact-equality matching missed those
- * and silently dropped the click into the create-page branch, which
- * created a wiki page from the review's description text — the opposite
- * of what the user clicked Skip to do.
- *
- * "approve" / "no" / "keep existing" intentionally stay as equality
- * matches: substring would over-trigger ("approve and document fully"
- * is a create-page intent, not a dismissal). */
+/** Detect if an action is a dismissal (no-op) or should create a page */
 function actionIsDismissal(action: string): boolean {
-  const lower = action.trim().toLowerCase()
-  if (
-    lower.startsWith("skip") ||
-    lower.startsWith("dismiss") ||
-    lower.startsWith("ignore") ||
-    lower.startsWith("跳过") ||
-    lower.startsWith("忽略")
-  ) {
-    return true
-  }
+  const lower = action.toLowerCase()
   return (
+    lower === "skip" ||
+    lower === "dismiss" ||
+    lower === "ignore" ||
+    lower === "跳过" ||
+    lower === "忽略" ||
     lower === "approve" ||
     lower === "keep existing" ||
     lower === "no"

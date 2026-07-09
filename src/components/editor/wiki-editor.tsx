@@ -3,20 +3,17 @@ import "katex/dist/katex.min.css"
 import { Pencil, Eye } from "lucide-react"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { FrontmatterPanel } from "@/components/editor/frontmatter-panel"
-import { RefreshControls } from "@/components/editor/refresh-controls"
 import { WikiReader } from "@/components/editor/wiki-reader"
 
 interface WikiEditorProps {
   content: string
   onSave: (markdown: string, options?: { immediate?: boolean }) => void
-  /** When set, the frontmatter panel shows an editable page-type selector. */
-  onChangeType?: (newType: string) => void
   /** Absolute path of the file, threaded to WikiReader so relative
    *  image references resolve against the file's own directory. */
   filePath?: string
 }
 
-export function WikiEditor({ content, onSave, onChangeType, filePath }: WikiEditorProps) {
+export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
   // Default to read mode (ReactMarkdown render). Edit mode is a raw Markdown
   // textarea so metadata/frontmatter can be edited without a WYSIWYG serializer
   // rewriting YAML, wikilinks, or other wiki-specific source syntax.
@@ -24,7 +21,7 @@ export function WikiEditor({ content, onSave, onChangeType, filePath }: WikiEdit
 
   // Read mode renders frontmatter as UI plus the Markdown body. Edit mode uses
   // a plain-text Markdown editor for the full file so frontmatter can be edited
-  // without passing YAML through a CommonMark serializer.
+  // without passing YAML through Milkdown's CommonMark serializer.
   const { frontmatter, body } = useMemo(
     () => parseFrontmatter(content),
     [content],
@@ -78,8 +75,7 @@ export function WikiEditor({ content, onSave, onChangeType, filePath }: WikiEdit
 
       {mode === "read" ? (
         <div className="px-6 py-6">
-          {frontmatter && <RefreshControls frontmatter={frontmatter} />}
-          {frontmatter && <FrontmatterPanel data={frontmatter} onChangeType={onChangeType} />}
+          {frontmatter && <FrontmatterPanel data={frontmatter} />}
           <WikiReader body={body} filePath={filePath} />
         </div>
       ) : (

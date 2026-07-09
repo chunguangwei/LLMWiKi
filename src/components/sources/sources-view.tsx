@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
-import { Plus, FileText, RefreshCw, Trash2, Folder, ChevronRight, ChevronDown, Wand2, Image as ImageIcon, Bot } from "lucide-react"
+import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -18,12 +18,9 @@ import {
   enqueueSourceIngest,
   importSourceFiles,
   importSourceFolder,
-  isIngestableSourcePath,
 } from "@/lib/source-lifecycle"
-import { addImagesToRawWithContext, isImageSourcePath, IMAGE_SOURCE_EXTENSIONS } from "@/lib/raw-from-chat"
-import { runAgentIngest } from "@/lib/agent-ingest"
-import { useActivityStore } from "@/stores/activity-store"
-import { useReviewStore } from "@/stores/review-store"
+import { filterRawSourceTree } from "@/lib/source-filter"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
@@ -34,17 +31,12 @@ export function SourcesView() {
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
   const llmConfig = useWikiStore((s) => s.llmConfig)
+  const sourceWatchConfig = useWikiStore((s) => s.sourceWatchConfig)
   const dataVersion = useWikiStore((s) => s.dataVersion)
   const [sources, setSources] = useState<FileNode[]>([])
   const [importing, setImporting] = useState(false)
-  const [importingImages, setImportingImages] = useState(false)
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
-  const [agentRunningPath, setAgentRunningPath] = useState<string | null>(null)
-  const [reingestingAll, setReingestingAll] = useState(false)
-  const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
-  const experimentalAgentIngest = useWikiStore((s) => s.experimentalAgentIngest)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   /**
@@ -75,10 +67,7 @@ export function SourcesView() {
     const pp = normalizePath(project.path)
     try {
       const tree = await listDirectory(`${pp}/raw/sources`, true)
-      // Keep user-added dotfolders (.claude, .codex) but drop ingest
-      // noise (.cache, .DS_Store) — see filterTree.
-      const filtered = filterTree(tree)
-      setSources(filtered)
+      setSources(filterRawSourceTree(tree))
       setRefreshError(null)
     } catch (err) {
       setRefreshError(String(err))
@@ -103,32 +92,6 @@ export function SourcesView() {
       await loadSources()
       setRefreshing(false)
     }
-  }
-
-  // Surface the "your model can't see images" case so a routed image
-  // doesn't silently produce an empty .md. Shared by the main Import
-  // button and the dedicated Import-images button.
-  function notifyVisionRefusals(
-    result: { visionRefusals: number; usedDedicatedVisionLlm: boolean; attemptedVisionModel: string },
-    totalImages: number,
-  ) {
-    if (result.visionRefusals <= 0) return
-    const where = result.usedDedicatedVisionLlm
-      ? t("sources.visionRefusedDedicated", {
-          defaultValue:
-            "The vision model configured in Settings → Multimodal ({{model}}) doesn't appear to support image input.",
-          model: result.attemptedVisionModel,
-        })
-      : t("sources.visionRefusedMainLlm", {
-          defaultValue:
-            "The current chat LLM ({{model}}) is text-only — it can't process images.",
-          model: result.attemptedVisionModel,
-        })
-    const fix = t("sources.visionRefusedFix", {
-      defaultValue:
-        "Open Settings → Multimodal and configure a vision-capable model (Gemini 2.5 Flash / Claude Haiku / GPT-4o), then re-ingest the images.",
-    })
-    window.alert(`${where}\n\n${fix}\n\n(${result.visionRefusals}/${totalImages} images affected)`)
   }
 
   async function handleImport() {
@@ -160,7 +123,7 @@ export function SourcesView() {
         },
         {
           name: "Images",
-          extensions: [...IMAGE_SOURCE_EXTENSIONS],
+          extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff", "avif", "heic"],
         },
         {
           name: "Media",
@@ -174,26 +137,8 @@ export function SourcesView() {
 
     setImporting(true)
     const paths = Array.isArray(selected) ? selected : [selected]
-    // Images can't go through the text-ingest pipeline (their extensions
-    // aren't in INGESTABLE_SOURCE_EXTENSIONS). Route them to the vision
-    // path instead of silently dropping them — picking an image from the
-    // main Import button now "just works" the same as the dedicated
-    // Import-images button or chat drag-drop.
-    const imagePaths = paths.filter(isImageSourcePath)
-    const docPaths = paths.filter((p) => !isImageSourcePath(p))
     try {
-      if (docPaths.length > 0) {
-        await importSourceFiles(project, docPaths, llmConfig)
-      }
-      if (imagePaths.length > 0) {
-        const result = await addImagesToRawWithContext(
-          project,
-          imagePaths.map((p) => ({ sourcePath: p })),
-          "",
-          llmConfig,
-        )
-        notifyVisionRefusals(result, imagePaths.length)
-      }
+      await importSourceFiles(project, paths, llmConfig, sourceWatchConfig)
       await loadSources()
     } finally {
       setImporting(false)
@@ -212,55 +157,12 @@ export function SourcesView() {
 
     setImporting(true)
     try {
-      await importSourceFolder(project, selected, llmConfig)
+      await importSourceFolder(project, selected, llmConfig, sourceWatchConfig)
       await loadSources()
     } catch (err) {
       console.error(`Failed to import folder:`, err)
     } finally {
       setImporting(false)
-    }
-  }
-
-  /**
-   * Image import — separate from handleImport because images don't go
-   * through `importSourceFiles` (their extensions aren't in
-   * INGESTABLE_SOURCE_EXTENSIONS — vision-LLM extracts markdown into
-   * a sibling `.md`, and the `.md` is what gets ingested).
-   */
-  async function handleImportImages() {
-    if (!project || importingImages) return
-    const selected = await open({
-      multiple: true,
-      title: t("sources.importImages", { defaultValue: "Import images" }),
-      filters: [
-        {
-          name: "Images",
-          extensions: [...IMAGE_SOURCE_EXTENSIONS],
-        },
-      ],
-    })
-    if (!selected || (Array.isArray(selected) && selected.length === 0)) return
-    const paths = Array.isArray(selected) ? selected : [selected]
-    setImportingImages(true)
-    try {
-      const result = await addImagesToRawWithContext(
-        project,
-        paths.map((p) => ({ sourcePath: p })),
-        "",
-        llmConfig,
-      )
-      notifyVisionRefusals(result, paths.length)
-      await loadSources()
-    } catch (err) {
-      console.error("Failed to import images:", err)
-      window.alert(
-        t("sources.importImagesFailed", {
-          defaultValue: "Failed to import images: {{error}}",
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      )
-    } finally {
-      setImportingImages(false)
     }
   }
 
@@ -285,9 +187,10 @@ export function SourcesView() {
       // Step 8: Refresh everything (UI side — must run with parent
       // context, hence kept here rather than inside the helper).
       await loadSources()
-      const tree = await listDirectory(pp)
-      setFileTree(tree)
-      useWikiStore.getState().bumpDataVersion()
+      await refreshProjectFileTree(pp, {
+        projectId: project.id,
+        bumpDataVersion: true,
+      })
       if (
         selectedFile === node.path ||
         result.deletedWikiPaths.includes(selectedFile ?? "")
@@ -320,9 +223,10 @@ export function SourcesView() {
     try {
       const result = await deleteSourceFolder(pp, folder)
       await loadSources()
-      const tree = await listDirectory(pp)
-      setFileTree(tree)
-      useWikiStore.getState().bumpDataVersion()
+      await refreshProjectFileTree(pp, {
+        projectId: project.id,
+        bumpDataVersion: true,
+      })
       if (
         selectedFile?.startsWith(folder.path + "/") ||
         result.deletedWikiPaths.includes(selectedFile ?? "")
@@ -351,176 +255,6 @@ export function SourcesView() {
       console.error("Failed to enqueue ingest:", err)
     } finally {
       setIngestingPath(null)
-    }
-  }
-
-  /**
-   * Run the experimental agent-ingest pipeline on a single source.
-   *
-   * Bypasses the classic queue entirely — `runAgentIngest()` is a
-   * single direct call that drives a multi-turn agent conversation
-   * over the tool catalogue defined in `lib/agent-ingest/tools/`.
-   * The user-facing experience is "click the 🤖 button on a source,
-   * watch the activity panel update turn-by-turn, end up with new
-   * wiki pages (or gaps surfaced as review items) when the agent
-   * calls `done`".
-   *
-   * Caveats called out in the tooltip + activity detail so users
-   * with budget concerns can opt out:
-   *
-   *   - Costs more LLM tokens than the classic pipeline (multi-turn
-   *     tool calling vs single-shot analysis + generate).
-   *   - Quality is currently UNVALIDATED — Phase F has yet to run
-   *     it on real long sources and tune the prompts. Use on
-   *     low-stakes documents first.
-   *   - No checkpoint persistence yet (Phase E). A network hiccup
-   *     mid-loop loses the partial state; just retry.
-   */
-  async function handleAgentIngest(node: FileNode) {
-    if (!project || agentRunningPath) return
-    setAgentRunningPath(node.path)
-    const activity = useActivityStore.getState()
-    const sourceName = node.path.split("/").pop() ?? node.path
-    const activityId = activity.addItem({
-      type: "ingest",
-      title: `🤖 Agent ingest: ${sourceName}`,
-      status: "running",
-      detail: "Starting agent loop…",
-      filesWritten: [],
-    })
-    try {
-      const result = await runAgentIngest({
-        sourcePath: node.path,
-        project,
-        llmConfig,
-        onTurn: (turnIndex, tokensSoFar) => {
-          activity.updateItem(activityId, {
-            detail: `Turn ${turnIndex + 1} · ${Math.round(tokensSoFar / 1000)}k tokens`,
-          })
-        },
-      })
-      const writtenPaths = [
-        ...result.pagesCreated.map((p) => p.slug),
-        ...result.pagesUpdated.map((p) => p.slug),
-      ]
-      // Surface each gap from the tracker (which includes the
-      // verify pass's findings) as a Review item so the user can
-      // act on it — "Create page" (next agent run will pick this
-      // up via the Review queue) or "Skip" (dismiss). The Review
-      // tab is where uncovered topics live until the user decides.
-      if (result.reviewItemsCreated.length > 0) {
-        const review = useReviewStore.getState()
-        for (const gap of result.reviewItemsCreated) {
-          review.addItem({
-            type: "missing-page",
-            title: gap.topic,
-            description:
-              (gap.reason ?? "Agent flagged this topic as uncovered.") +
-              `\n\nFrom source: \`${node.path.split("/").pop()}\``,
-            sourcePath: node.path,
-            ...(gap.chunks && gap.chunks.length > 0
-              ? { affectedPages: gap.chunks }  // chunk ids — informational, not actual page paths
-              : {}),
-            options: [
-              { label: t("review.createPage", { defaultValue: "Create Page" }), action: "Create Page" },
-              { label: t("review.skip", { defaultValue: "Skip" }), action: "Skip" },
-            ],
-          })
-        }
-      }
-      const lines = [
-        result.reason,
-        `Turns: ${result.turnsUsed} · tokens: ${Math.round(result.tokensSpent / 1000)}k`,
-        `Coverage: ${Math.round(result.coverage * 100)}%`,
-        result.pagesCreated.length > 0
-          ? `Created: ${result.pagesCreated.map((p) => p.slug).join(", ")}`
-          : "",
-        result.pagesUpdated.length > 0
-          ? `Updated: ${result.pagesUpdated.map((p) => p.slug).join(", ")}`
-          : "",
-        result.reviewItemsCreated.length > 0
-          ? `Gaps surfaced: ${result.reviewItemsCreated.length} (see Review)`
-          : "",
-        // finalCheckpointError fires when the run was partial AND the
-        // final checkpoint save threw. Without this line the user
-        // thinks they can resume but the next run starts from scratch
-        // — silently re-spending the LLM budget. Surface loudly.
-        result.finalCheckpointError
-          ? `⚠️ Checkpoint save failed; resume will NOT work — re-run from scratch. (${result.finalCheckpointError})`
-          : "",
-      ].filter(Boolean)
-      activity.updateItem(activityId, {
-        status: "done",
-        detail: lines.join("\n"),
-        filesWritten: writtenPaths,
-      })
-      // Wiki pages changed → file tree + knowledge tree need to refresh.
-      bumpDataVersion()
-      try {
-        const tree = await listDirectory(normalizePath(project.path))
-        setFileTree(tree)
-      } catch {
-        // non-fatal — the next refresh will catch it
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error("[agent-ingest] failed:", err)
-      activity.updateItem(activityId, {
-        status: "error",
-        detail: `Agent ingest failed: ${message}`,
-      })
-    } finally {
-      setAgentRunningPath(null)
-    }
-  }
-
-  function collectIngestableLeaves(nodes: FileNode[]): string[] {
-    const out: string[] = []
-    const walk = (ns: FileNode[]) => {
-      for (const n of ns) {
-        if (n.is_dir) {
-          if (n.children) walk(n.children)
-        } else if (isIngestableSourcePath(n.path)) {
-          out.push(n.path)
-        }
-      }
-    }
-    walk(nodes)
-    return out
-  }
-
-  async function handleReingestAll() {
-    if (!project || reingestingAll) return
-    const paths = collectIngestableLeaves(sources)
-    if (paths.length === 0) {
-      window.alert(
-        t("sources.reingestAllEmpty", {
-          defaultValue: "No ingestable sources found in raw/sources/.",
-        }),
-      )
-      return
-    }
-    // Confirm before firing — this can spend a non-trivial amount of
-    // LLM tokens (one ingest pipeline per source). The dialog also
-    // surfaces the exact count so the user can sanity-check that
-    // `raw/sources/` isn't accidentally empty / huge.
-    const ok = window.confirm(
-      t("sources.reingestAllConfirm", {
-        defaultValue:
-          "Re-run ingest on {{count}} source file(s)? This will rebuild the wiki and consumes LLM tokens.",
-        count: paths.length,
-      }),
-    )
-    if (!ok) return
-
-    setReingestingAll(true)
-    try {
-      await enqueueSourceIngest(project, paths, llmConfig)
-    } catch (err) {
-      console.error("Failed to enqueue bulk re-ingest:", err)
-      window.alert(`Failed to enqueue bulk re-ingest: ${err}`)
-    } finally {
-      setReingestingAll(false)
     }
   }
 
@@ -556,54 +290,6 @@ export function SourcesView() {
             <Plus className="mr-1 h-4 w-4" />
             {t("sources.importFolder", "Folder")}
           </Button>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleImportImages}
-                  disabled={importingImages}
-                  aria-label={t("sources.importImages", { defaultValue: "Import images" })}
-                />
-              }
-            >
-              <ImageIcon className={`mr-1 h-4 w-4 ${importingImages ? "animate-pulse" : ""}`} />
-              {importingImages
-                ? t("sources.importingImages", { defaultValue: "Extracting..." })
-                : t("sources.importImages", { defaultValue: "Image" })}
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="end" className="max-w-80 whitespace-normal leading-relaxed">
-              {t("sources.importImagesTooltip", {
-                defaultValue:
-                  "Pick image files. A vision-capable LLM extracts each image's content as markdown, then ingest runs on the extracted markdown.",
-              })}
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleReingestAll}
-                  disabled={reingestingAll || sources.length === 0}
-                  aria-label={t("sources.reingestAll", { defaultValue: "Re-ingest all" })}
-                />
-              }
-            >
-              <Wand2 className={`mr-1 h-4 w-4 ${reingestingAll ? "animate-pulse" : ""}`} />
-              {reingestingAll
-                ? t("sources.reingestingAll", { defaultValue: "Queuing..." })
-                : t("sources.reingestAll", { defaultValue: "Re-ingest all" })}
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="end" className="max-w-80 whitespace-normal leading-relaxed">
-              {t("sources.reingestAllTooltip", {
-                defaultValue:
-                  "Re-run ingest on every file in raw/sources/ to rebuild the wiki. Confirms before firing — uses LLM tokens.",
-              })}
-            </TooltipContent>
-          </Tooltip>
         </div>
       </div>
 
@@ -637,8 +323,6 @@ export function SourcesView() {
               nodes={sources}
               onOpen={handleOpenSource}
               onIngest={handleIngest}
-              onAgentIngest={experimentalAgentIngest ? handleAgentIngest : undefined}
-              agentRunningPath={agentRunningPath}
               onDelete={handleDelete}
               onDeleteFolder={handleDeleteFolder}
               pendingDeletePath={pendingDeletePath}
@@ -681,23 +365,6 @@ interface SourceTreeRow {
   depth: number
 }
 
-// Ingest-generated noise hidden from the sources tree even though the
-// listing now includes dot entries. User-added dotfolders (.claude,
-// .codex) pass through; only these internal artifacts are dropped.
-const HIDDEN_SOURCE_ENTRIES = new Set([".cache", ".DS_Store"])
-
-function filterTree(nodes: FileNode[]): FileNode[] {
-  return nodes
-    .filter((n) => !HIDDEN_SOURCE_ENTRIES.has(n.name))
-    .map((n) => {
-      if (n.is_dir && n.children) {
-        return { ...n, children: filterTree(n.children) }
-      }
-      return n
-    })
-    .filter((n) => !n.is_dir || (n.children && n.children.length > 0))
-}
-
 function countFiles(nodes: FileNode[]): number {
   let count = 0
   for (const node of nodes) {
@@ -737,20 +404,15 @@ function SourceTree({
   nodes,
   onOpen,
   onIngest,
-  onAgentIngest,
   onDelete,
   onDeleteFolder,
   pendingDeletePath,
   setPendingDeletePath,
   ingestingPath,
-  agentRunningPath,
 }: {
   nodes: FileNode[]
   onOpen: (node: FileNode) => void
   onIngest: (node: FileNode) => void
-  /** Optional — when undefined the 🤖 button is hidden. Gated behind
-   *  the Labs `experimentalAgentIngest` flag in v0.4.23. */
-  onAgentIngest?: (node: FileNode) => void
   onDelete: (node: FileNode) => void
   onDeleteFolder: (node: FileNode) => void
   /** Path of the node currently in "click again to confirm" state.
@@ -760,7 +422,6 @@ function SourceTree({
   pendingDeletePath: string | null
   setPendingDeletePath: (path: string | null) => void
   ingestingPath: string | null
-  agentRunningPath: string | null
 }) {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -873,35 +534,12 @@ function SourceTree({
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0"
-              title={t("sources.reingestOne", {
-                defaultValue: "Re-ingest this file",
-              })}
+              title={t("sources.ingest")}
               disabled={ingestingPath === node.path}
               onClick={() => onIngest(node)}
             >
-              <Wand2 className={`h-4 w-4 ${ingestingPath === node.path ? "animate-pulse" : ""}`} />
+              <BookOpen className="h-4 w-4" />
             </Button>
-            {onAgentIngest && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0"
-                title={t("sources.agentIngest", {
-                  defaultValue:
-                    "🤖 Agent ingest (experimental) — multi-turn LLM agent reads the source and writes wiki pages. Uses more tokens than classic ingest; quality not yet validated on real long docs.",
-                })}
-                disabled={agentRunningPath === node.path || agentRunningPath !== null}
-                onClick={() => onAgentIngest(node)}
-              >
-                <Bot
-                  className={`h-4 w-4 ${
-                    agentRunningPath === node.path
-                      ? "animate-pulse text-emerald-600 dark:text-emerald-400"
-                      : "text-emerald-600/70 dark:text-emerald-400/70"
-                  }`}
-                />
-              </Button>
-            )}
             <DeleteButton
               isPending={isPendingDelete}
               onClick={() => handleDeleteClick(node)}

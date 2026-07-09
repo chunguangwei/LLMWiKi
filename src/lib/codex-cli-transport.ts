@@ -9,6 +9,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import type { LlmConfig } from "@/stores/wiki-store"
+import { useWikiStore } from "@/stores/wiki-store"
 import type { ChatMessage, ContentBlock, RequestOverrides } from "./llm-providers"
 import type { StreamCallbacks } from "./llm-client"
 
@@ -61,6 +62,9 @@ type SpawnPayload = Record<string, unknown> & {
   streamId: string
   model: string
   prompt: string
+  isolateLocalConfig: boolean
+  timeoutMinutes?: number
+  workingDirectory?: string
 }
 
 export async function streamCodexCli(
@@ -192,10 +196,18 @@ export async function streamCodexCli(
 
     if (aborted) return
 
+    const workingDirectory = useWikiStore.getState().project?.path
+    if (!workingDirectory) {
+      throw new Error("Codex CLI requires an active project working directory")
+    }
+
     const payload: SpawnPayload = {
       streamId,
       model: config.model,
       prompt: buildPrompt(messages),
+      isolateLocalConfig: config.localCliIsolation === true,
+      timeoutMinutes: config.codexCliTimeoutMinutes,
+      workingDirectory,
     }
     await invoke("codex_cli_spawn", payload)
     if (aborted || signal?.aborted) {

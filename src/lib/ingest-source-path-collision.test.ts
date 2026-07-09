@@ -11,6 +11,10 @@ import { sourceSummarySlugFromIdentity } from "./source-identity"
 vi.mock("@/commands/fs", () => realFs)
 
 let sourceMarkers: string[] = []
+let failLongChunksOnce = new Set<number>()
+let extraReviewResponse = ""
+let generationSuffix = ""
+let abortDuringReview: AbortController | null = null
 
 vi.mock("./llm-client", () => ({
   streamChat: vi.fn(async (_cfg, messages, cb) => {
@@ -44,13 +48,39 @@ vi.mock("./llm-client", () => ({
       return
     }
 
-    // Upstream's prompt says "source summary page at **wiki/sources/X**";
-    // our fork's comprehensive-schema prompt instead names the canonical
-    // path in its fallback line ("fall back to: `wiki/sources/X`"). Accept
-    // either so the mock emits the summary at the canonical path.
-    const targetMatch =
-      systemPrompt.match(/source summary page at \*\*(wiki\/sources\/[^*]+)\*\*/) ??
-      systemPrompt.match(/fall back to:\s*`(wiki\/sources\/[^`]+)`/)
+    if (systemPrompt.startsWith("You are analyzing a long source document")) {
+      const chunkMatch = userPrompt.match(/Chunk:\s*(\d+)\/(\d+)/)
+      const chunkIndex = chunkMatch?.[1] ?? "0"
+      const numericChunkIndex = Number(chunkIndex)
+      if (failLongChunksOnce.has(numericChunkIndex)) {
+        failLongChunksOnce.delete(numericChunkIndex)
+        cb.onError(new Error(`chunk ${chunkIndex} failed once`))
+        return
+      }
+      cb.onToken([
+        "## Chunk Analysis",
+        `Chunk ${chunkIndex} introduced topic ${chunkIndex}.`,
+        "",
+        "## Updated Global Digest",
+        `Digest after chunk ${chunkIndex}: stable context ${chunkIndex}.`,
+      ].join("\n"))
+      cb.onDone()
+      return
+    }
+
+    if (systemPrompt.startsWith("You are identifying high-value follow-up research items")) {
+      if (abortDuringReview) {
+        abortDuringReview.abort()
+        throw new Error("AbortError")
+      }
+      cb.onToken(extraReviewResponse)
+      cb.onDone()
+      return
+    }
+
+    const targetMatch = systemPrompt.match(
+      /source summary page at \*\*(wiki\/sources\/[^*]+)\*\*/,
+    )
     if (!targetMatch) {
       cb.onToken("## Analysis\nConfiguration source.")
       cb.onDone()
@@ -72,34 +102,41 @@ vi.mock("./llm-client", () => ({
       "",
       `Configuration details for ${marker}.`,
       "---END FILE---",
+      generationSuffix,
     ].join("\n"))
     cb.onDone()
   }),
 }))
 
-// MinerU PDF parsing is mocked so the fallback/cancel behavior can be
-// exercised without hitting the cloud API.
 vi.mock("./mineru", () => ({
   parseWithMineru: vi.fn(),
+  parseWithMineruResult: vi.fn(),
 }))
 
-import { autoIngest, executeIngestWrites } from "./ingest"
-import { parseWithMineru } from "./mineru"
+import { autoIngest, executeIngestWrites, hasMineruImageRefs } from "./ingest"
+import { streamChat } from "./llm-client"
+import { parseWithMineruResult } from "./mineru"
 
-const mockParseWithMineru = vi.mocked(parseWithMineru)
+const mockStreamChat = vi.mocked(streamChat)
+const mockParseWithMineru = vi.mocked(parseWithMineruResult)
 
 describe("autoIngest source summary paths", () => {
   let tmp: { path: string; cleanup: () => Promise<void> } | undefined
 
   beforeEach(async () => {
     sourceMarkers = []
+    failLongChunksOnce = new Set()
+    extraReviewResponse = ""
+    generationSuffix = ""
+    abortDuringReview = null
+    mockStreamChat.mockClear()
     mockParseWithMineru.mockReset()
     tmp = await createTempProject("same-basename-sources")
 
     await writeFileRaw(`${tmp.path}/purpose.md`, "# Purpose\n\nTrack project config files.\n")
     await writeFileRaw(
       `${tmp.path}/schema.md`,
-      "# Schema\n\nEach source needs its own source summary page.\n",
+      "# Schema\n\nEach source needs its own source summary page.\n\n## Page Types\n| goal | wiki/goals/ | Outcomes |\n| habit | wiki/habits/ | Behaviours |",
     )
     await writeFileRaw(`${tmp.path}/wiki/index.md`, "# Index\n")
     await writeFileRaw(`${tmp.path}/wiki/overview.md`, "# Overview\n")
@@ -147,6 +184,21 @@ describe("autoIngest source summary paths", () => {
   afterEach(async () => {
     await tmp?.cleanup()
     tmp = undefined
+  })
+
+  it("detects MinerU image refs with URL-encoded source summary slugs", () => {
+    expect(hasMineruImageRefs(
+      "![chart](media/%E6%B1%A1%E6%B0%B4%20paper/mineru/images/chart%281%29.png)",
+      "污水 paper",
+    )).toBe(true)
+    expect(hasMineruImageRefs(
+      "![chart](media/污水 paper/mineru/images/chart.png)",
+      "污水 paper",
+    )).toBe(true)
+    expect(hasMineruImageRefs(
+      "![chart](media/other/mineru/images/chart.png)",
+      "污水 paper",
+    )).toBe(false)
   })
 
   it("keeps distinct source summaries for same-basename files in different source subdirectories", async () => {
@@ -251,6 +303,213 @@ describe("autoIngest source summary paths", () => {
     expect(await fs.readFile(canonicalSummaryPath, "utf8")).toContain("project-a config")
   })
 
+  it("analyzes oversized sources in chunks before final wiki generation", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["long source"]
+    const longSourcePath = `${tmp.path}/raw/sources/project-a/long-report.md`
+    await writeFileRaw(
+      longSourcePath,
+      [
+        "# Chapter One",
+        "",
+        "A".repeat(9000),
+        "",
+        "## Chapter Two",
+        "",
+        "B".repeat(9000),
+        "",
+        "## Chapter Three",
+        "",
+        "C".repeat(9000),
+      ].join("\n"),
+    )
+
+    await autoIngest(
+      tmp.path,
+      longSourcePath,
+      { ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 },
+      undefined,
+      "project-a",
+    )
+
+    const chunkCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages?.[0]?.content ?? "").startsWith("You are analyzing a long source document"),
+    )
+    expect(chunkCalls.length).toBeGreaterThan(1)
+    const chunkSystemPrompt = String(chunkCalls[0][1]?.[0]?.content ?? "")
+    expect(chunkSystemPrompt).toContain("wiki/goals/")
+    expect(chunkSystemPrompt).toContain("Schema-Typed Candidates")
+    expect(chunkSystemPrompt).toContain("never invent goals")
+    expect(String(chunkCalls[0][1]?.[1]?.content ?? "")).toContain("## MAIN CHUNK TO ANALYZE")
+    expect(String(chunkCalls[1][1]?.[1]?.content ?? "")).toContain(
+      "Digest after chunk 1: stable context 1.",
+    )
+    expect(String(chunkCalls[1][1]?.[1]?.content ?? "")).not.toContain(
+      "introduced topic 1",
+    )
+
+    const generationCall = mockStreamChat.mock.calls.find(([, messages]) =>
+      String(messages?.[0]?.content ?? "").includes("Based on the analysis provided, generate wiki files"),
+    )
+    expect(generationCall).toBeTruthy()
+    const generationPrompt = String(generationCall?.[1]?.[1]?.content ?? "")
+    expect(generationPrompt).toContain("Long Source Context")
+    expect(generationPrompt).toContain(
+      `Digest after chunk ${chunkCalls.length}: stable context ${chunkCalls.length}.`,
+    )
+    const finalDigestSection = generationPrompt
+      .split("## Source Context")[1]
+      ?.split("## Chunk Analysis Notes")[0] ?? ""
+    expect(finalDigestSection).toContain(
+      `Digest after chunk ${chunkCalls.length}: stable context ${chunkCalls.length}.`,
+    )
+    expect(finalDigestSection).not.toContain(
+      `Chunk ${chunkCalls.length} introduced topic ${chunkCalls.length}.`,
+    )
+  })
+
+  it("resumes oversized source analysis from the persisted chunk checkpoint", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["long source"]
+    failLongChunksOnce = new Set([2])
+    const longSourcePath = `${tmp.path}/raw/sources/project-a/resume-report.md`
+    const llmConfig = { ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 }
+    await writeFileRaw(
+      longSourcePath,
+      [
+        "# Chapter One",
+        "",
+        "A".repeat(9000),
+        "",
+        "## Chapter Two",
+        "",
+        "B".repeat(9000),
+        "",
+        "## Chapter Three",
+        "",
+        "C".repeat(9000),
+      ].join("\n"),
+    )
+
+    await expect(
+      autoIngest(tmp.path, longSourcePath, llmConfig, undefined, "project-a"),
+    ).rejects.toThrow("Chunk analysis stream failed")
+
+    const progressDir = path.join(tmp.path, ".llm-wiki", "ingest-progress")
+    expect((await fs.readdir(progressDir)).filter((name) => name.endsWith(".json"))).toHaveLength(1)
+
+    mockStreamChat.mockClear()
+    await autoIngest(tmp.path, longSourcePath, llmConfig, undefined, "project-a")
+
+    const resumedChunkCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages?.[0]?.content ?? "").startsWith("You are analyzing a long source document"),
+    )
+    expect(resumedChunkCalls.length).toBeGreaterThan(0)
+    expect(String(resumedChunkCalls[0][1]?.[1]?.content ?? "")).toContain("Chunk: 2/3")
+    expect(String(resumedChunkCalls[0][1]?.[1]?.content ?? "")).toContain(
+      "Digest after chunk 1: stable context 1.",
+    )
+    expect(String(resumedChunkCalls[0][1]?.[1]?.content ?? "")).not.toContain(
+      "introduced topic 1",
+    )
+    await expect(fs.readdir(progressDir)).resolves.toEqual([])
+  })
+
+  it("adds follow-up research reviews from the dedicated review stage", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["project-a config"]
+    generationSuffix = [
+      "",
+      "---FILE: wiki/concepts/nitrification-inhibition.md---",
+      "---",
+      'title: "Nitrification inhibition"',
+      "---",
+      "",
+      "# Nitrification inhibition",
+      "",
+      "X".repeat(10_500),
+      "---END FILE---",
+    ].join("\n")
+    extraReviewResponse = [
+      "---REVIEW: suggestion | Research nitrification inhibition signals---",
+      "Add follow-up research on early-warning indicators for nitrification inhibition.",
+      "OPTIONS: Create Page | Skip",
+      "SEARCH: nitrification inhibition early warning wastewater | ammonia oxidation inhibition signals | wastewater nitrification process upset indicators",
+      "---END REVIEW---",
+    ].join("\n")
+
+    await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/config.yaml`,
+      useWikiStore.getState().llmConfig,
+      undefined,
+      "project-a",
+    )
+
+    const reviews = useReviewStore.getState().items
+    expect(reviews).toHaveLength(1)
+    expect(reviews[0]).toMatchObject({
+      type: "suggestion",
+      title: "Research nitrification inhibition signals",
+    })
+    expect(reviews[0].searchQueries).toEqual([
+      "nitrification inhibition early warning wastewater",
+      "ammonia oxidation inhibition signals",
+      "wastewater nitrification process upset indicators",
+    ])
+  })
+
+  it("parses generation and dedicated review-stage blocks separately", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["project-a config"]
+    generationSuffix = [
+      "",
+      "---REVIEW: missing-page | Truncated Orphan---",
+      "Partial description that got cut off",
+    ].join("\n")
+    extraReviewResponse = [
+      "---REVIEW: suggestion | Real Follow-up---",
+      "Real description that should not be swallowed by the generation orphan.",
+      "OPTIONS: Create Page | Skip",
+      "SEARCH: real follow up query | second query",
+      "---END REVIEW---",
+    ].join("\n")
+
+    await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/config.yaml`,
+      { ...useWikiStore.getState().llmConfig, maxContextSize: 128_000 },
+      undefined,
+      "project-a",
+    )
+
+    const reviews = useReviewStore.getState().items
+    expect(reviews).toHaveLength(1)
+    expect(reviews[0]).toMatchObject({
+      type: "suggestion",
+      title: "Real Follow-up",
+    })
+    expect(reviews[0].description).not.toContain("Truncated Orphan")
+  })
+
+  it("propagates cancellation that happens during the dedicated review stage", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["project-a config"]
+    generationSuffix = `${"\n"}${"X".repeat(10_500)}`
+    const controller = new AbortController()
+    abortDuringReview = controller
+
+    await expect(
+      autoIngest(
+        tmp.path,
+        `${tmp.path}/raw/sources/project-a/config.yaml`,
+        { ...useWikiStore.getState().llmConfig, maxContextSize: 128_000 },
+        controller.signal,
+        "project-a",
+      ),
+    ).rejects.toThrow("Ingest cancelled")
+  })
+
   it("falls back to built-in PDF extraction when MinerU fails for a non-cancelled ingest", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["mineru fallback source"]
@@ -297,11 +556,6 @@ describe("autoIngest source summary paths", () => {
     controller.abort()
     mockParseWithMineru.mockRejectedValueOnce(new Error("MinerU parsing cancelled"))
 
-    // A cancelled MinerU run now surfaces the unified cancellation error
-    // (upstream 006327d routes all abort paths through throwIfIngestAborted,
-    // which also marks the activity item errored) instead of re-throwing the
-    // MinerU-specific message. The key behavior — no silent pdfium fallback —
-    // is still asserted below.
     await expect(
       autoIngest(
         tmp.path,
@@ -358,11 +612,11 @@ describe("autoIngest source summary paths", () => {
     )
 
     const canonicalSummary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
-    const canonicalSummaryPath = path.join(tmp.path, canonicalSummary)
+    const canonicalSummaryPath = path.join(tmp.path, canonicalSummary).replace(/\\/g, "/")
     const staleSummaryPath = path.join(tmp.path, "wiki", "sources", "config.md")
     const content = await fs.readFile(canonicalSummaryPath, "utf8")
 
-    expect(writtenPaths).toEqual([canonicalSummaryPath])
+    expect(writtenPaths.map((p) => p.replace(/\\/g, "/"))).toEqual([canonicalSummaryPath])
     await expect(fs.access(staleSummaryPath)).rejects.toThrow()
     expect(content).toContain('sources: ["project-a/config.yaml"]')
   })

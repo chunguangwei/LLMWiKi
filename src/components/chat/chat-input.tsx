@@ -1,115 +1,132 @@
-import { useRef, useState, useCallback, useEffect } from "react"
-import { Send, Square, X, Paperclip, Link as LinkIcon, Search, Image as ImageIcon, Globe, FileSearch } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, useCallback } from "react"
+import { FileSearch, Globe2, ImagePlus, Send, Sparkles, Square, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { isImeComposing } from "@/lib/keyboard-utils"
-import { getFileName } from "@/lib/path-utils"
-import { isLikelyUrl } from "@/lib/web-fetch"
-import { looksLikeSearchTrigger } from "@/lib/search-trigger"
-import type { ChatAgentMode } from "@/lib/chat-agent"
+import type { MessageImage } from "@/stores/chat-store"
+import type { ChatAgentMode } from "@/lib/chat-agent-types"
+import {
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_MB,
+  MAX_IMAGES_PER_MESSAGE,
+  fileToMessageImage,
+  isAcceptedImageType,
+  messageImageToDataUrl,
+} from "@/lib/chat-image-utils"
 
-// v0.5.1: the four agent routing modes, in display order. Rendered as a
-// small segmented radiogroup beside the web/AnyTXT pill toggles.
+export interface ChatSendOptions {
+  useWebSearch: boolean
+  useAnyTxtSearch: boolean
+  agentMode: ChatAgentMode
+  skills: string[]
+  skillMode?: "auto" | "explicit"
+  approvedShellCommands?: string[]
+  shellCommand?: string
+}
+
 const AGENT_MODE_OPTIONS: ChatAgentMode[] = ["fast", "standard", "deep", "local_first"]
 
-/** Display-only shape for image chips. Full base64 / path lives in the parent. */
-export interface StagedImageChip {
+export interface ChatSkillOption {
   id: string
-  displayName: string
-  /** "clipboard" | "file" — drives icon + tooltip label only. */
-  source: "clipboard" | "file"
+  name: string
+  description?: string
+  source: string
+}
+
+interface SlashSkillTrigger {
+  start: number
+  end: number
+  query: string
+}
+
+interface SlashSkillTokenEdit {
+  value: string
+  cursor: number
+}
+
+export type SkillChipDeleteTarget = "first" | "last" | null
+
+export function findSlashSkillTrigger(value: string, cursor: number): SlashSkillTrigger | null {
+  if (cursor < 0 || cursor > value.length) return null
+  const prefix = value.slice(0, cursor)
+  const match = /(^|\s)\/([^\s/]*)$/.exec(prefix)
+  if (!match) return null
+  const query = match[2] ?? ""
+  const suffix = value.slice(cursor)
+  const suffixEnd = suffix.search(/\s/)
+  return {
+    start: cursor - query.length - 1,
+    end: suffixEnd === -1 ? value.length : cursor + suffixEnd,
+    query,
+  }
+}
+
+export function filterSlashSkillOptions(
+  skills: ChatSkillOption[],
+  query: string,
+  sourceLabel: (source: string) => string,
+  limit = Number.POSITIVE_INFINITY,
+): ChatSkillOption[] {
+  const normalized = query.trim().toLowerCase()
+  return skills
+    .filter((skill) => {
+      if (!normalized) return true
+      return [
+        skill.name,
+        skill.id,
+        skill.description ?? "",
+        sourceLabel(skill.source),
+      ].some((part) => part.toLowerCase().includes(normalized))
+    })
+    .slice(0, limit)
+}
+
+export function removeSlashSkillToken(value: string, trigger: SlashSkillTrigger): SlashSkillTokenEdit {
+  const before = value.slice(0, trigger.start)
+  const after = value.slice(trigger.end)
+  const needsSpacer = before.length > 0 && after.length > 0 && !/\s$/.test(before) && !/^\s/.test(after)
+  return {
+    value: `${before}${needsSpacer ? " " : ""}${after}`,
+    cursor: before.length + (needsSpacer ? 1 : 0),
+  }
+}
+
+function slashSkillTokenKey(value: string, trigger: SlashSkillTrigger | null): string | null {
+  if (!trigger) return null
+  const token = value.slice(trigger.start, trigger.end)
+  return `${trigger.start}:${token}`
+}
+
+export function skillChipDeleteTarget(
+  key: string,
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  selectedSkillCount: number,
+): SkillChipDeleteTarget {
+  if (selectedSkillCount === 0 || selectionStart !== 0 || selectionEnd !== 0) return null
+  if (key === "Backspace") return "last"
+  if (key === "Delete" && value.length === 0) return "first"
+  return null
 }
 
 interface ChatInputProps {
-  onSend: (text: string) => void
+  onSend: (text: string, images: MessageImage[], options: ChatSendOptions) => void
   onStop: () => void
   isStreaming: boolean
-  /**
-   * Chat-agent search toggles (ported from upstream cea0029). Controlled
-   * by the chat-store (persisted per project) — the buttons here just
-   * flip the store value via the change callbacks. `anyTxtAvailable`
-   * gates the AnyTXT toggle: when no AnyTXT config exists it renders
-   * disabled (the fork has no AnyTXT settings UI yet, so it's effectively
-   * always off, but the control is wired for parity + future use).
-   */
   useWebSearch: boolean
   useAnyTxtSearch: boolean
-  /**
-   * Agent routing mode (v0.5.1). Controlled by the chat-store (persisted
-   * per device); the segmented selector here flips it via onAgentModeChange.
-   */
   agentMode: ChatAgentMode
+  availableSkills: ChatSkillOption[]
+  selectedSkills: string[]
   onUseWebSearchChange: (enabled: boolean) => void
   onUseAnyTxtSearchChange: (enabled: boolean) => void
   onAgentModeChange: (mode: ChatAgentMode) => void
+  onSelectedSkillsChange: (skills: string[]) => void
   anyTxtAvailable?: boolean
+  imageInputAvailable?: boolean
   placeholder?: string
-  stagedFiles?: string[]
-  onRemoveFile?: (path: string) => void
-  stagedUrls?: string[]
-  onAddUrl?: (url: string) => void
-  onRemoveUrl?: (url: string) => void
-  /**
-   * Image inputs (clipboard paste / drag-drop / picker). Display
-   * chips with an image icon. Removal callback removes the
-   * corresponding full payload in the parent's state.
-   */
-  stagedImages?: StagedImageChip[]
-  onAddImage?: (base64: string, mediaType: string, displayName?: string) => void
-  onRemoveImage?: (id: string) => void
-  /**
-   * When supplied, the 🔍 button is rendered. Click pre-fills the
-   * textarea with `/search ` so the user can type the query and press
-   * Enter — same code path as if they had typed it manually, which
-   * keeps `onSend` the single funnel for search triggers.
-   */
-  onSearchClick?: () => void
-  /**
-   * After search confirm, the original query lingers as the wiki
-   * Context "intent" — rendered above the URL chips with a 🔍 icon
-   * so the user can see / remove what'll be recorded as the search
-   * angle. On send, chat-panel folds it into the Context block.
-   */
-  searchIntent?: string | null
-  onClearSearchIntent?: () => void
-}
-
-/**
- * Encode an ArrayBuffer to base64 without blowing the stack on large
- * pastes. `String.fromCharCode(...arr)` apply-spreads the entire array
- * onto the stack, which throws RangeError above ~120k elements — a
- * 1MB screenshot easily blows past that. Chunked 32KB-at-a-time
- * conversion keeps us safe up to multi-MB images.
- */
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  let binary = ""
-  const CHUNK = 0x8000
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode.apply(
-      null,
-      Array.from(bytes.subarray(i, i + CHUNK)),
-    )
-  }
-  return btoa(binary)
-}
-
-/** Pill styling for the chat-agent search toggles, on vs off. */
-function searchToggleClass(active: boolean): string {
-  return [
-    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-    active
-      ? "border-primary/40 bg-primary/10 text-primary"
-      : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground",
-  ].join(" ")
-}
-
-function hostnameOf(url: string): string {
-  try {
-    return new URL(url).hostname
-  } catch {
-    return url
-  }
 }
 
 export function ChatInput({
@@ -119,38 +136,290 @@ export function ChatInput({
   useWebSearch,
   useAnyTxtSearch,
   agentMode,
+  availableSkills,
+  selectedSkills,
   onUseWebSearchChange,
   onUseAnyTxtSearchChange,
   onAgentModeChange,
+  onSelectedSkillsChange,
   anyTxtAvailable = true,
+  imageInputAvailable = true,
   placeholder,
-  stagedFiles,
-  onRemoveFile,
-  stagedUrls,
-  onAddUrl,
-  onRemoveUrl,
-  stagedImages,
-  onAddImage,
-  onRemoveImage,
-  onSearchClick,
-  searchIntent,
-  onClearSearchIntent,
 }: ChatInputProps) {
   const { t } = useTranslation()
   const [value, setValue] = useState("")
+  const [images, setImages] = useState<MessageImage[]>([])
+  const [imageError, setImageError] = useState<string | null>(null)
+  const [showSkills, setShowSkills] = useState(false)
+  const [cursorPosition, setCursorPosition] = useState(0)
+  const [slashSkillIndex, setSlashSkillIndex] = useState(0)
+  const [dismissedSlashKey, setDismissedSlashKey] = useState<string | null>(null)
+  const inputFrameRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // If AnyTXT becomes unavailable while its toggle is on, switch it back
-  // off (ported from upstream cea0029) so we never ask the agent to use a
-  // tool that isn't configured.
+  const skillSourceLabel = useCallback(
+    (source: string) => t(`chat.skillSources.${source}`, { defaultValue: source }),
+    [t],
+  )
+
+  const slashSkillTrigger = useMemo(
+    () => findSlashSkillTrigger(value, cursorPosition),
+    [cursorPosition, value],
+  )
+  const slashSkillOptions = useMemo(() => {
+    if (!slashSkillTrigger) return []
+    return filterSlashSkillOptions(availableSkills, slashSkillTrigger.query, skillSourceLabel)
+  }, [availableSkills, skillSourceLabel, slashSkillTrigger])
+  const selectedSkillOptions = useMemo(() => {
+    const byId = new Map(availableSkills.map((skill) => [skill.id, skill]))
+    return selectedSkills.map((id) => byId.get(id) ?? {
+      id,
+      name: id,
+      source: "custom",
+    })
+  }, [availableSkills, selectedSkills])
+  const slashSkillKey = slashSkillTokenKey(value, slashSkillTrigger)
+  const showSlashSkills =
+    !!slashSkillTrigger
+    && slashSkillKey !== dismissedSlashKey
+    && slashSkillOptions.length > 0
+    && !isStreaming
+
   useEffect(() => {
     if (!anyTxtAvailable && useAnyTxtSearch) onUseAnyTxtSearchChange(false)
   }, [anyTxtAvailable, onUseAnyTxtSearchChange, useAnyTxtSearch])
 
-  const isSearching = looksLikeSearchTrigger(value)
-  const hasSearchIntent = Boolean(searchIntent && searchIntent.length > 0)
+  useEffect(() => {
+    setSlashSkillIndex(0)
+    setDismissedSlashKey(null)
+  }, [slashSkillKey])
 
-  // v0.5.1: localized label for each agent routing mode.
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const frame = inputFrameRef.current
+      if (!frame || frame.contains(event.target as Node)) return
+      setShowSkills(false)
+      if (slashSkillKey) setDismissedSlashKey(slashSkillKey)
+    }
+    document.addEventListener("pointerdown", onPointerDown)
+    return () => document.removeEventListener("pointerdown", onPointerDown)
+  }, [slashSkillKey])
+
+  // Validate + decode a batch of files (from paste, drop, or the file
+  // picker) and append the accepted ones to `images`. Rejections set a
+  // transient error message rather than throwing — one bad file should
+  // never block the good ones in the same batch.
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      const imageFiles = files.filter((f) => f.type.startsWith("image/"))
+      if (imageFiles.length === 0) return
+      if (!imageInputAvailable) {
+        setImageError(t("chat.imageInputUnavailable"))
+        return
+      }
+      let error: string | null = null
+      const accepted: MessageImage[] = []
+      // Read current count via the functional updater below; here we
+      // pre-compute remaining slots from the latest render's state.
+      let remaining = MAX_IMAGES_PER_MESSAGE - images.length
+      for (const file of imageFiles) {
+        if (remaining <= 0) {
+          error = t("chat.tooManyImages", { max: MAX_IMAGES_PER_MESSAGE })
+          break
+        }
+        if (!isAcceptedImageType(file.type)) {
+          error = t("chat.unsupportedImageType", { type: file.type || "?" })
+          continue
+        }
+        if (file.size > MAX_IMAGE_BYTES) {
+          error = t("chat.imageTooLarge", { max: MAX_IMAGE_MB, name: file.name || "image" })
+          continue
+        }
+        try {
+          accepted.push(await fileToMessageImage(file))
+          remaining -= 1
+        } catch {
+          error = t("chat.unsupportedImageType", { type: file.type || "?" })
+        }
+      }
+      if (accepted.length > 0) {
+        setImages((prev) => [...prev, ...accepted].slice(0, MAX_IMAGES_PER_MESSAGE))
+      }
+      setImageError(error)
+    },
+    [imageInputAvailable, images.length, t],
+  )
+
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+      const files: File[] = []
+      for (const item of items) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+          const file = item.getAsFile()
+          if (file) files.push(file)
+        }
+      }
+      if (files.length > 0) {
+        // Prevent the image's stray name/path from landing in the
+        // textarea as text on browsers that surface both.
+        e.preventDefault()
+        void addFiles(files)
+      }
+    },
+    [addFiles],
+  )
+
+  const handleFilePick = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files ? Array.from(e.target.files) : []
+      void addFiles(files)
+      // Reset so picking the same file again still fires onChange.
+      e.target.value = ""
+    },
+    [addFiles],
+  )
+
+  const removeImage = useCallback((index: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== index))
+    setImageError(null)
+  }, [])
+
+  const removeSelectedSkill = useCallback(
+    (id: string) => {
+      onSelectedSkillsChange(selectedSkills.filter((item) => item !== id))
+      requestAnimationFrame(() => textareaRef.current?.focus())
+    },
+    [onSelectedSkillsChange, selectedSkills],
+  )
+
+  const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setValue(e.target.value)
+    setCursorPosition(e.target.selectionStart ?? e.target.value.length)
+    const ta = e.target
+    ta.style.height = "auto"
+    ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
+  }, [])
+
+  const handleSelect = useCallback((e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    const target = e.currentTarget
+    setCursorPosition(target.selectionStart ?? target.value.length)
+  }, [])
+
+  const handleSend = useCallback(() => {
+    const trimmed = value.trim()
+    // Allow image-only messages: send if there's text OR at least one image.
+    if ((!trimmed && images.length === 0) || isStreaming) return
+    if (images.length > 0 && !imageInputAvailable) {
+      setImageError(t("chat.imageInputUnavailable"))
+      return
+    }
+    onSend(trimmed, images, {
+      useWebSearch,
+      useAnyTxtSearch,
+      agentMode,
+      skills: selectedSkills,
+      skillMode: selectedSkills.length > 0 ? "explicit" : "auto",
+    })
+    setValue("")
+    setImages([])
+    setImageError(null)
+    setShowSkills(false)
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto"
+    }
+  }, [agentMode, imageInputAvailable, images, isStreaming, onSend, selectedSkills, t, useAnyTxtSearch, useWebSearch, value])
+
+  const applySlashSkill = useCallback(
+    (skill: ChatSkillOption) => {
+      const trigger = slashSkillTrigger
+      if (!trigger) return
+      const edit = removeSlashSkillToken(value, trigger)
+      const nextValue = edit.value
+      const nextCursor = edit.cursor
+      setValue(nextValue)
+      setCursorPosition(nextCursor)
+      setDismissedSlashKey(null)
+      onSelectedSkillsChange(selectedSkills.includes(skill.id) ? selectedSkills : [...selectedSkills, skill.id])
+      setShowSkills(false)
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current
+        if (!ta) return
+        ta.focus()
+        ta.setSelectionRange(nextCursor, nextCursor)
+        ta.style.height = "auto"
+        ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
+      })
+    },
+    [onSelectedSkillsChange, selectedSkills, slashSkillTrigger, value],
+  )
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // Don't submit on the Enter that commits an IME candidate —
+      // the user is mid-composition (Chinese / Japanese / Korean
+      // input method picking an English word or phrase) and would
+      // see the message fire before they finished typing.
+      if (isImeComposing(e)) return
+      const target = e.currentTarget
+      const selectionStart = target.selectionStart ?? 0
+      const selectionEnd = target.selectionEnd ?? selectionStart
+      const chipDeleteTarget = !showSlashSkills
+        ? skillChipDeleteTarget(e.key, value, selectionStart, selectionEnd, selectedSkills.length)
+        : null
+      if (chipDeleteTarget) {
+        e.preventDefault()
+        e.stopPropagation()
+        removeSelectedSkill(chipDeleteTarget === "last" ? selectedSkills[selectedSkills.length - 1] : selectedSkills[0])
+        return
+      }
+      if (showSlashSkills) {
+        if (e.key === "Enter" && e.shiftKey) {
+          return
+        }
+        if (e.key === "ArrowDown") {
+          e.preventDefault()
+          e.stopPropagation()
+          setSlashSkillIndex((idx) => Math.min(idx + 1, slashSkillOptions.length - 1))
+          return
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault()
+          e.stopPropagation()
+          setSlashSkillIndex((idx) => Math.max(idx - 1, 0))
+          return
+        }
+        if (e.key === "Tab" || e.key === "Enter") {
+          e.preventDefault()
+          e.stopPropagation()
+          const skill = slashSkillOptions[slashSkillIndex] ?? slashSkillOptions[0]
+          if (skill) applySlashSkill(skill)
+          return
+        }
+        if (e.key === "Escape") {
+          e.preventDefault()
+          e.stopPropagation()
+          if (slashSkillKey) setDismissedSlashKey(slashSkillKey)
+          return
+        }
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault()
+        handleSend()
+      }
+    },
+    [applySlashSkill, handleSend, removeSelectedSkill, selectedSkills, showSlashSkills, slashSkillIndex, slashSkillKey, slashSkillOptions, value],
+  )
+
+  const searchToggleClass = (active: boolean) =>
+    `inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors ${
+      active
+        ? "border-border bg-accent text-foreground shadow-sm"
+        : "border-transparent bg-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+    } disabled:pointer-events-none disabled:opacity-50`
+
   const agentModeLabel = (mode: ChatAgentMode) => {
     switch (mode) {
       case "fast":
@@ -165,318 +434,298 @@ export function ChatInput({
     }
   }
 
-  const handleSearchClick = useCallback(() => {
-    if (!onSearchClick) return
-    onSearchClick()
-    // Prefill with `/search ` so the user can type the query. If they
-    // already had text, prepend; if it already starts with `/search`
-    // just focus.
-    setValue((prev) => {
-      const trimmed = prev.trim()
-      if (/^\/search/i.test(trimmed)) return prev
-      return `/search ${prev}`.trimEnd() + (prev.trim() ? "" : "")
-    })
-    // Focus + place caret at the end so typing the query is immediate.
-    requestAnimationFrame(() => {
-      const ta = textareaRef.current
-      if (ta) {
-        ta.focus()
-        const len = ta.value.length
-        ta.setSelectionRange(len, len)
-        ta.style.height = "auto"
-        ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
-      }
-    })
-  }, [onSearchClick])
-
-  const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setValue(e.target.value)
-    const ta = e.target
-    ta.style.height = "auto"
-    ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
-  }, [])
-
-  const hasFiles = (stagedFiles?.length ?? 0) > 0
-  const hasUrls = (stagedUrls?.length ?? 0) > 0
-  const hasImages = (stagedImages?.length ?? 0) > 0
-  const hasStaged = hasFiles || hasUrls || hasImages
-  const hasAnyContext = hasStaged || hasSearchIntent
-  const canSend = !isStreaming && (value.trim().length > 0 || hasStaged)
-
-  const handleSend = useCallback(() => {
-    if (!canSend) return
-    onSend(value.trim())
-    setValue("")
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto"
+  const toggleSkill = (id: string) => {
+    if (selectedSkills.includes(id)) {
+      onSelectedSkillsChange(selectedSkills.filter((item) => item !== id))
+    } else {
+      onSelectedSkillsChange([...selectedSkills, id])
     }
-  }, [canSend, value, onSend])
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // Don't submit on the Enter that commits an IME candidate —
-      // the user is mid-composition (Chinese / Japanese / Korean
-      // input method picking an English word or phrase) and would
-      // see the message fire before they finished typing.
-      if (isImeComposing(e)) return
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault()
-        handleSend()
-      }
-    },
-    [handleSend],
-  )
-
-  // Paste-detection: image bytes win over URL detection. Order matters
-  // because a clipboard with both image data AND text (e.g. macOS
-  // Preview "Copy Image" can carry both) should route to the image
-  // chip, not a stringified URL.
-  //
-  //   1. Look for `image/*` items first → read as ArrayBuffer → base64
-  //      → onAddImage. This covers Cmd+Shift+4 screenshots, "Copy
-  //      Image" from browsers, and clipboard tools like Snipaste.
-  //   2. Otherwise fall back to the existing URL paste fast-path.
-  //   3. Otherwise let the textarea handle the paste natively.
-  const handlePaste = useCallback(
-    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      // Image branch
-      if (onAddImage) {
-        const items = Array.from(e.clipboardData.items ?? [])
-        const imageItems = items.filter((it) => it.kind === "file" && it.type.startsWith("image/"))
-        if (imageItems.length > 0) {
-          e.preventDefault()
-          for (const it of imageItems) {
-            const file = it.getAsFile()
-            if (!file) continue
-            // Async read; UI shows the chip the moment readAsArrayBuffer
-            // resolves. We don't await here because handlePaste itself
-            // can't be async (React synthetic events would be pooled).
-            file.arrayBuffer().then((buf) => {
-              const b64 = arrayBufferToBase64(buf)
-              const displayName = file.name && file.name !== "image.png"
-                ? file.name
-                : `screenshot-${new Date().toISOString().slice(11, 19).replace(/:/g, "")}.${file.type === "image/png" ? "png" : "img"}`
-              onAddImage(b64, file.type || "image/png", displayName)
-            }).catch((err) => {
-              console.warn("[chat-input] failed to read pasted image:", err)
-            })
-          }
-          return
-        }
-      }
-      // URL branch (existing behaviour)
-      if (onAddUrl) {
-        const txt = e.clipboardData.getData("text/plain")
-        if (txt && isLikelyUrl(txt)) {
-          e.preventDefault()
-          onAddUrl(txt.trim())
-        }
-      }
-    },
-    [onAddImage, onAddUrl],
-  )
+  }
 
   return (
-    <div className="flex flex-col border-t">
-      {hasAnyContext && (
-        <div className="flex flex-wrap gap-1.5 px-3 pb-1 pt-2">
-          {hasSearchIntent && (
-            <div
-              key={`search-intent:${searchIntent}`}
-              className="flex max-w-[320px] items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs"
-              title={`Search query — recorded as wiki Context: ${searchIntent}`}
-            >
-              <Search className="h-3 w-3 shrink-0 text-primary" />
-              <span className="truncate text-primary">{searchIntent}</span>
-              {onClearSearchIntent && (
+    <div className="border-t bg-background/95 p-3">
+      <div ref={inputFrameRef} className="relative rounded-lg border border-border/80 bg-card/80 p-2 shadow-sm ring-1 ring-black/5 focus-within:border-ring/60 focus-within:ring-ring/20 dark:ring-white/5">
+        {images.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2 px-1">
+            {images.map((img, i) => (
+              <div key={i} className="group relative h-16 w-16 overflow-hidden rounded-md border border-border/70">
+                <img
+                  src={messageImageToDataUrl(img)}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
                 <button
                   type="button"
-                  onClick={onClearSearchIntent}
-                  className="shrink-0 rounded p-0.5 text-primary/70 hover:bg-background hover:text-primary"
-                  title="Remove search intent"
+                  onClick={() => removeImage(i)}
+                  className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-0.5 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-destructive group-hover:opacity-100"
+                  title={t("chat.removeImage")}
                 >
                   <X className="h-3 w-3" />
                 </button>
-              )}
-            </div>
-          )}
-          {stagedImages?.map((img) => (
-            <div
-              key={`image:${img.id}`}
-              className="flex max-w-[240px] items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs"
-              title={`${img.source === "clipboard" ? "Pasted image" : "Image file"}: ${img.displayName}`}
-            >
-              <ImageIcon className="h-3 w-3 shrink-0 text-emerald-700 dark:text-emerald-400" />
-              <span className="truncate text-emerald-700 dark:text-emerald-300">{img.displayName}</span>
-              {onRemoveImage && (
-                <button
-                  type="button"
-                  onClick={() => onRemoveImage(img.id)}
-                  className="shrink-0 rounded p-0.5 text-emerald-700 dark:text-emerald-300/70 hover:bg-background hover:text-emerald-700 dark:text-emerald-400/70 dark:hover:text-emerald-300"
-                  title="Remove"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          ))}
-          {stagedFiles?.map((path) => (
-            <div
-              key={`file:${path}`}
-              className="flex max-w-[240px] items-center gap-1 rounded-md border bg-muted/60 px-2 py-1 text-xs"
-              title={path}
-            >
-              <Paperclip className="h-3 w-3 shrink-0 opacity-60" />
-              <span className="truncate">{getFileName(path)}</span>
-              {onRemoveFile && (
-                <button
-                  type="button"
-                  onClick={() => onRemoveFile(path)}
-                  className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
-                  title="Remove"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          ))}
-          {stagedUrls?.map((url) => (
-            <div
-              key={`url:${url}`}
-              className="flex max-w-[280px] items-center gap-1 rounded-md border bg-muted/60 px-2 py-1 text-xs"
-              title={url}
-            >
-              <LinkIcon className="h-3 w-3 shrink-0 opacity-60" />
-              <span className="truncate">{hostnameOf(url)}</span>
-              {onRemoveUrl && (
-                <button
-                  type="button"
-                  onClick={() => onRemoveUrl(url)}
-                  className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
-                  title="Remove"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {/*
-        Chat-agent search toggles (ported from upstream cea0029). When on,
-        the agent is allowed to call the corresponding tool (web / AnyTXT)
-        while building context. State is owned by the chat-store and
-        persisted per project; these buttons just flip it.
-      */}
-      <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2">
-        <button
-          type="button"
-          aria-pressed={useWebSearch}
-          onClick={() => onUseWebSearchChange(!useWebSearch)}
-          disabled={isStreaming}
-          className={searchToggleClass(useWebSearch)}
-        >
-          <Globe className="h-3 w-3" />
-          {t("chat.searchToggle.web")}
-        </button>
-        {anyTxtAvailable && (
-          <button
-            type="button"
-            aria-pressed={useAnyTxtSearch}
-            onClick={() => onUseAnyTxtSearchChange(!useAnyTxtSearch)}
-            disabled={isStreaming || !anyTxtAvailable}
-            className={searchToggleClass(useAnyTxtSearch)}
-          >
-            <FileSearch className="h-3 w-3" />
-            {t("chat.searchToggle.anytxt")}
-          </button>
+              </div>
+            ))}
+          </div>
         )}
-        {/*
-          Agent routing-mode selector (v0.5.1). A small segmented
-          radiogroup: fast / standard / deep / local_first. Drives how
-          aggressively the chat-agent loop retrieves. State is owned by the
-          chat-store and persisted per device alongside the pill toggles.
-        */}
-        <div
-          className="inline-flex h-7 items-center rounded-md border border-border/70 bg-muted/30 p-0.5"
-          role="radiogroup"
-          aria-label={t("chat.agentMode")}
-          title={t("chat.agentMode")}
-        >
-          {AGENT_MODE_OPTIONS.map((mode) => {
-            const active = agentMode === mode
-            return (
+        {imageError && (
+          <p className="mb-1 px-1 text-xs text-destructive">{imageError}</p>
+        )}
+        {images.length > 0 && !imageError && (
+          <p className="mb-1 px-1 text-xs text-muted-foreground">
+            {t("chat.imageVisionHint")}
+          </p>
+        )}
+        <div className="flex flex-wrap items-start gap-1 px-1">
+          {selectedSkillOptions.map((skill) => (
+            <span
+              key={skill.id}
+              className="group mt-1 inline-flex h-7 max-w-[16rem] items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 text-xs font-medium text-emerald-700 shadow-sm dark:text-emerald-300"
+              title={`${skill.name} · ${skillSourceLabel(skill.source)}`}
+            >
+              <Sparkles className="h-3 w-3 shrink-0 text-emerald-500" />
+              <span className="truncate">/{skill.name}</span>
               <button
-                key={mode}
                 type="button"
-                role="radio"
-                aria-checked={active}
-                disabled={isStreaming}
-                onClick={() => onAgentModeChange(mode)}
-                className={`h-6 rounded px-2 text-xs font-medium transition-colors ${
-                  active
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-background/60 hover:text-foreground"
-                } disabled:pointer-events-none disabled:opacity-50`}
+                onClick={() => removeSelectedSkill(skill.id)}
+                className="rounded p-0.5 text-emerald-700/60 opacity-70 transition hover:bg-emerald-500/15 hover:text-emerald-700 group-hover:opacity-100 dark:text-emerald-300/70 dark:hover:text-emerald-300"
+                title={t("chat.removeSkill", { name: skill.name })}
               >
-                {agentModeLabel(mode)}
+                <X className="h-3 w-3" />
               </button>
-            )
-          })}
+            </span>
+          ))}
+          <textarea
+            ref={textareaRef}
+            value={value}
+            dir="auto"
+            onChange={handleInput}
+            onSelect={handleSelect}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder={placeholder ?? "Type a message... (Enter to send, Shift+Enter for newline)"}
+            disabled={isStreaming}
+            rows={1}
+            className="min-w-[12rem] flex-1 resize-none border-0 bg-transparent px-1 py-2 text-sm leading-6 placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ maxHeight: "120px", overflowY: "auto" }}
+          />
         </div>
-      </div>
-      <div className="flex items-end gap-2 p-3 pt-2">
-        <textarea
-          ref={textareaRef}
-          value={value}
-          dir="auto"
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder={
-            isSearching
-              ? "Type your search query. Enter to run."
-              : hasStaged
-              ? "Optional: describe these (becomes wiki context). Enter to add."
-              : placeholder ?? "Type a message... (Enter to send, Shift+Enter for newline. Paste a URL to fetch it. /search <q> to search the web.)"
-          }
-          disabled={isStreaming}
-          rows={1}
-          className="flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-          style={{ maxHeight: "120px", overflowY: "auto" }}
+        {showSlashSkills && (
+          <div className="absolute bottom-[4.75rem] left-4 right-4 z-30 max-w-xl rounded-md border border-border bg-popover p-1.5 text-popover-foreground shadow-lg">
+            <div className="px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+              {t("chat.slashSkillHint")}
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              {slashSkillOptions.map((skill, index) => {
+                const active = index === slashSkillIndex
+                const selected = selectedSkills.includes(skill.id)
+                return (
+                  <button
+                    key={`${skill.source}:${skill.id}`}
+                    type="button"
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      applySlashSkill(skill)
+                    }}
+                    className={`flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                      active ? "bg-accent text-foreground" : "hover:bg-accent/60"
+                    }`}
+                  >
+                    <Sparkles className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${selected ? "text-emerald-500" : "text-muted-foreground"}`} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{skill.name}</span>
+                      <span className="block truncate text-muted-foreground">
+                        {skill.description || skillSourceLabel(skill.source)}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[10px] uppercase text-muted-foreground">
+                      {skillSourceLabel(skill.source)}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          multiple
+          className="hidden"
+          onChange={handleFilePick}
         />
-        {!isStreaming && onSearchClick && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleSearchClick}
-            className="shrink-0"
-            title="Search the web (/search)"
-          >
-            <Search className="h-4 w-4" />
-          </Button>
-        )}
-        {isStreaming ? (
-          <Button
-            variant="destructive"
-            size="icon"
-            onClick={onStop}
-            className="shrink-0"
-            title="Stop generation"
-          >
-            <Square className="h-4 w-4" />
-          </Button>
-        ) : (
-          <Button
-            size="icon"
-            onClick={handleSend}
-            disabled={!canSend}
-            className="shrink-0"
-            title={isSearching ? "Search" : hasStaged ? "Add to wiki" : "Send message"}
-          >
-            <Send className="h-4 w-4" />
-          </Button>
-        )}
+        <div className="mt-1 flex items-center justify-between gap-3 border-t border-border/50 pt-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span
+              className="inline-flex"
+              title={!imageInputAvailable ? t("chat.imageInputUnavailable") : t("chat.attachImage")}
+            >
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isStreaming || !imageInputAvailable || images.length >= MAX_IMAGES_PER_MESSAGE}
+                className={searchToggleClass(false)}
+              >
+                <ImagePlus className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{t("chat.attachImage")}</span>
+              </button>
+            </span>
+            <button
+              type="button"
+              aria-pressed={useWebSearch}
+              onClick={() => onUseWebSearchChange(!useWebSearch)}
+              disabled={isStreaming}
+              className={searchToggleClass(useWebSearch)}
+            >
+              <Globe2 className="h-3.5 w-3.5" />
+              {t("chat.useWebSearch")}
+              <span
+                className={`ml-0.5 h-1.5 w-1.5 rounded-full ${
+                  useWebSearch ? "bg-emerald-500" : "bg-muted-foreground/30"
+                }`}
+              />
+            </button>
+            <TooltipProvider delay={0}>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span className="inline-flex" />
+                  }
+                >
+                  <button
+                    type="button"
+                    aria-pressed={useAnyTxtSearch}
+                    onClick={() => onUseAnyTxtSearchChange(!useAnyTxtSearch)}
+                    disabled={isStreaming || !anyTxtAvailable}
+                    className={searchToggleClass(useAnyTxtSearch)}
+                  >
+                    <FileSearch className="h-3.5 w-3.5" />
+                    {t("chat.useAnyTxtSearch")}
+                    <span
+                      className={`ml-0.5 h-1.5 w-1.5 rounded-full ${
+                        useAnyTxtSearch ? "bg-emerald-500" : "bg-muted-foreground/30"
+                      }`}
+                    />
+                  </button>
+                </TooltipTrigger>
+                {!anyTxtAvailable && (
+                  <TooltipContent side="top" className="max-w-64 whitespace-normal leading-relaxed">
+                    {t("chat.enableAnyTxtInSettings")}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
+            <div className="relative">
+              <button
+                type="button"
+                aria-expanded={showSkills}
+                onClick={() => setShowSkills((open) => !open)}
+                disabled={isStreaming || availableSkills.length === 0}
+                className={searchToggleClass(selectedSkills.length > 0)}
+                title={availableSkills.length === 0 ? t("chat.noSkillsAvailable") : t("chat.skills")}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                {t("chat.skills")}
+                {selectedSkills.length > 0 && (
+                  <span className="ml-0.5 rounded bg-emerald-500/15 px-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                    {selectedSkills.length}
+                  </span>
+                )}
+              </button>
+              {showSkills && availableSkills.length > 0 && (
+                <div className="absolute bottom-full left-0 z-20 mb-2 w-72 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg">
+                  <div className="mb-1 px-1 text-xs font-medium text-muted-foreground">
+                    {t("chat.enabledSkills")}
+                    {selectedSkills.length === 0 && (
+                      <span className="ml-1 font-normal text-muted-foreground">
+                        {t("chat.skillsAutoMode", { defaultValue: "Auto" })}
+                      </span>
+                    )}
+                  </div>
+                  <div className="max-h-56 overflow-y-auto">
+                    {availableSkills.map((skill) => {
+                      const active = selectedSkills.includes(skill.id)
+                      return (
+                        <button
+                          key={`${skill.source}:${skill.id}`}
+                          type="button"
+                          onClick={() => toggleSkill(skill.id)}
+                          className={`mb-1 flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                            active ? "bg-accent text-foreground" : "hover:bg-accent/60"
+                          }`}
+                        >
+                          <span
+                            className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${
+                              active ? "bg-emerald-500" : "bg-muted-foreground/30"
+                            }`}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium">{skill.name}</span>
+                            <span className="block truncate text-muted-foreground">
+                              {skill.description || skillSourceLabel(skill.source)}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-[10px] uppercase text-muted-foreground">
+                            {skillSourceLabel(skill.source)}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div
+              className="inline-flex h-7 items-center rounded-md border border-border/70 bg-muted/30 p-0.5"
+              role="radiogroup"
+              aria-label={t("chat.agentMode")}
+              title={t("chat.agentMode")}
+            >
+              {AGENT_MODE_OPTIONS.map((mode) => {
+                const active = agentMode === mode
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    disabled={isStreaming}
+                    onClick={() => onAgentModeChange(mode)}
+                    className={`h-6 rounded px-2 text-xs font-medium transition-colors ${
+                      active
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                    } disabled:pointer-events-none disabled:opacity-50`}
+                  >
+                    {agentModeLabel(mode)}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          {isStreaming ? (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={onStop}
+              className="h-8 shrink-0 gap-1.5 rounded-md px-3"
+              title={t("chat.stopGeneration")}
+            >
+              <Square className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{t("chat.stopGeneration")}</span>
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={handleSend}
+              disabled={!value.trim() && images.length === 0}
+              className="h-8 shrink-0 gap-1.5 rounded-md px-3"
+              title={t("chat.sendMessage")}
+            >
+              <Send className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{t("chat.sendMessage")}</span>
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   )

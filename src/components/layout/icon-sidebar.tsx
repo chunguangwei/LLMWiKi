@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import {
-  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe, Sun, Moon, Monitor, MessageSquare,
+  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe, MessageSquare, Sparkles,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -8,10 +8,8 @@ import { useReviewStore } from "@/stores/review-store"
 import { useResearchStore } from "@/stores/research-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { useTranslation } from "react-i18next"
-import logoImg from "@/assets/logo.png"
+import logoImg from "@/assets/logo.jpg"
 import type { WikiState } from "@/stores/wiki-store"
-import type { Theme } from "@/lib/theme"
-import { saveTheme } from "@/lib/project-store"
 import {
   isResearchPanelVisible,
   nextResearchPanelNavState,
@@ -49,20 +47,6 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
   // remaining indicator that an update is available, so the user
   // never finds their way back to it.
   const updateAvailable = useUpdateStore((s) => hasAvailableUpdate(s))
-  const theme = useWikiStore((s) => s.theme)
-  const setTheme = useWikiStore((s) => s.setTheme)
-
-  // Theme quick-toggle: cycle system → light → dark → system. Each
-  // click is one-shot and persisted; App.tsx subscribes to the store
-  // and re-applies the .dark class via theme.ts, so we don't touch
-  // the DOM here.
-  function cycleTheme() {
-    const next: Theme = theme === "system" ? "light" : theme === "light" ? "dark" : "system"
-    setTheme(next)
-    void saveTheme(next).catch((err) =>
-      console.warn("[icon-sidebar] could not persist theme:", err),
-    )
-  }
 
   // Daemon health check
   const [daemonStatus, setDaemonStatus] = useState<string>("starting")
@@ -81,10 +65,6 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
     return () => clearInterval(interval)
   }, [])
 
-  // Deep Research lives in the right panel, which is hidden in the
-  // standalone chat/settings views. Toggling it from there must first
-  // switch back to the wiki view (so the panel has somewhere to show) —
-  // nextResearchPanelNavState encapsulates that decision.
   function handleResearchPanelToggle() {
     const next = nextResearchPanelNavState(activeView, researchPanelOpen)
     if (next.activeView !== activeView) setActiveView(next.activeView)
@@ -144,7 +124,20 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
                 </span>
               )}
             </TooltipTrigger>
-            <TooltipContent side="right">Deep Research</TooltipContent>
+            <TooltipContent side="right">{t("research.title")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              onClick={() => setActiveView("skills")}
+              className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
+                activeView === "skills"
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
+              }`}
+            >
+              <Sparkles className="h-5 w-5" />
+            </TooltipTrigger>
+            <TooltipContent side="right">{t("nav.skills")}</TooltipContent>
           </Tooltip>
         </div>
         {/* Bottom: daemon status + settings + switch project */}
@@ -164,36 +157,8 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
             <TooltipContent side="right">
               {daemonStatus === "running" && "Clip server running"}
               {daemonStatus === "starting" && "Clip server starting..."}
-              {daemonStatus === "port_conflict" && "Port 19827 is in use — a previous LLM Wiki instance may still be running after an abnormal exit. Fully quit all copies (or restart your machine) and relaunch to restore the Web Clipper."}
+              {daemonStatus === "port_conflict" && "Port 19827 is occupied. Web Clipper unavailable."}
               {daemonStatus === "error" && "Clip server error. Restarting..."}
-            </TooltipContent>
-          </Tooltip>
-          {/* Theme quick-toggle. Cycles system → light → dark and
-              shows the icon for the CURRENT preference (Monitor for
-              system, Sun for light, Moon for dark). Tooltip names the
-              next state so the click outcome is predictable. */}
-          <Tooltip>
-            <TooltipTrigger
-              onClick={cycleTheme}
-              className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground"
-              aria-label={t("nav.theme", { defaultValue: "Theme" })}
-            >
-              {theme === "system" ? (
-                <Monitor className="h-5 w-5" />
-              ) : theme === "light" ? (
-                <Sun className="h-5 w-5" />
-              ) : (
-                <Moon className="h-5 w-5" />
-              )}
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              {t("nav.themeTooltip", {
-                defaultValue: "Theme: {{current}} · click to cycle",
-                current: t(
-                  `settings.sections.interface.themeOptions.${theme}`,
-                  { defaultValue: theme.charAt(0).toUpperCase() + theme.slice(1) },
-                ),
-              })}
             </TooltipContent>
           </Tooltip>
           <Tooltip>

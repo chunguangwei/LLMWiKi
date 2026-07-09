@@ -13,8 +13,8 @@ import type { FileNode } from "@/types/wiki"
 /**
  * Recursively collect every leaf (non-directory) file under
  * `folder`. Walks `folder.children` rather than re-reading the
- * file system — the parent already filtered dotfiles out via
- * `filterTree` before the tree reached the UI, so this preserves
+ * file system — the parent already filters hidden source noise before
+ * the tree reaches the UI, so this preserves
  * the "delete exactly what the user saw" invariant.
  *
  * Skips empty folders (returns no entries for them) but recurses

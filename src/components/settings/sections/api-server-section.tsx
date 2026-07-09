@@ -32,6 +32,7 @@ interface ApiHealth {
   authRequired?: boolean
   authConfigured?: boolean
   allowUnauthenticated?: boolean
+  allowLanAccess?: boolean
   tokenSource?: "env" | "store" | "none"
 }
 
@@ -41,7 +42,7 @@ interface ApiHealth {
  * a route there, update this list — it's the only place users discover
  * the API contract until we ship a proper OpenAPI doc.
  */
-const ENDPOINTS: Array<{ method: "GET" | "POST" | "PATCH"; path: string; noteKey: string }> = [
+export const API_ENDPOINTS: Array<{ method: "GET" | "POST" | "PATCH"; path: string; noteKey: string }> = [
   { method: "GET", path: "/api/v1/health", noteKey: "endpointHealthNote" },
   { method: "GET", path: "/api/v1/projects", noteKey: "endpointProjectsNote" },
   { method: "GET", path: "/api/v1/projects/{id}/files", noteKey: "endpointFilesNote" },
@@ -148,6 +149,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
   const hasUnsavedApiConfig =
     persistedApiConfig.enabled !== draft.apiEnabled ||
     persistedApiConfig.allowUnauthenticated !== draft.apiAllowUnauthenticated ||
+    persistedApiConfig.allowLanAccess !== draft.apiAllowLanAccess ||
     persistedApiConfig.mcpEnabled !== draft.apiMcpEnabled ||
     persistedApiConfig.token !== draft.apiToken.trim()
 
@@ -283,6 +285,28 @@ export function ApiServerSection({ draft, setDraft }: Props) {
               {t("settings.sections.apiServer.allowUnauthenticatedHint", {
                 defaultValue:
                   "Use only for trusted local agents. Any process or browser page on this machine can call the API while this is enabled.",
+              })}
+            </p>
+          </div>
+        </label>
+
+        <label className="flex items-start gap-3 rounded-md border border-border/60 bg-background/40 px-3 py-2">
+          <input
+            type="checkbox"
+            checked={draft.apiAllowLanAccess}
+            onChange={(event) => setDraft("apiAllowLanAccess", event.target.checked)}
+            className="mt-1 h-4 w-4"
+          />
+          <div className="space-y-1">
+            <div className="text-sm font-semibold">
+              {t("settings.sections.apiServer.allowLanAccess", {
+                defaultValue: "Allow API and Clip server access from the local network",
+              })}
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t("settings.sections.apiServer.allowLanAccessHint", {
+                defaultValue:
+                  "After restarting the app, the API and Clip server listen on 0.0.0.0 instead of 127.0.0.1. Use only on trusted networks, and keep token auth enabled unless you fully trust the LAN.",
               })}
             </p>
           </div>
@@ -552,7 +576,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
           })}
         </p>
         <div className="space-y-1 text-xs">
-          {ENDPOINTS.map((endpoint) => {
+          {API_ENDPOINTS.map((endpoint) => {
             const note = t(`settings.sections.apiServer.${endpoint.noteKey}`, {
               defaultValue: "",
             })
@@ -577,6 +601,75 @@ export function ApiServerSection({ draft, setDraft }: Props) {
               </div>
             )
           })}
+        </div>
+      </div>
+
+      {/* ── MCP ──────────────────────────────────────────────────── */}
+      <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={draft.apiMcpEnabled}
+            onChange={(event) => setDraft("apiMcpEnabled", event.target.checked)}
+            className="mt-1 h-4 w-4"
+          />
+          <div className="space-y-1">
+            <div className="text-sm font-semibold">
+              {t("settings.sections.apiServer.mcpEnable", {
+                defaultValue: "Enable MCP access",
+              })}
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t("settings.sections.apiServer.mcpEnableHint", {
+                defaultValue:
+                  "MCP uses the local API and the same token rules. Keep the HTTP API enabled, then connect an MCP client to the bundled Node server.",
+              })}
+            </p>
+          </div>
+        </label>
+
+        <div className="rounded-md border border-border/50 bg-background/50 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">
+              {t("settings.sections.apiServer.mcpUsage", { defaultValue: "MCP usage" })}
+            </h3>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleCopyMcpConfig}
+              disabled={hasUnsavedApiConfig || !draft.apiMcpEnabled || !mcpEntryPath}
+              className="gap-1.5"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              {copiedField === "mcp"
+                ? t("settings.sections.apiServer.copied", { defaultValue: "Copied" })
+                : t("settings.sections.apiServer.copy", { defaultValue: "Copy" })}
+            </Button>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            {t("settings.sections.apiServer.mcpUsageHint", {
+              defaultValue:
+                "Build once with `npm run mcp:build`, then configure your MCP client to run the server below. Use LLM_WIKI_API_TOKEN unless unauthenticated access is enabled.",
+            })}
+          </p>
+          {mcpPathError && (
+            <p className="mt-2 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+              {mcpPathError}
+            </p>
+          )}
+          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-background/60 px-3 py-2 text-[11px] font-mono leading-relaxed">
+            {hasUnsavedApiConfig
+              ? t("settings.sections.apiServer.saveFirstExample", {
+                  defaultValue: "Save settings first, then copy an example request.",
+                })
+              : !mcpEntryPath
+                ? t("settings.sections.apiServer.mcpPathUnavailable", {
+                    defaultValue:
+                      "MCP server entry was not found. Run `npm run mcp:build` from the LLM Wiki repository, then reopen Settings.",
+                  })
+              : sampleMcpConfig}
+          </pre>
         </div>
       </div>
     </div>

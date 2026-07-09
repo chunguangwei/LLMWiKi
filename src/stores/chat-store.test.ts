@@ -1,131 +1,129 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import { beforeEach, describe, expect, it } from "vitest"
 import { useChatStore } from "./chat-store"
 
-/**
- * Focused unit coverage for the rename action that backs the sidebar
- * pencil button and the in-chat header rename. The store has lived
- * without a test file because the chat surface is exercised end-to-end
- * via integration tests; rename is small + load-bearing enough to be
- * worth a dedicated check.
- */
-function resetStore() {
-  useChatStore.setState({
-    conversations: [],
-    activeConversationId: null,
-    messages: [],
-    isStreaming: false,
-    streamingContent: "",
-  })
-}
-
-describe("chat-store renameConversation", () => {
+describe("chat-store conversation isolation", () => {
   beforeEach(() => {
-    resetStore()
+    useChatStore.setState({
+      conversations: [],
+      activeConversationId: null,
+      messages: [],
+      isStreaming: false,
+      streamingContent: "",
+      mode: "chat",
+      ingestSource: null,
+      useWebSearch: false,
+      useAnyTxtSearch: false,
+      agentMode: "standard",
+      selectedSkills: [],
+      disabledSkills: [],
+    })
   })
 
-  it("rewrites the title for an existing conversation and bumps updatedAt", async () => {
-    const id = useChatStore.getState().createConversation()
-    const created = useChatStore
+  it("writes async assistant results back to the original conversation", () => {
+    const store = useChatStore.getState()
+    const first = store.createConversation()
+    store.addMessageToConversation(first, "user", "first question")
+
+    const second = useChatStore.getState().createConversation()
+    expect(useChatStore.getState().activeConversationId).toBe(second)
+
+    useChatStore
       .getState()
-      .conversations.find((c) => c.id === id)!
-    const originalUpdatedAt = created.updatedAt
+      .finalizeStreamForConversation(first, "first answer")
 
-    // Wait a tick so Date.now() advances; on fast machines the
-    // createConversation() and rename() can land in the same ms.
-    await new Promise((r) => setTimeout(r, 2))
-    useChatStore.getState().renameConversation(id, "Wiki questions")
+    const state = useChatStore.getState()
+    const firstMessages = state.messages.filter((message) => message.conversationId === first)
+    const secondMessages = state.messages.filter((message) => message.conversationId === second)
 
-    const after = useChatStore
-      .getState()
-      .conversations.find((c) => c.id === id)!
-    expect(after.title).toBe("Wiki questions")
-    expect(after.updatedAt).toBeGreaterThan(originalUpdatedAt)
+    expect(firstMessages.map((message) => message.content)).toEqual([
+      "first question",
+      "first answer",
+    ])
+    expect(secondMessages).toEqual([])
   })
 
-  it("ignores rename for an unknown conversation id (no throw, no insert)", () => {
-    const before = useChatStore.getState().conversations.length
-    useChatStore.getState().renameConversation("missing-id", "doesn't matter")
-    expect(useChatStore.getState().conversations).toHaveLength(before)
+  it("clears stale stream content when a new stream starts", () => {
+    useChatStore.setState({
+      streamingContent: "old conversation tokens",
+      isStreaming: false,
+    })
+
+    useChatStore.getState().setStreaming(true)
+
+    expect(useChatStore.getState().streamingContent).toBe("")
+    expect(useChatStore.getState().isStreaming).toBe(true)
   })
 
-  it("preserves createdAt across rename (only updatedAt moves)", async () => {
-    const id = useChatStore.getState().createConversation()
-    const created = useChatStore
-      .getState()
-      .conversations.find((c) => c.id === id)!
-    const createdAtBefore = created.createdAt
+  it("creates globally unique message ids across conversations", () => {
+    const first = useChatStore.getState().createConversation()
+    useChatStore.getState().addMessageToConversation(first, "user", "first")
 
-    await new Promise((r) => setTimeout(r, 2))
-    useChatStore.getState().renameConversation(id, "Fresh title")
+    const second = useChatStore.getState().createConversation()
+    useChatStore.getState().addMessageToConversation(second, "user", "second")
 
-    const after = useChatStore
-      .getState()
-      .conversations.find((c) => c.id === id)!
-    expect(after.createdAt).toBe(createdAtBefore)
+    const ids = useChatStore.getState().messages.map((message) => message.id)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it("accepts an empty title at the store layer (UI is what guards against this)", () => {
-    // The sidebar / header UIs trim and reject empty strings before
-    // calling renameConversation, but the store itself doesn't
-    // enforce — keep the action thin and let presentation own the
-    // policy. This test pins that contract so a future "should it
-    // reject?" refactor is conscious.
-    const id = useChatStore.getState().createConversation()
-    useChatStore.getState().renameConversation(id, "")
-    const after = useChatStore
-      .getState()
-      .conversations.find((c) => c.id === id)!
-    expect(after.title).toBe("")
-  })
-})
+  it("removes the last assistant message only from the active conversation", () => {
+    useChatStore.setState({
+      conversations: [
+        { id: "c1", title: "One", createdAt: 1, updatedAt: 1 },
+        { id: "c2", title: "Two", createdAt: 2, updatedAt: 2 },
+      ],
+      activeConversationId: "c2",
+      messages: [
+        { id: "same", conversationId: "c1", role: "assistant", content: "keep", timestamp: 1 },
+        { id: "same", conversationId: "c2", role: "assistant", content: "remove", timestamp: 2 },
+      ],
+    })
 
-describe("chat-store markMessageSavedToWiki", () => {
-  beforeEach(() => {
-    resetStore()
-  })
+    useChatStore.getState().removeLastAssistantMessage()
 
-  it("sets savedToWiki on the matching message", async () => {
-    const id = useChatStore.getState().createConversation()
-    useChatStore.getState().addMessage("user", "hi")
-    useChatStore.getState().addAssistantTurn("answer")
-    const before = useChatStore
-      .getState()
-      .messages.filter((m) => m.conversationId === id)
-    const assistant = before.find((m) => m.role === "assistant")!
-    expect(assistant.savedToWiki).toBeUndefined()
-
-    useChatStore.getState().markMessageSavedToWiki(
-      assistant.id,
-      "/p/wiki/queries/foo.md",
-    )
-
-    const after = useChatStore.getState().messages.find((m) => m.id === assistant.id)!
-    expect(after.savedToWiki?.path).toBe("/p/wiki/queries/foo.md")
-    expect(after.savedToWiki?.savedAt).toBeGreaterThan(0)
+    expect(useChatStore.getState().messages).toEqual([
+      { id: "same", conversationId: "c1", role: "assistant", content: "keep", timestamp: 1 },
+    ])
   })
 
-  it("survives a setMessages round-trip (persistence boundary)", () => {
-    // Simulates the auto-save → reload loop: messages are written to
-    // disk and then re-hydrated. The savedToWiki field must round-trip.
-    useChatStore.getState().createConversation()
-    useChatStore.getState().addMessage("user", "hi")
-    useChatStore.getState().addAssistantTurn("answer")
-    const assistant = useChatStore
-      .getState()
-      .messages.find((m) => m.role === "assistant")!
-    useChatStore.getState().markMessageSavedToWiki(assistant.id, "/p/wiki/queries/x.md")
+  it("clears stale stream content when creating or switching conversations", () => {
+    const first = useChatStore.getState().createConversation()
+    useChatStore.setState({
+      streamingContent: "old conversation tokens",
+      isStreaming: true,
+    })
 
-    const dump = useChatStore.getState().messages.slice()
-    // Clone+restore — what persist would do.
-    useChatStore.getState().setMessages(JSON.parse(JSON.stringify(dump)))
+    const second = useChatStore.getState().createConversation()
 
-    const after = useChatStore.getState().messages.find((m) => m.id === assistant.id)!
-    expect(after.savedToWiki?.path).toBe("/p/wiki/queries/x.md")
+    expect(useChatStore.getState().activeConversationId).toBe(second)
+    expect(useChatStore.getState().streamingContent).toBe("")
+    expect(useChatStore.getState().isStreaming).toBe(false)
+
+    useChatStore.setState({
+      streamingContent: "more stale tokens",
+      isStreaming: true,
+    })
+    useChatStore.getState().setActiveConversation(first)
+
+    expect(useChatStore.getState().activeConversationId).toBe(first)
+    expect(useChatStore.getState().streamingContent).toBe("")
   })
 
-  it("ignores an unknown message id (no throw, no insert)", () => {
-    const before = useChatStore.getState().messages.length
-    useChatStore.getState().markMessageSavedToWiki("ghost-id", "/x")
-    expect(useChatStore.getState().messages.length).toBe(before)
+  it("stores selected skills per conversation and starts new conversations empty", () => {
+    const first = useChatStore.getState().createConversation()
+    useChatStore.getState().setSelectedSkills(["cover-image"])
+
+    const second = useChatStore.getState().createConversation()
+
+    expect(useChatStore.getState().activeConversationId).toBe(second)
+    expect(useChatStore.getState().selectedSkills).toEqual([])
+
+    useChatStore.getState().setSelectedSkills(["ppt"])
+    useChatStore.getState().setActiveConversation(first)
+
+    expect(useChatStore.getState().selectedSkills).toEqual(["cover-image"])
+
+    useChatStore.getState().setActiveConversation(second)
+
+    expect(useChatStore.getState().selectedSkills).toEqual(["ppt"])
   })
 })

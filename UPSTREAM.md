@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-06-29（Round 4，上游 v0.5.1 → v0.5.3，按子系统手工三方合并；4 个并行子代理 + 主体亲自处理 ingest 核心/i18n/关系图）|
+| 最近一次 sync | 2026-06-30（Round 5，上游 v0.5.3 → v0.6.0，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.5.3`（Round 4 追平：schema 感知分析 / Brave 搜索 / 摄取队列暂停恢复 / Review API+刷新 / frontmatter 原文编辑 / 关系图悬停对比 / 一批稳定性修复）|
-| **本 fork 版本** | `0.5.4`（Round 4 上游同步 v0.5.1→v0.5.3）|
+| Upstream 版本号 | `0.6.0`（Round 5 追平：per-project skills 选择 / 全套上游 store 重写 / ingest 管线重写 / lint 链接修复建议 / Firecrawl provider）|
+| **本 fork 版本** | `0.6.1`（Round 5 上游同步 v0.5.3→v0.6.0）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -20,6 +20,17 @@
 > - **稳定性**：取消后停止写入（`006327d`）、PDF 整页扫描图跳过（`00d670b`）、dotfolders 可见（`a126829`/`c70da6a`，但**摄取**仍走 fork 的 `copy_directory` 故仍跳过 dotfiles——保守、与上游 ingest 行为有别）、preset 关闭时清空 llmConfig（`4371975`/`61ece9e`）、自然排序、Firecrawl 对象响应、关系图悬停对比 pill（`e14bbcb`，适配我方 `useIsDarkTheme`）。
 > - **范围回退**：上游 wholesale 把 v0.5.3 的 **本地 CLI 隔离特性**（`localCliIsolation`/`codexCliTimeoutMinutes` + `claude_cli_spawn` 新签名）一并带入，但该特性不在本次请求范围、且会破坏未同步的 `claude-cli-transport.ts` 调用契约——故将 `claude_cli.rs`/`preset-resolver.ts`/`llm-provider-section.tsx` 回退到 HEAD，仅重新应用 `4371975`+`61ece9e`（与隔离无关）。连带丢弃纠缠其中的 `8e3d465`（其 MCP 隔离配置 bug 在我方旧版不存在）。
 > - **验证**：typecheck ✅ / test:mocks 2126 ✅ / i18n parity ✅ / cargo check ✅ / cargo test --lib 159 ✅。
+
+> **Round 5 同步（2026-06-30，v0.5.3 → v0.6.0）**：`git merge upstream/main`（HEAD `6a5fad0`）。上游本轮对多个核心模块做了**整体重写**（store 层、ingest 管线、theme、lint），按用户既定原则「冲突处优先采用上游、丢弃我方实现」处理，独立不冲突的 fork 功能保留/重新移植。
+> - **整体采用上游（wholesale）**：`stores/wiki-store.ts`、`lib/project-store.ts`、`lib/ingest.ts`、`lib/lint.ts`、`lib/theme.ts`、`components/layout/activity-panel.tsx`、`components/chat/chat-panel.tsx`、`llm-providers.ts` 等冲突文件全部采用上游版本。上游新增 **per-project skills 选择**（`ChatPreferences.selectedSkills`/`disabledSkills`）、`activeView` 增加 `"skills"`、lint 链接修复建议、Firecrawl provider。
+> - **重新移植的独立 fork 功能**：搜索聚焦导航（`previousView`/`searchFocusRequest`/`requestSearchFocus`）——上游从未触碰、属独立 UX，已重新并入采用上游后的 `wiki-store.ts`（`openPathInPreview`/`openFileInPreview`/`setActiveView` 用 `set((state)=>…)` 追踪 previousView）。
+> - **丢弃的 fork 功能（其后端被上游重写导致悬空，按原则丢弃）**：
+>   - **Labs 实验特性**（agentIngest / aiLintFix / rawSaveToWiki / indexAnnotations / ingestPreview）——依赖被上游重写的 ingest 管线；删除 `settings/sections/labs-section.tsx`、`components/ingest-preview-dialog.tsx`、`stores/ingest-preview-store.ts`、`lib/raw-from-chat.ts`（`writeBinaryFile` 已从上游 `fs.ts` 移除），并移除 `settings-view.tsx` 的 `labs` 分类与 `App.tsx` 的实验旗标加载块。
+>   - **fork lint 增强**（broken-link 去重合并 `affectedPages`、`sources/` 路径排除的 `LintConfig`、`frontmatter-type` 规则、overview 结构页跳过 orphan）——上游 `lint.ts` 重写后丢弃，连带把 `test-helpers/scenarios/lint-scenarios.ts` 回退到上游版本以匹配。
+>   - **fork 专属测试**（`ingest-selfheal.test.ts` / `theme.test.ts`（旧 `resolveTheme`/`subscribeToSystemThemeChanges`）/ `activity-panel.format.test.ts`（`formatEta`）/ `raw-from-chat.test.ts`）——测试对象已随上游重写移除，删除。
+> - **合并副产物修复**：`graph-view.tsx` 布局辅助函数重复定义（保留 3 参 `graphDataKey`）、`App.tsx` 重复 `applyDocumentZoom`、`settings-view.tsx` 重复 `newMineruConfig`、`settings-types.ts` 重复 `autostart`/`closeBehavior`、`persist.integration.test.ts` 交错重复测试块（统一到 fork 的 `.llm-wiki-local/` 路径 + 上游 skills 字段）、`knowledge-tree.tsx` 未用变量、`file-preview.tsx` 失效的 `"office"` FileCategory、`Cargo.toml` 残留 `<<<<<<< HEAD` 标记、`lib.rs` `start_clip_server(app)` 新签名、`fs.rs` 重复测试函数（采用上游更全面版本）。
+> - **保留的惰性 fork 库代码**：`lib/agent-ingest/`、`lib/agent-lint-fix/` 编译通过但已无调用方（Labs UI 已删），暂作 dead code 保留，未扩大删除范围。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2232 ✅（157 文件）/ i18n parity ✅（1026 ↔ 1026 全键对齐）/ cargo check ✅ / cargo test 327 ✅。版本号 `0.6.1` > 上游 `0.6.0`，自动更新降级判定保持有效。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局

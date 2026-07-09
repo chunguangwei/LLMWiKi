@@ -1,6 +1,6 @@
 [package]
 name = "llm-wiki"
-version = "0.5.4"
+version = "0.6.1"
 description = "LLM Wiki - A personal knowledge base for LLM concepts"
 authors = []
 edition = "2021"
@@ -51,7 +51,7 @@ aes-gcm = "0.10"
 rand = "0.8"
 zeroize = "1"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tiny_http = "0.12"
 zip = "2"
 calamine = "0.34.0"
@@ -62,6 +62,7 @@ docx-rs = "0.4.20"
 # href resolution against the OPF's directory, etc.) so we don't have
 # to roll our own.
 epub = "2"
+office_oxide = "=0.1.2"
 lancedb = "0.27.2"
 # tokio provided by tauri runtime for async commands
 arrow-array = "57"

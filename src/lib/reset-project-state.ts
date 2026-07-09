@@ -10,6 +10,7 @@
 
 import { useChatStore } from "@/stores/chat-store"
 import { useReviewStore } from "@/stores/review-store"
+import { useLintStore } from "@/stores/lint-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useResearchStore } from "@/stores/research-store"
 
@@ -26,9 +27,15 @@ export async function resetProjectState(): Promise<void> {
     useWebSearch: false,
     useAnyTxtSearch: false,
     agentMode: "standard",
+    selectedSkills: [],
+    disabledSkills: [],
   })
 
   useReviewStore.setState({
+    items: [],
+  })
+
+  useLintStore.setState({
     items: [],
   })
 

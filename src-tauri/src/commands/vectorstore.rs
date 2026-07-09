@@ -48,11 +48,6 @@ fn db_path(project_path: &str) -> String {
     format!("{}/.llm-wiki/lancedb", project_path.replace('\\', "/"))
 }
 
-/// Per-project read/write lock guarding the v2 chunk table. Bulk re-index
-/// writes (and the compaction/prune in `vector_optimize_chunks`) take the
-/// write side; reads/counts take the read side. Without this, a search
-/// firing during a rebuild could observe a half-cleared table, and
-/// concurrent writers could race LanceDB version bumps.
 fn vectorstore_v2_lock(project_path: &str) -> Arc<tokio::sync::RwLock<()>> {
     let key = db_path(project_path);
     let locks = VECTORSTORE_V2_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -504,10 +499,6 @@ pub async fn vector_upsert_chunks(
                 .await
                 .map_err(|e| format!("Open table error: {e}"))?;
 
-            // A failed delete must abort the upsert: otherwise the old
-            // rows survive and the page ends up with duplicated/stale
-            // chunks. The safe-rebuild flow relies on this surfacing as an
-            // error so it can leave the existing index untouched.
             table
                 .delete(&format!("page_id = '{}'", page_id))
                 .await

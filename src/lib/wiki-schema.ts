@@ -38,7 +38,7 @@ export async function loadProjectWikiSchemaRouting(
 
 export function parseWikiSchemaRouting(markdown: string): WikiSchemaRouting {
   const typeDirs: Record<string, string> = {}
-  for (const line of markdown.split("\n")) {
+  for (const line of pageTypesSectionLines(markdown)) {
     if (!line.trim().startsWith("|")) continue
     const cells = line
       .split("|")
@@ -54,6 +54,25 @@ export function parseWikiSchemaRouting(markdown: string): WikiSchemaRouting {
   }
 
   return { typeDirs }
+}
+
+function pageTypesSectionLines(markdown: string): string[] {
+  const lines = markdown.split("\n")
+  const start = lines.findIndex((line) => {
+    const match = line.trim().match(/^(#{1,6})\s+(.+?)\s*#*$/)
+    return !!match && /^page\s+types$/i.test(match[2].trim())
+  })
+
+  if (start < 0) return []
+
+  const headingLevel = lines[start].trim().match(/^(#{1,6})/)?.[1].length ?? 6
+  const out: string[] = []
+  for (const line of lines.slice(start + 1)) {
+    const heading = line.trim().match(/^(#{1,6})\s+/)
+    if (heading && heading[1].length <= headingLevel) break
+    out.push(line)
+  }
+  return out
 }
 
 export function validateWikiPageRouting(

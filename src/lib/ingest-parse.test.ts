@@ -21,6 +21,12 @@ import { describe, it, expect } from "vitest"
 import {
   parseFileBlocks,
   isSafeIngestPath,
+  stampGeneratedFrontmatterDates,
+  stampGeneratedLogDate,
+  buildGenerationPrompt,
+  sourceSummaryMediaRefsForExternalMarkdown,
+  aggregatePathsNeedingRepair,
+  filterAggregateRepairOutput,
   rewriteIngestPathFromTitleForTargetLanguage,
 } from "./ingest"
 
@@ -82,6 +88,61 @@ describe("parseFileBlocks — canonical shapes", () => {
       "---END FILE---",
     ].join("\n")
     expect(parseFileBlocks(text).blocks).toHaveLength(1)
+  })
+})
+
+describe("source summary media refs", () => {
+  it("rewrites generated media refs so wiki/sources pages work in external Markdown apps", () => {
+    const input = [
+      "![Chart](media/report/001-chart.png)",
+      "![Table](./media/report/table%201.png)",
+      '<img src="media/report/raw.png" />',
+      "![Already relative](../media/report/keep.png)",
+    ].join("\n")
+
+    expect(sourceSummaryMediaRefsForExternalMarkdown(input)).toBe([
+      "![Chart](../media/report/001-chart.png)",
+      "![Table](../media/report/table%201.png)",
+      '<img src="../media/report/raw.png" />',
+      "![Already relative](../media/report/keep.png)",
+    ].join("\n"))
+  })
+})
+
+describe("aggregate repair targeting", () => {
+  it("requests missing aggregate pages and aggregate pages dropped by truncation warnings", () => {
+    expect(aggregatePathsNeedingRepair(
+      ["wiki/index.md", "wiki/log.md"],
+      ['FILE block "wiki/overview.md" was not closed before end of stream — likely truncation.'],
+    )).toEqual(["wiki/overview.md"])
+
+    expect(aggregatePathsNeedingRepair(
+      ["wiki/index.md", "wiki/overview.md", "wiki/log.md"],
+      [],
+    )).toEqual([])
+  })
+
+  it("filters aggregate repair output to the requested aggregate paths only", () => {
+    const raw = [
+      "---FILE: wiki/overview.md---",
+      "# Overview",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/sources/should-not-touch.md---",
+      "# Stray Source Summary",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/entities/stray.md---",
+      "# Stray Entity",
+      "---END FILE---",
+    ].join("\n")
+
+    const filtered = filterAggregateRepairOutput(raw, ["wiki/overview.md"])
+
+    expect(filtered.text).toContain("---FILE: wiki/overview.md---")
+    expect(filtered.text).not.toContain("should-not-touch")
+    expect(filtered.text).not.toContain("wiki/entities/stray.md")
+    expect(filtered.warnings.join("\n")).toContain("Dropped 2 non-aggregate")
   })
 })
 
@@ -475,6 +536,61 @@ describe("parseFileBlocks — path-traversal guard end-to-end", () => {
   })
 })
 
+describe("generated ingest dates", () => {
+  it("stamps frontmatter dates to the application date instead of model guesses", () => {
+    const out = stampGeneratedFrontmatterDates(
+      [
+        "---",
+        "type: concept",
+        "title: Wrong Date",
+        "created: 2024-01-01",
+        "updated: 2025-02-02",
+        "tags: []",
+        "---",
+        "# Body",
+      ].join("\n"),
+      "2026-06-07",
+    )
+
+    expect(out).toContain("created: 2026-06-07")
+    expect(out).toContain("updated: 2026-06-07")
+    expect(out).not.toContain("2024-01-01")
+    expect(out).not.toContain("2025-02-02")
+  })
+
+  it("adds missing frontmatter dates when the model omits them", () => {
+    const out = stampGeneratedFrontmatterDates(
+      [
+        "---",
+        "type: concept",
+        "title: Missing Date",
+        "tags: []",
+        "---",
+        "# Body",
+      ].join("\n"),
+      "2026-06-07",
+    )
+
+    expect(out).toContain("created: 2026-06-07")
+    expect(out).toContain("updated: 2026-06-07")
+  })
+
+  it("stamps generated log headings to the application date", () => {
+    expect(stampGeneratedLogDate("## [2024-01-01] ingest | Foo", "2026-06-07"))
+      .toBe("## [2026-06-07] ingest | Foo")
+    expect(stampGeneratedLogDate("## [YYYY-MM-DD] ingest | Foo", "2026-06-07"))
+      .toBe("## [2026-06-07] ingest | Foo")
+  })
+
+  it("tells the model the exact current date in the generation prompt", () => {
+    const prompt = buildGenerationPrompt("", "", "", "paper.pdf")
+
+    expect(prompt).toContain("Today's date is")
+    expect(prompt).toContain("Use this exact date")
+    expect(prompt).not.toContain("created: 2026-04-29")
+  })
+})
+
 describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
   it("uses the CJK page title for generated page filenames when the target language is CJK", () => {
     const content = [
@@ -507,12 +623,5 @@ describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
     expect(
       rewriteIngestPathFromTitleForTargetLanguage("wiki/index.md", content, "Chinese"),
     ).toBe("wiki/index.md")
-  })
-
-  it("leaves the filename untouched for non-CJK target languages", () => {
-    const content = "---\ntitle: 反硝化除磷技术\n---\n# 反硝化除磷技术"
-    expect(
-      rewriteIngestPathFromTitleForTargetLanguage("wiki/concepts/foo.md", content, "English"),
-    ).toBe("wiki/concepts/foo.md")
   })
 })

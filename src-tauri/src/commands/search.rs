@@ -60,7 +60,7 @@ pub struct SearchEmbeddingConfig {
     pub endpoint: String,
     pub api_key: String,
     pub model: String,
-    pub output_dimensionality: Option<u32>,
+    pub output_dimensionality: Option<f64>,
     /// Extra HTTP headers to send with every embedding request, e.g.
     /// `X-Model-Provider-Id: siliconflow` for the mify gateway.
     /// Reserved names (Authorization, Content-Type, Host,
@@ -94,6 +94,18 @@ pub async fn search_project(
     .await
 }
 
+#[tauri::command]
+pub async fn embedding_fetch(
+    text: String,
+    cfg: SearchEmbeddingConfig,
+    max_retries: Option<usize>,
+) -> Result<Vec<f32>, String> {
+    run_guarded_async("embedding_fetch", async move {
+        fetch_embedding_with_retry(&text, &cfg, max_retries.unwrap_or(3)).await
+    })
+    .await
+}
+
 pub async fn resolve_query_embedding(
     query: &str,
     explicit_embedding: Option<Vec<f32>>,
@@ -108,7 +120,7 @@ pub async fn resolve_query_embedding(
     if !cfg.enabled || cfg.endpoint.trim().is_empty() || cfg.model.trim().is_empty() {
         return Ok(None);
     }
-    match fetch_embedding(query, &cfg).await {
+    match fetch_embedding_with_retry(query, &cfg, 0).await {
         Ok(embedding) => validate_query_embedding(embedding).map(Some),
         Err(err) => {
             eprintln!("[Search] embedding disabled for this request: {err}");
@@ -150,106 +162,45 @@ pub async fn search_project_inner(
 
     let wiki_root = Path::new(&project_path).join("wiki");
     if wiki_root.exists() {
-        // Phase 1: walk the directory tree once (cheap, sync) and
-        // collect the .md paths up to MAX_SEARCH_FILES. Don't read
-        // bodies here — that's the expensive part we want to fan
-        // out across the runtime's blocking pool.
-        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        let mut searched_files = 0usize;
         for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
             if !entry.file_type().is_file()
                 || entry.path().extension().and_then(|s| s.to_str()) != Some("md")
             {
                 continue;
             }
-            paths.push(entry.path().to_path_buf());
-            if paths.len() >= MAX_SEARCH_FILES {
+            searched_files += 1;
+            if searched_files > MAX_SEARCH_FILES {
                 eprintln!(
                     "[Search] stopped scanning wiki after {MAX_SEARCH_FILES} markdown files in {project_path}"
                 );
                 break;
             }
-        }
-
-        // Phase 2: fan out read+score across tokio's blocking pool.
-        // Sequential `fs::read_to_string` + `score_file` on 1000+
-        // pages dominates the wall-clock; parallel reduces it to ~1/N
-        // on N-core machines. JoinSet collects results as tasks
-        // complete; ordering is restored by the per-result sort below.
-        // Bound concurrency at SEARCH_PARALLELISM so a wiki with
-        // tens of thousands of files doesn't fan out 10k OS reads at
-        // once — that thrashes the page cache without speedup.
-        const SEARCH_PARALLELISM: usize = 32;
-        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(SEARCH_PARALLELISM));
-        let mut join_set: tokio::task::JoinSet<(
-            std::path::PathBuf,
-            Option<String>,
-            Option<ProjectSearchResult>,
-        )> = tokio::task::JoinSet::new();
-
-        let effective_tokens = std::sync::Arc::new(effective_tokens);
-        let query_phrase = std::sync::Arc::new(query_phrase);
-        let query = std::sync::Arc::new(query);
-        let project_path_arc = std::sync::Arc::new(project_path.clone());
-
-        for path in paths {
-            let sem = semaphore.clone();
-            let tokens = effective_tokens.clone();
-            let phrase = query_phrase.clone();
-            let q = query.clone();
-            let pp = project_path_arc.clone();
-            join_set.spawn(async move {
-                let _permit = match sem.acquire().await {
-                    Ok(p) => p,
-                    Err(_) => return (path, None, None),
-                };
-                let content = match tokio::task::spawn_blocking({
-                    let p = path.clone();
-                    move || fs::read_to_string(&p)
-                })
-                .await
-                {
-                    Ok(Ok(content)) => content,
-                    _ => return (path, None, None),
-                };
-                let stem = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s.to_string());
-                let hit = score_file(
-                    pp.as_str(),
-                    &path,
-                    &content,
-                    tokens.as_slice(),
-                    phrase.as_str(),
-                    q.as_str(),
-                    include_content,
-                );
-                (path, stem, hit)
-            });
-        }
-
-        // Phase 3: drain. `page_paths_by_stem` collision detection
-        // moves to a single-threaded merge step here — the previous
-        // sequential loop did it inline, but we need to serialize the
-        // BTreeMap mutations anyway.
-        while let Some(joined) = join_set.join_next().await {
-            let (path, stem, hit) = match joined {
-                Ok(t) => t,
+            let content = match fs::read_to_string(entry.path()) {
+                Ok(content) => content,
                 Err(_) => continue,
             };
-            if let Some(stem) = stem {
+            if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
                 let previous = page_paths_by_stem.insert(
-                    stem.clone(),
-                    relative_to_project(&project_path, &path),
+                    stem.to_string(),
+                    relative_to_project(&project_path, entry.path()),
                 );
                 if let Some(previous) = previous {
                     eprintln!(
                         "[Search] duplicate wiki page stem '{stem}': '{previous}' and '{}' share one vector page_id",
-                        relative_to_project(&project_path, &path)
+                        relative_to_project(&project_path, entry.path())
                     );
                 }
             }
-            if let Some(hit) = hit {
+            if let Some(hit) = score_file(
+                &project_path,
+                entry.path(),
+                &content,
+                &effective_tokens,
+                &query_phrase,
+                &query,
+                include_content,
+            ) {
                 results.push(hit);
             }
         }
@@ -727,7 +678,59 @@ pub fn extract_image_refs(content: &str) -> Vec<SearchImageRef> {
     out
 }
 
-async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<f32>, String> {
+async fn fetch_embedding_with_retry(
+    text: &str,
+    cfg: &SearchEmbeddingConfig,
+    max_retries: usize,
+) -> Result<Vec<f32>, String> {
+    let mut current = text.to_string();
+    let mut attempts = 0usize;
+    loop {
+        attempts += 1;
+        match fetch_embedding_once(&current, cfg).await {
+            Ok(embedding) => return Ok(embedding),
+            Err(EmbeddingFetchError::Oversize(message)) => {
+                if attempts <= max_retries
+                    && current.len() > 64
+                    && halve_text_on_char_boundary(&mut current)
+                {
+                    eprintln!(
+                        "[Embedding] auto-halving after oversize error at {} chars; retrying at {} chars ({attempts}/{})",
+                        text.chars().count(),
+                        current.chars().count(),
+                        max_retries + 1
+                    );
+                    continue;
+                }
+                return Err(format!(
+                    "Endpoint rejected input even at {} chars. Lower Settings -> Embedding -> Max Chunk Chars. {message}",
+                    current.len()
+                ));
+            }
+            Err(EmbeddingFetchError::Other(message)) => return Err(message),
+        }
+    }
+}
+
+fn halve_text_on_char_boundary(text: &mut String) -> bool {
+    let char_count = text.chars().count();
+    if char_count <= 1 {
+        return false;
+    }
+    let keep = (char_count / 2).max(1);
+    *text = text.chars().take(keep).collect();
+    true
+}
+
+enum EmbeddingFetchError {
+    Oversize(String),
+    Other(String),
+}
+
+async fn fetch_embedding_once(
+    text: &str,
+    cfg: &SearchEmbeddingConfig,
+) -> Result<Vec<f32>, EmbeddingFetchError> {
     let is_google = is_google_embedding_config(cfg);
     let is_doubao_multimodal = is_doubao_multimodal_embedding_config(cfg);
     let endpoint = if is_google {
@@ -740,9 +743,15 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
             SEARCH_EMBEDDING_TIMEOUT_SECS,
         ))
         .build()
-        .map_err(|e| format!("Embedding HTTP client error: {e}"))?
-        .post(endpoint)
+        .map_err(|e| EmbeddingFetchError::Other(format!("Embedding HTTP client error: {e}")))?
+        .post(&endpoint)
         .header("Content-Type", "application/json");
+    // Browser-based local model servers often require a browser-like
+    // Origin even when the request is routed through Rust. Keep this
+    // reserved so user-supplied extra headers cannot override it.
+    if is_local_or_private_http_endpoint(&endpoint) {
+        req = req.header("Origin", "http://localhost");
+    }
     if !cfg.api_key.trim().is_empty() {
         if is_google {
             req = req.header("x-goog-api-key", cfg.api_key.trim());
@@ -774,19 +783,46 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Embedding request failed: {e}"))?;
+        .map_err(|e| EmbeddingFetchError::Other(format!("Embedding request failed: {e}")))?;
     let status = resp.status();
-    let data: Value = resp
-        .json()
+    let text = resp
+        .text()
         .await
-        .map_err(|e| format!("Embedding response parse failed: {e}"))?;
+        .map_err(|e| EmbeddingFetchError::Other(format!("Embedding response read failed: {e}")))?;
     if !status.is_success() {
-        return Err(format!(
-            "Embedding API HTTP {status}: {}",
-            data.to_string().chars().take(200).collect::<String>()
-        ));
+        let preview = text.chars().take(200).collect::<String>();
+        if looks_like_oversize_error(status.as_u16(), &text) {
+            return Err(EmbeddingFetchError::Oversize(format!(
+                "Embedding API HTTP {status}: {preview}"
+            )));
+        }
+        return Err(EmbeddingFetchError::Other(format!(
+            "Embedding API HTTP {status}: {preview}"
+        )));
     }
+    let data: Value = serde_json::from_str(&text).map_err(|e| {
+        EmbeddingFetchError::Other(format!(
+            "Embedding response parse failed: {e}: {}",
+            text.chars().take(200).collect::<String>()
+        ))
+    })?;
     parse_embedding_values(&data, is_google, is_doubao_multimodal)
+        .map_err(EmbeddingFetchError::Other)
+}
+
+fn looks_like_oversize_error(status: u16, body: &str) -> bool {
+    if status == 413 {
+        return true;
+    }
+    let lower = body.to_lowercase();
+    lower.contains("too long")
+        || lower.contains("maximum context")
+        || lower.contains("max_tokens")
+        || lower.contains("max tokens")
+        || lower.contains("context length")
+        || lower.contains("token limit")
+        || lower.contains("exceeds")
+        || lower.contains("input length")
 }
 
 fn parse_embedding_values(
@@ -799,8 +835,6 @@ fn parse_embedding_values(
             .and_then(|v| v.get("values"))
             .and_then(Value::as_array)
     } else if is_doubao_multimodal {
-        // Doubao vision embeddings return a SINGLE object under `data`
-        // (`data.embedding`), unlike OpenAI's `data[0].embedding` array.
         data.get("data")
             .and_then(|v| v.get("embedding"))
             .and_then(Value::as_array)
@@ -857,7 +891,7 @@ fn is_safe_extra_header_name(name: &str) -> bool {
 fn is_reserved_extra_header_name(name: &str) -> bool {
     matches!(
         name.trim().to_ascii_lowercase().as_str(),
-        "authorization" | "content-type" | "host" | "content-length" | "x-goog-api-key"
+        "authorization" | "content-type" | "host" | "content-length" | "origin" | "x-goog-api-key"
     )
 }
 
@@ -866,11 +900,39 @@ fn is_google_embedding_config(cfg: &SearchEmbeddingConfig) -> bool {
     endpoint.contains("generativelanguage.googleapis.com") || endpoint.contains(":embedcontent")
 }
 
-/// True only for genuine Volcengine hosts (volces.com / *.volces.com /
-/// anything containing "volcengine"). We deliberately key off the URL
-/// HOST, not the path or query, so a custom gateway that merely proxies
-/// volcengine (`.../proxy/volcengine?upstream=volces.com`) is NOT treated
-/// as Volcengine — its endpoint is passed through verbatim.
+fn is_local_or_private_http_endpoint(endpoint: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(endpoint) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host
+        .trim_matches('[')
+        .trim_matches(']')
+        .to_ascii_lowercase();
+    if matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1") {
+        return true;
+    }
+    let octets = host
+        .split('.')
+        .map(str::parse::<u8>)
+        .collect::<Result<Vec<_>, _>>();
+    let Ok(octets) = octets else {
+        return false;
+    };
+    if octets.len() != 4 {
+        return false;
+    }
+    octets[0] == 10
+        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+        || (octets[0] == 192 && octets[1] == 168)
+        || octets[0] == 127
+}
+
 fn is_volcengine_embedding_endpoint(endpoint: &str) -> bool {
     let host = reqwest::Url::parse(endpoint)
         .ok()
@@ -889,9 +951,6 @@ fn is_volcengine_embedding_endpoint(endpoint: &str) -> bool {
     host == "volces.com" || host.ends_with(".volces.com") || host.contains("volcengine")
 }
 
-/// Doubao multimodal embedding models use a different request/response
-/// wire shape. Detection is MODEL-driven (not endpoint-driven) so the
-/// vision shape is also used for custom gateways proxying these models.
 fn is_doubao_multimodal_embedding_config(cfg: &SearchEmbeddingConfig) -> bool {
     cfg.model
         .trim()
@@ -899,9 +958,6 @@ fn is_doubao_multimodal_embedding_config(cfg: &SearchEmbeddingConfig) -> bool {
         .contains("doubao-embedding-vision")
 }
 
-/// For Volcengine base endpoints (`.../api/v3`) append the right
-/// embeddings path (`/embeddings` for text, `/embeddings/multimodal` for
-/// doubao vision). Non-Volcengine endpoints are returned verbatim.
 fn volcengine_embedding_endpoint(cfg: &SearchEmbeddingConfig) -> String {
     let raw = cfg.endpoint.trim();
     if !is_volcengine_embedding_endpoint(raw) {
@@ -915,10 +971,6 @@ fn volcengine_embedding_endpoint(cfg: &SearchEmbeddingConfig) -> String {
     append_endpoint_path(raw, suffix)
 }
 
-/// Append `target_suffix` to `endpoint`'s path, idempotently. Handles the
-/// text↔multimodal suffix swap (so switching models on a saved endpoint
-/// rewrites the path instead of stacking suffixes) and never duplicates
-/// an already-present suffix. Query strings are preserved.
 fn append_endpoint_path(endpoint: &str, target_suffix: &str) -> String {
     let suffix = target_suffix.trim_start_matches('/');
     match reqwest::Url::parse(endpoint) {
@@ -1020,7 +1072,7 @@ fn strip_google_api_key_query(endpoint: &str) -> String {
     }
 }
 
-fn google_embedding_body(model: &str, text: &str, output_dimensionality: Option<u32>) -> Value {
+fn google_embedding_body(model: &str, text: &str, output_dimensionality: Option<f64>) -> Value {
     let model_path = if model.trim().starts_with("models/") {
         model.trim().to_string()
     } else {
@@ -1030,7 +1082,10 @@ fn google_embedding_body(model: &str, text: &str, output_dimensionality: Option<
         "model": model_path,
         "content": { "parts": [{ "text": text }] },
     });
-    if let Some(dim) = output_dimensionality.filter(|dim| *dim > 0) {
+    if let Some(dim) = output_dimensionality
+        .filter(|dim| dim.is_finite() && *dim >= 1.0)
+        .map(|dim| dim.floor() as u32)
+    {
         body["output_dimensionality"] = json!(dim);
     }
     body
@@ -1178,7 +1233,7 @@ mod tests {
             endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key=URL_KEY&alt=json".to_string(),
             api_key: "HEADER_KEY".to_string(),
             model: "gemini-embedding-001".to_string(),
-            output_dimensionality: Some(768),
+            output_dimensionality: Some(768.0),
             extra_headers: None,
         };
 
@@ -1188,7 +1243,7 @@ mod tests {
         assert!(!endpoint.contains("URL_KEY"));
         assert!(endpoint.contains("alt=json"));
 
-        let body = google_embedding_body("gemini-embedding-001", "hello", Some(768));
+        let body = google_embedding_body("gemini-embedding-001", "hello", Some(768.0));
         assert_eq!(body["model"], "models/gemini-embedding-001");
         assert_eq!(body["output_dimensionality"], 768);
     }
@@ -1322,8 +1377,44 @@ mod tests {
 
         assert!(is_reserved_extra_header_name("Authorization"));
         assert!(is_reserved_extra_header_name("content-type"));
+        assert!(is_reserved_extra_header_name("Origin"));
         assert!(is_reserved_extra_header_name("X-Goog-Api-Key"));
         assert!(!is_reserved_extra_header_name("X-Model-Provider-Id"));
+    }
+
+    #[test]
+    fn embedding_origin_header_is_limited_to_local_or_private_endpoints() {
+        assert!(is_local_or_private_http_endpoint(
+            "http://127.0.0.1:1234/v1/embeddings"
+        ));
+        assert!(is_local_or_private_http_endpoint(
+            "http://192.168.1.20:11434/v1/embeddings"
+        ));
+        assert!(is_local_or_private_http_endpoint(
+            "http://172.16.0.5/v1/embeddings"
+        ));
+        assert!(!is_local_or_private_http_endpoint(
+            "https://api.openai.com/v1/embeddings"
+        ));
+    }
+
+    #[test]
+    fn embedding_halving_never_splits_cjk_codepoints() {
+        let mut text = "默会知识库".to_string();
+        assert!(halve_text_on_char_boundary(&mut text));
+        assert_eq!(text, "默会");
+    }
+
+    #[test]
+    fn google_embedding_body_floors_positive_dimensions_and_omits_invalid_values() {
+        let body = google_embedding_body("gemini-embedding-001", "hello", Some(1.9));
+        assert_eq!(body["output_dimensionality"], 1);
+
+        let zero = google_embedding_body("gemini-embedding-001", "hello", Some(0.0));
+        assert!(zero.get("output_dimensionality").is_none());
+
+        let negative = google_embedding_body("gemini-embedding-001", "hello", Some(-4.0));
+        assert!(negative.get("output_dimensionality").is_none());
     }
 
     #[test]

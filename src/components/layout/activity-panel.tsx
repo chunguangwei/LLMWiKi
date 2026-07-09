@@ -4,6 +4,7 @@ import {
   FileText, Users, Lightbulb, BookOpen, GitMerge, BarChart3, HelpCircle, Layout,
   RotateCcw, X, Clock, TrendingUp, Target, Pause, Play,
 } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { useActivityStore, type ActivityItem } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useFileSyncStore } from "@/stores/file-sync-store"
@@ -26,8 +27,6 @@ import {
   type FileChangeTask,
 } from "@/commands/file-sync"
 import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
-import { enqueueSourceIngest } from "@/lib/source-lifecycle"
-import { useTranslation } from "react-i18next"
 
 const FILE_TYPE_ICONS: Record<string, typeof FileText> = {
   sources: BookOpen,
@@ -55,15 +54,6 @@ const WIKI_TYPE_ICON_KEYS: Record<string, keyof typeof FILE_TYPE_ICONS> = {
   overview: "overview",
 }
 
-/** Compact "time remaining" label, e.g. "~2h 3m", "~5m", "<1m". */
-export function formatEta(ms: number): string {
-  const totalMin = Math.round(ms / 60000)
-  if (totalMin < 1) return "<1m"
-  const h = Math.floor(totalMin / 60)
-  const m = totalMin % 60
-  return h > 0 ? `~${h}h ${m}m` : `~${m}m`
-}
-
 function getFileTypeInfo(path: string): { icon: typeof FileText; type: string } {
   const inferred = inferWikiTypeFromPath(path)
   if (inferred) {
@@ -80,19 +70,6 @@ function getFileTypeInfo(path: string): { icon: typeof FileText; type: string } 
   return { icon: FileText, type: "File" }
 }
 
-/**
- * Activity-type filter chip values. "all" is the default (show
- * everything); other values match `ActivityItem.type` 1:1.
- */
-type ActivityTypeFilter = "all" | "ingest" | "lint" | "query"
-
-const ACTIVITY_FILTER_VALUES: ReadonlyArray<{ value: ActivityTypeFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "ingest", label: "Ingest" },
-  { value: "lint", label: "Lint" },
-  { value: "query", label: "Query" },
-]
-
 export function ActivityPanel() {
   const { t } = useTranslation()
   const items = useActivityStore((s) => s.items)
@@ -102,18 +79,8 @@ export function ActivityPanel() {
   const setFileSyncTasks = useFileSyncStore((s) => s.setTasks)
   const fileSyncError = useFileSyncStore((s) => s.lastError)
   const [expanded, setExpanded] = useState(false)
-  const [queueTasks, setQueueTasks] = useState<IngestTask[]>([])
-  // Type-filter chip state. "all" by default; other values match
-  // `ActivityItem.type` 1:1. Lives in local React state because
-  // it's a transient view preference — re-opening the panel should
-  // default back to "all" so the user doesn't lose new items behind
-  // a forgotten filter.
-  const [typeFilter, setTypeFilter] = useState<ActivityTypeFilter>("all")
+  const [queueTasks, setQueueTasks] = useState<IngestTask[]>(() => [...getQueue()])
   const prevRunningRef = useRef(0)
-
-  const filteredItems = typeFilter === "all"
-    ? items
-    : items.filter((i) => i.type === typeFilter)
 
   const runningCount = items.filter((i) => i.status === "running").length
   const hasItems = items.length > 0
@@ -159,40 +126,6 @@ export function ActivityPanel() {
   const handleIngestCancel = useCallback((taskId: string) => {
     if (!project) return
     cancelTask(taskId)
-  }, [project])
-
-  // Resume an interrupted/errored ingest. Re-enqueueing the source path
-  // routes back through autoIngest, which transparently picks up the
-  // long-source checkpoint — so a job killed at chunk 18/937 continues
-  // from 18, not from scratch. Safe for any errored ingest item: the
-  // ingest cache + checkpoint make re-runs idempotent.
-  //
-  // The resume runs as a FRESH queue task + activity item, so we drop the
-  // clicked error row right away: that's the immediate feedback (the row
-  // would otherwise just sit there looking dead), and it stops a second
-  // click from spawning a duplicate "pending re-run" behind the one that's
-  // already processing. If the same source is already queued/processing we
-  // skip the enqueue entirely and just clear the stale error row.
-  const handleActivityResume = useCallback(async (itemId: string, sourcePath: string) => {
-    if (!project) return
-    const activity = useActivityStore.getState()
-    const fileName = getFileName(sourcePath)
-    const alreadyActive = getQueue().some(
-      (t) => (t.status === "processing" || t.status === "pending") && getFileName(t.sourcePath) === fileName,
-    )
-    if (alreadyActive) {
-      activity.removeItem(itemId)
-      return
-    }
-    try {
-      const ids = await enqueueSourceIngest(project, [sourcePath], useWikiStore.getState().llmConfig)
-      // Only drop the error row if we actually queued something. An empty
-      // result means nothing ran (no usable LLM / not ingestable) — keep
-      // the row so the failure stays visible.
-      if (ids.length > 0) activity.removeItem(itemId)
-    } catch (err) {
-      console.error("[activity-panel] resume ingest failed:", err)
-    }
   }, [project])
 
   const handleCancelAll = useCallback(() => {
@@ -260,7 +193,7 @@ export function ActivityPanel() {
   // Build status text
   let statusText = ""
   if (queueSummary.processing > 0 || queueSummary.pending > 0) {
-    const done = queueSummary.total - queueSummary.pending - queueSummary.processing
+    const done = queueSummary.completed + queueSummary.failed
     statusText = `Queue: ${done}/${queueSummary.total}`
     if (queueSummary.failed > 0) statusText += ` (${queueSummary.failed} failed)`
   } else if (runningCount > 0) {
@@ -383,7 +316,7 @@ export function ActivityPanel() {
               <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                 <div
                   className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${((queueSummary.total - queueSummary.pending - queueSummary.processing) / Math.max(queueSummary.total, 1)) * 100}%` }}
+                  style={{ width: `${((queueSummary.completed + queueSummary.failed) / Math.max(queueSummary.total, 1)) * 100}%` }}
                 />
               </div>
             </div>
@@ -408,17 +341,9 @@ export function ActivityPanel() {
           )}
 
           {/* Queue tasks */}
-          {queueTasks.filter((t) => t.status === "processing").map((task) => {
-            // Surface the matching running activity item's chunk progress
-            // on the prominent processing row (matched by filename, same
-            // as the cancel-button wiring below).
-            const progress = items.find(
-              (i) => i.status === "running" && i.progress && getFileName(task.sourcePath) === i.title,
-            )?.progress
-            return (
-              <QueueRow key={task.id} task={task} progress={progress} onRetry={handleIngestRetry} onCancel={handleIngestCancel} />
-            )
-          })}
+          {queueTasks.filter((t) => t.status === "processing").map((task) => (
+            <QueueRow key={task.id} task={task} onRetry={handleIngestRetry} onCancel={handleIngestCancel} />
+          ))}
           {queueTasks.filter((t) => t.status === "pending").map((task) => (
             <QueueRow key={task.id} task={task} onRetry={handleIngestRetry} onCancel={handleIngestCancel} />
           ))}
@@ -426,39 +351,8 @@ export function ActivityPanel() {
             <QueueRow key={task.id} task={task} onRetry={handleIngestRetry} onCancel={handleIngestCancel} />
           ))}
 
-          {/* Activity-type filter chips. Only render when there are
-              activity items AND more than one type is represented —
-              a one-type panel doesn't benefit from a filter row. */}
-          {items.length > 0 && new Set(items.map((i) => i.type)).size > 1 && (
-            <div className="flex items-center gap-1 px-3 py-1 border-b border-border/50">
-              {ACTIVITY_FILTER_VALUES.map((opt) => {
-                const count = opt.value === "all"
-                  ? items.length
-                  : items.filter((i) => i.type === opt.value).length
-                const disabled = opt.value !== "all" && count === 0
-                const active = typeFilter === opt.value
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setTypeFilter(opt.value)}
-                    disabled={disabled}
-                    className={`rounded px-1.5 py-0.5 text-[10px] transition-colors disabled:opacity-40 disabled:cursor-default ${
-                      active
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                    }`}
-                    title={`Show ${opt.label.toLowerCase()} activity (${count})`}
-                  >
-                    {opt.label} <span className="opacity-70 tabular-nums">{count}</span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-
-          {/* Activity items (post-filter) */}
-          {filteredItems.map((item) => {
+          {/* Activity items */}
+          {items.map((item) => {
             // Find matching queue task for cancel button
             const matchingTask = item.status === "running"
               ? queueTasks.find((t) => t.status === "processing" && getFileName(t.sourcePath) === item.title)
@@ -468,16 +362,9 @@ export function ActivityPanel() {
                 key={item.id}
                 item={item}
                 onCancel={matchingTask ? () => handleIngestCancel(matchingTask.id) : undefined}
-                onResume={handleActivityResume}
               />
             )
           })}
-          {/* Empty-state when the filter excludes everything */}
-          {typeFilter !== "all" && filteredItems.length === 0 && (
-            <div className="px-3 py-3 text-center text-[10px] text-muted-foreground/70">
-              No {typeFilter} activity. Click All to see everything.
-            </div>
-          )}
           {items.some((i) => i.status !== "running") && (
             <button
               onClick={clearDone}
@@ -492,13 +379,7 @@ export function ActivityPanel() {
   )
 }
 
-function QueueRow({ task, onRetry, onCancel, progress }: {
-  task: IngestTask
-  onRetry: (id: string) => void
-  onCancel: (id: string) => void
-  progress?: ActivityItem["progress"]
-}) {
-  const { t } = useTranslation()
+function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id: string) => void; onCancel: (id: string) => void }) {
   const fileName = getFileName(task.sourcePath)
 
   return (
@@ -516,25 +397,6 @@ function QueueRow({ task, onRetry, onCancel, progress }: {
           )}
           {task.status === "failed" && task.error && (
             <div className="text-[10px] text-destructive mt-0.5 truncate">{task.error}</div>
-          )}
-          {task.status === "processing" && progress && progress.total > 0 && (
-            <div className="mt-1">
-              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground tabular-nums">
-                <span>
-                  {progress.current}/{progress.total} ·{" "}
-                  {Math.floor((progress.current / progress.total) * 100)}%
-                </span>
-                {progress.etaMs !== undefined && (
-                  <span>{formatEta(progress.etaMs)} {t("activity.left", { defaultValue: "left" })}</span>
-                )}
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${(progress.current / progress.total) * 100}%` }}
-                />
-              </div>
-            </div>
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -604,22 +466,9 @@ function FileSyncRow({ task, onRetry, onIgnore }: { task: FileChangeTask; onRetr
   )
 }
 
-function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCancel?: () => void; onResume?: (itemId: string, sourcePath: string) => void | Promise<void> }) {
+function ActivityRow({ item, onCancel }: { item: ActivityItem; onCancel?: () => void }) {
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
   const project = useWikiStore((s) => s.project)
-  const { t } = useTranslation()
-  // Disables the Resume button the instant it's clicked. Resuming routes
-  // the source back into the queue (async), and on success this row is
-  // removed and replaced by a fresh "running" item with a progress bar.
-  // Without this latch the button keeps sitting there during the brief
-  // enqueue gap, so an impatient user clicks it again (or wonders if it
-  // did anything) — exactly the "继续 looked unresponsive" confusion. Once
-  // resuming, we hide the button entirely so there's nothing left to click.
-  const [resuming, setResuming] = useState(false)
-  // Offer "Resume" only for errored ingest items that still know their
-  // source path. Re-ingest is idempotent (cache + checkpoint), so this
-  // covers both the "interrupted by reload" case and any mid-run failure.
-  const canResume = item.status === "error" && !!item.sourcePath && !!onResume && !resuming
 
   function handleFileClick(filePath: string) {
     if (!project) return
@@ -641,25 +490,6 @@ function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCance
         <div className="min-w-0 flex-1">
           <div className="font-medium">{item.title}</div>
           <div className="text-muted-foreground mt-0.5">{item.detail}</div>
-          {item.status === "running" && item.progress && item.progress.total > 0 && (
-            <div className="mt-1.5">
-              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground tabular-nums">
-                <span>
-                  {item.progress.current}/{item.progress.total} ·{" "}
-                  {Math.floor((item.progress.current / item.progress.total) * 100)}%
-                </span>
-                {item.progress.etaMs !== undefined && (
-                  <span>{formatEta(item.progress.etaMs)} {t("activity.left", { defaultValue: "left" })}</span>
-                )}
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${(item.progress.current / item.progress.total) * 100}%` }}
-                />
-              </div>
-            </div>
-          )}
         </div>
         {item.status === "running" && onCancel && (
           <button
@@ -669,31 +499,6 @@ function ActivityRow({ item, onCancel, onResume }: { item: ActivityItem; onCance
           >
             <X className="h-3 w-3" />
           </button>
-        )}
-        {canResume && (
-          <button
-            onClick={() => {
-              setResuming(true)
-              // If the resume is a no-op or fails (e.g. no usable LLM), the
-              // row stays mounted — un-latch so the button comes back rather
-              // than vanishing permanently. On success the row unmounts and
-              // this setState is harmlessly dropped.
-              Promise.resolve(onResume!(item.id, item.sourcePath!))
-                .catch(() => {})
-                .finally(() => setResuming(false))
-            }}
-            className="shrink-0 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
-            title={t("activity.resumeTitle")}
-          >
-            <RotateCcw className="h-3 w-3" />
-            {t("activity.resume")}
-          </button>
-        )}
-        {item.status === "error" && resuming && (
-          <span className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {t("activity.resuming", { defaultValue: "Resuming…" })}
-          </span>
         )}
       </div>
 

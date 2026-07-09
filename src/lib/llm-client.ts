@@ -3,13 +3,8 @@ import { isAzureOpenAiEndpoint } from "@/lib/azure-openai"
 import { getProviderConfig, type RequestOverrides } from "./llm-providers"
 import { getHttpFetch, isFetchNetworkError } from "./tauri-fetch"
 import { countReasoningCharsInLine, extractReasoningTextFromLine } from "./reasoning-detector"
-import {
-  MAX_RATE_LIMIT_RETRIES,
-  rateLimitBackoffMs,
-  sleepRespectingAbort,
-} from "./rate-limit"
 
-export type { ChatMessage, RequestOverrides } from "./llm-providers"
+export type { ChatMessage, ContentBlock, RequestOverrides } from "./llm-providers"
 export { isFetchNetworkError } from "./tauri-fetch"
 
 export interface StreamCallbacks {
@@ -52,25 +47,11 @@ function parseLines(chunk: Uint8Array, buffer: string): [string[], string] {
   return [lines, remaining]
 }
 
-/**
- * The Tauri HTTP plugin tears down a body stream by passing a bare
- * *string* "Request cancelled" (US spelling "canceled" on some
- * platforms) to controller.error() — not an Error. Recognize both
- * spellings, case-insensitively, in both the string and Error shapes so
- * a backstop-fired abort never leaks the raw string to the user.
- */
 function isRequestCancelledError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
   return /^request cancel(?:l)?ed$/i.test(message.trim())
 }
 
-/**
- * Reasoning-model recovery (v0.5.1). Recognise the diagnostic streamChat
- * raises when a "thinking" endpoint streams only chain-of-thought and ends
- * with no actual answer content (DeepSeek-R1-style / Qwen reasoning
- * deployments). Callers (chat-panel) catch this to retry the same request
- * once with reasoning forced off, which reliably coaxes out a plain answer.
- */
 export function isReasoningOnlyResponseError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
   return /^Model produced [\d,]+ characters of reasoning \/ chain-of-thought, but no actual response content\./.test(message)
@@ -133,92 +114,48 @@ export async function streamChat(
     combinedSignal = timeoutController.signal
   }
 
-  // Rate-limit-aware retry loop wrapping the initial HTTP request +
-  // response.ok check. Mirrors the agent-llm postJson backoff so
-  // streamChat callers (autoIngest, wikify, semantic lint, chat) get
-  // 429 resilience transparently — without the calling code having
-  // to know the streaming layer can retry.
-  //
-  // Retry condition: HTTP status === 429. We don't read the body here
-  // because the streaming body reader below needs it (response.text()
-  // would consume the stream). 429 status alone is a strong-enough
-  // signal across every provider we've seen; if a future provider
-  // returns rate-limit text under status 200, that's the agent-level
-  // retry's job to catch.
-  //
-  // The streaming body is only consumed AFTER the retry loop succeeds,
-  // so a successful retry hands a fresh undrained stream to the
-  // existing reader code below.
   let response: Response
-  let lastRetriableError = ""
-  outer: for (let attempt = 1; ; attempt += 1) {
-    try {
-      const body = providerConfig.buildBody(messages, requestOverrides)
-      const httpFetch = await getHttpFetch()
-      response = await httpFetch(providerConfig.url, {
-        method: "POST",
-        headers: providerConfig.headers,
-        body: JSON.stringify(body),
-        signal: combinedSignal,
-      })
-    } catch (err) {
-      if (signal?.aborted) {
-        onDone()
-        return
-      }
-      if ((err instanceof Error && err.name === "AbortError") || isRequestCancelledError(err)) {
-        // Backstop timeout aborted the request (we tracked this via
-        // timeoutFired); treat it as a real timeout rather than a cancel.
-        if (timeoutFired) {
-          onError(new Error(`Request timed out after ${Math.round(timeoutMs / 60000)} min. Try a faster model or a smaller context.`))
-          return
-        }
-        onDone()
-        return
-      }
-      if (isFetchNetworkError(err)) {
-        if (timeoutFired) {
-          onError(new Error(`Request timed out after ${Math.round(timeoutMs / 60000)} min. Try a faster model or a smaller context.`))
-          return
-        }
-        // Fast fetch failure: DNS, TLS handshake, connection refused,
-        // wrong endpoint, CORS preflight rejection, etc. All webviews
-        // collapse this class of failure into an opaque error — point
-        // users at the likely cause (endpoint / key / connectivity).
-        onError(new Error(`Network error reaching ${providerConfig.url}. Check endpoint URL, API key, and connectivity.`))
-        return
-      }
-      onError(err instanceof Error ? err : new Error(String(err)))
+  try {
+    const body = providerConfig.buildBody(messages, requestOverrides)
+    const httpFetch = await getHttpFetch()
+    response = await httpFetch(providerConfig.url, {
+      method: "POST",
+      headers: providerConfig.headers,
+      body: JSON.stringify(body),
+      signal: combinedSignal,
+    })
+  } catch (err) {
+    if (signal?.aborted) {
+      onDone()
       return
     }
-
-    if (response.ok) break outer
-
-    // Non-2xx path. We only retry HTTP 429; everything else falls
-    // through to the existing error-surfacing block below.
-    if (response.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
-      lastRetriableError = `HTTP 429: ${response.statusText}`
-      const waitMs = rateLimitBackoffMs(attempt)
-      console.warn(
-        `[streamChat] rate-limited (HTTP 429); ` +
-          `backing off ${waitMs}ms before retry ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES}.`,
-      )
-      await sleepRespectingAbort(waitMs, combinedSignal)
-      if (combinedSignal?.aborted) {
-        // User cancelled (or timeout fired) during the wait — return
-        // without surfacing an error, matching how the fetch-level
-        // abort branches above behave.
-        if (timeoutFired) {
-          onError(new Error(`Request timed out after ${Math.round(timeoutMs / 60000)} min. Try a faster model or a smaller context.`))
-        } else {
-          onDone()
-        }
+    if ((err instanceof Error && err.name === "AbortError") || isRequestCancelledError(err)) {
+      // Backstop timeout aborted the request (we tracked this via
+      // timeoutFired); treat it as a real timeout rather than a cancel.
+      if (timeoutFired) {
+        onError(new Error(`Request timed out after ${Math.round(timeoutMs / 60000)} min. Try a faster model or a smaller context.`))
         return
       }
-      continue outer
+      onDone()
+      return
     }
+    if (isFetchNetworkError(err)) {
+      if (timeoutFired) {
+        onError(new Error(`Request timed out after ${Math.round(timeoutMs / 60000)} min. Try a faster model or a smaller context.`))
+        return
+      }
+      // Fast fetch failure: DNS, TLS handshake, connection refused,
+      // wrong endpoint, CORS preflight rejection, etc. All webviews
+      // collapse this class of failure into an opaque error — point
+      // users at the likely cause (endpoint / key / connectivity).
+      onError(new Error(`Network error reaching ${providerConfig.url}. Check endpoint URL, API key, and connectivity.`))
+      return
+    }
+    onError(err instanceof Error ? err : new Error(String(err)))
+    return
+  }
 
-    // Terminal HTTP error — surface to the caller.
+  if (!response.ok) {
     let errorDetail = `HTTP ${response.status}: ${response.statusText}`
     try {
       const body = await response.text()
@@ -244,9 +181,6 @@ export async function streamChat(
     onError(new Error(errorDetail))
     return
   }
-  // Silence "declared but never read" — surfaced in the warn log
-  // above and useful for future telemetry if we ever ship that.
-  void lastRetriableError
 
   if (!response.body) {
     onError(new Error("Response body is null"))

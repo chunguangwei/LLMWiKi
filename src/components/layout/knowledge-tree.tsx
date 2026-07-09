@@ -12,8 +12,10 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
-import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
+import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
+import { filterRawSourceTree } from "@/lib/source-filter"
 
 export interface WikiPageInfo {
   path: string
@@ -79,6 +81,13 @@ const TYPE_CONFIG: Record<string, { icon: typeof FileText; labelKey: string; col
 
 const DEFAULT_CONFIG = { icon: FileText, labelKey: "knowledgeTree.types.other", color: "text-muted-foreground", order: 99 }
 
+// Resolve the display config for a wiki type. Known types come from
+// TYPE_CONFIG (with an i18n `labelKey`); unknown types fall through to
+// DEFAULT_CONFIG ("Other").
+function typeConfig(type: string): { icon: typeof FileText; labelKey: string; color: string; order: number } {
+  return TYPE_CONFIG[type] ?? DEFAULT_CONFIG
+}
+
 // Which type groups start expanded the first time a project is opened.
 // After that, the user's expand/collapse choices are remembered per
 // project (localStorage) so groups don't snap back on reload/relaunch.
@@ -116,8 +125,6 @@ export function KnowledgeTree() {
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
   const fileTree = useWikiStore((s) => s.fileTree)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
-  const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
   const dataVersion = useWikiStore((s) => s.dataVersion)
   const [pages, setPages] = useState<WikiPageInfo[]>([])
   // Restored from localStorage (per project) so expand/collapse choices
@@ -189,12 +196,13 @@ export function KnowledgeTree() {
         // Refresh: page list, file tree, any data-version subscribers.
         await loadPages()
         try {
-          const tree = await listDirectory(pp)
-          setFileTree(tree)
+          await refreshProjectFileTree(pp, {
+            projectId: project.id,
+            bumpDataVersion: true,
+          })
         } catch {
           // non-critical
         }
-        bumpDataVersion()
         if (selectedFile === pagePath) setSelectedFile(null)
       } catch (err) {
         console.error("[KnowledgeTree] delete failed:", err)
@@ -203,7 +211,7 @@ export function KnowledgeTree() {
         setDeletingPath(null)
       }
     },
-    [project, armedPath, loadPages, selectedFile, setSelectedFile, setFileTree, bumpDataVersion],
+    [project, armedPath, loadPages, selectedFile, setSelectedFile],
   )
 
   if (!project) {
@@ -224,8 +232,9 @@ export function KnowledgeTree() {
 
   // Sort groups by configured order
   const sortedGroups = [...grouped.entries()].sort((a, b) => {
-    const orderA = TYPE_CONFIG[a[0]]?.order ?? DEFAULT_CONFIG.order
-    const orderB = TYPE_CONFIG[b[0]]?.order ?? DEFAULT_CONFIG.order
+    const orderA = typeConfig(a[0]).order
+    const orderB = typeConfig(b[0]).order
+    if (orderA === orderB) return wikiTypeLabel(a[0]).localeCompare(wikiTypeLabel(b[0]))
     return orderA - orderB
   })
 
@@ -253,7 +262,7 @@ export function KnowledgeTree() {
         )}
 
         {sortedGroups.map(([type, items]) => {
-          const config = TYPE_CONFIG[type] ?? DEFAULT_CONFIG
+          const config = typeConfig(type)
           const Icon = config.icon
           const isExpanded = expandedTypes.has(type)
 
@@ -339,7 +348,7 @@ function RawSourcesSection() {
   useEffect(() => {
     if (!project) return
     const pp = normalizePath(project.path)
-    listDirectory(`${pp}/raw/sources`, true)
+    listDirectory(`${pp}/raw/sources`, true).then(filterRawSourceTree)
       .then((tree) => setSources(flattenAllFiles(tree)))
       .catch(() => setSources([]))
   }, [project])

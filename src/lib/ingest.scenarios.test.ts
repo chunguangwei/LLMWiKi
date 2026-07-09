@@ -23,10 +23,15 @@ vi.mock("@/commands/fs", () => realFs)
 // generationResponse. Any further calls return empty (shouldn't happen in a
 // typical autoIngest run).
 let pendingResponses: string[] = []
+let streamCallCount = 0
+let afterStreamToken: ((callIndex: number, token: string) => void) | null = null
 vi.mock("./llm-client", () => ({
   streamChat: vi.fn(async (_cfg, _msgs, cb) => {
+    streamCallCount += 1
+    const callIndex = streamCallCount
     const resp = pendingResponses.shift() ?? ""
     cb.onToken(resp)
+    afterStreamToken?.(callIndex, resp)
     cb.onDone()
   }),
 }))
@@ -54,6 +59,8 @@ beforeAll(async () => {
 
 beforeEach(() => {
   pendingResponses = []
+  streamCallCount = 0
+  afterStreamToken = null
   useReviewStore.setState({ items: [] })
   useActivityStore.setState({ items: [] })
   useChatStore.setState({
@@ -139,16 +146,6 @@ async function assertOutcome(
     expect(exists, `file not written: ${p}`).toBe(true)
   }
 
-  // 1b. Forbidden files (e.g. wiki/sources/<x>.md when LLM already
-  //     emitted wiki/旅游方案/<x>.md) must NOT exist.
-  if (expected.forbiddenPaths) {
-    for (const p of expected.forbiddenPaths) {
-      const full = path.join(tmpPath, p)
-      const exists = await fileExists(full)
-      expect(exists, `forbidden file was written: ${p}`).toBe(false)
-    }
-  }
-
   // 2. File contents contain expected substrings
   if (expected.fileContains) {
     for (const [relPath, substrs] of Object.entries(expected.fileContains)) {
@@ -206,8 +203,6 @@ describe("ingest scenarios (fixture-driven)", () => {
     },
   )
 
-  // Schema-routing guard (ported from upstream d969cd4): a generated page whose
-  // frontmatter `type` disagrees with the schema's directory mapping is dropped.
   it("drops generated pages whose frontmatter type disagrees with schema routing", async () => {
     ctx = { tmp: await createTempProject("ingest-schema-routing") }
     const projectPath = ctx.tmp.path
@@ -263,7 +258,6 @@ describe("ingest scenarios (fixture-driven)", () => {
         "# Source: schema-routing.md",
         "---END FILE---",
         "",
-        // A page declaring type:source but written under wiki/concepts/ — must be dropped.
         "---FILE: wiki/concepts/wrong-place.md---",
         "---",
         "type: source",
@@ -374,5 +368,76 @@ describe("ingest scenarios (fixture-driven)", () => {
     expect(projectA).toContain("analysis for project A")
     expect(projectB).toContain('sources: ["project-b/config.yaml"]')
     expect(projectB).toContain("analysis for project B")
+  })
+
+  it("does not write partial generation output after cancellation", async () => {
+    ctx = { tmp: await createTempProject("ingest-cancel-generation") }
+    const projectPath = ctx.tmp.path
+
+    await writeFileRaw(`${projectPath}/schema.md`, "")
+    await writeFileRaw(`${projectPath}/purpose.md`, "")
+    await writeFileRaw(`${projectPath}/wiki/index.md`, "# Index\n")
+    await writeFileRaw(`${projectPath}/wiki/overview.md`, "# Overview\n")
+    await writeFileRaw(`${projectPath}/raw/sources/cancel.md`, "source")
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: projectPath,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+    })
+    useWikiStore.getState().setLlmConfig({
+      provider: "openai",
+      apiKey: "test-key",
+      model: "gpt-4",
+      ollamaUrl: "",
+      customEndpoint: "",
+      maxContextSize: 128000,
+    })
+
+    const controller = new AbortController()
+    pendingResponses = [
+      "analysis",
+      [
+        "---FILE: wiki/concepts/partial.md---",
+        "---",
+        "type: concept",
+        "title: Partial",
+        "sources: [cancel.md]",
+        "tags: []",
+        "related: []",
+        "---",
+        "",
+        "# Partial",
+        "---END FILE---",
+        "",
+        "---REVIEW: missing-page | Partial follow-up---",
+        "This should not be parsed.",
+        "---END REVIEW---",
+      ].join("\n"),
+    ]
+    afterStreamToken = (_callIndex, token) => {
+      if (token.includes("---FILE:")) controller.abort()
+    }
+
+    await expect(
+      autoIngest(
+        projectPath,
+        `${projectPath}/raw/sources/cancel.md`,
+        useWikiStore.getState().llmConfig,
+        controller.signal,
+      ),
+    ).rejects.toThrow(/Ingest cancelled/)
+
+    expect(await fileExists(`${projectPath}/wiki/concepts/partial.md`)).toBe(false)
+    expect(await fileExists(`${projectPath}/wiki/sources/cancel.md`)).toBe(false)
+    expect(useReviewStore.getState().items).toHaveLength(0)
+    expect(useActivityStore.getState().items[0]).toMatchObject({
+      status: "error",
+      detail: "Ingest cancelled",
+    })
   })
 })

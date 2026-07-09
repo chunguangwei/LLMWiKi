@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest"
 import {
+  legacySourceSummarySlugFromIdentity,
   sourceIdentityForPath,
   sourceReferenceIdentity,
+  sourceSummarySlugCandidatesFromIdentity,
   sourceSummarySlugFromIdentity,
 } from "./source-identity"
 
@@ -38,14 +40,19 @@ describe("source identity helpers", () => {
   })
 
   it("escapes slug segments so delimiter-containing folders do not collide", () => {
-    expect(sourceSummarySlugFromIdentity("a--b/config.yaml")).toMatch(
-      /^4-a--b--6-config--[a-z0-9]+$/,
+    const slug = sourceSummarySlugFromIdentity("a--b/config.yaml")
+
+    expect(slug).toMatch(
+      /^4-a-b--6-config--[a-z0-9]+$/,
     )
     expect(sourceSummarySlugFromIdentity("a/b/config.yaml")).toMatch(
       /^1-a--1-b--6-config--[a-z0-9]+$/,
     )
     expect(sourceSummarySlugFromIdentity("4-a--b--6-config.yaml")).not.toBe(
       sourceSummarySlugFromIdentity("a--b/config.yaml"),
+    )
+    expect(sourceSummarySlugCandidatesFromIdentity("a--b/config.yaml")).toContain(
+      slug.replace(/^4-a-b/, "3-a-b"),
     )
   })
 
@@ -55,6 +62,10 @@ describe("source identity helpers", () => {
     expect(slug.length).toBeLessThanOrEqual(120)
     expect(`wiki/sources/${slug}.md`.length).toBeLessThanOrEqual(136)
     expect(slug).toMatch(/--[a-z0-9]+$/)
+    expect(slug).toContain("2024年")
+    expect(slug).toContain("污水处理")
+    expect(slug).toContain("反硝化除磷技术研究报告")
+    expect(slug).not.toContain("%")
   })
 
   it("keeps stable hashes when truncating long nested source slugs", () => {
@@ -64,5 +75,16 @@ describe("source identity helpers", () => {
     expect(first).not.toBe(second)
     expect(first.length).toBeLessThanOrEqual(120)
     expect(second.length).toBeLessThanOrEqual(120)
+  })
+
+  it("keeps legacy percent-encoded nested slug candidates for old source pages", () => {
+    const identity = "2024年/污水处理/反硝化除磷技术研究报告.pdf"
+    const canonical = sourceSummarySlugFromIdentity(identity)
+    const legacy = legacySourceSummarySlugFromIdentity(identity)
+
+    expect(canonical).not.toBe(legacy)
+    expect(canonical).not.toContain("%")
+    expect(legacy).toContain("%E6")
+    expect(sourceSummarySlugCandidatesFromIdentity(identity)).toEqual([canonical, legacy])
   })
 })

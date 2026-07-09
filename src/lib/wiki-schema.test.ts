@@ -27,6 +27,32 @@ describe("parseWikiSchemaRouting", () => {
       overview: "wiki",
     })
   })
+
+  it("ignores unrelated markdown tables outside the Page Types section", () => {
+    const routing = parseWikiSchemaRouting([
+      "# Wiki Schema",
+      "",
+      "| Name | Directory |",
+      "| ---- | --------- |",
+      "| draft | wiki/drafts/ |",
+      "",
+      "## Page Types",
+      "",
+      "| Type | Directory | Purpose |",
+      "| ---- | --------- | ------- |",
+      "| concept | wiki/concepts/ | Ideas |",
+      "",
+      "## Examples",
+      "",
+      "| Type | Directory |",
+      "| ---- | --------- |",
+      "| person | wiki/people/ |",
+    ].join("\n"))
+
+    expect(routing.typeDirs).toEqual({
+      concept: "wiki/concepts",
+    })
+  })
 })
 
 describe("validateWikiPageRouting", () => {

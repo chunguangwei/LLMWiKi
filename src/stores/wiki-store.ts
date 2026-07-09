@@ -1,7 +1,12 @@
 import { create } from "zustand"
 import type { WikiProject, FileNode } from "@/types/wiki"
 import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
-import type { Theme } from "@/lib/theme"
+import {
+  buildProjectPathIndexFromTree,
+  createEmptyProjectPathIndex,
+  type ProjectPathIndex,
+} from "@/lib/wiki-page-resolver"
+import { DEFAULT_GRAPH_FILTERS, type GraphFilterState } from "@/lib/graph-filters"
 
 /**
  * Wire protocol used when `provider === "custom"`. Other providers have a
@@ -29,9 +34,25 @@ interface LlmConfig {
   maxContextSize: number // max context window in characters
   apiMode?: CustomApiMode
   reasoning?: ReasoningConfig
+  /**
+   * Local CLI providers only. When true, LLM Wiki asks Claude/Codex CLI
+   * to ignore user-level rules/config/MCP/tool state where the CLI exposes
+   * such controls. Default false preserves existing advanced-user setups.
+   */
+  localCliIsolation?: boolean
+  /** Codex CLI provider only. Overall subprocess timeout in minutes. */
+  codexCliTimeoutMinutes?: number
 }
 
-export type SearchProvider = "tavily" | "serpapi" | "searxng" | "ollama" | "brave" | "firecrawl" | "none"
+export type SearchProvider =
+  | "tavily"
+  | "serpapi"
+  | "searxng"
+  | "ollama"
+  | "brave"
+  | "firecrawl"
+  | "none"
+export type DeepResearchSource = "web" | "anytxt" | "both"
 export type SerpApiEngine =
   | "google"
   | "google_news"
@@ -66,14 +87,6 @@ export interface SearchProviderOverride {
 
 export type SearchProviderConfigs = Partial<Record<Exclude<SearchProvider, "none">, SearchProviderOverride>>
 
-/**
- * Local AnyTXT desktop-search integration (ported from upstream alongside
- * the chat-agent routing in cea0029). The fork forked before AnyTXT
- * existed, so this type is brought in purely to let the chat-agent's
- * `anytxt_search` tool typecheck. There is no settings UI to populate it
- * yet — `anyTxt` stays undefined, so `normalizeAnyTxtConfig` resolves
- * `enabled: false` and the tool is filtered out of the agent's toolset.
- */
 export interface AnyTxtConfig {
   enabled?: boolean
   endpoint?: string
@@ -90,7 +103,7 @@ interface SearchApiConfig {
   searXngCategories?: SearXngCategory[]
   ollamaUrl?: string
   providerConfigs?: SearchProviderConfigs
-  /** Local AnyTXT desktop-search config; see AnyTxtConfig above. */
+  deepResearchSource?: DeepResearchSource
   anyTxt?: AnyTxtConfig
 }
 
@@ -184,6 +197,8 @@ interface ScheduledImportConfig {
  *     env-token-only setup keeps working after the toggle is added.
  *   - `allowUnauthenticated` lets local agents call the API without a
  *     token. It is explicit and default-off.
+ *   - `allowLanAccess` binds the API and clip server to 0.0.0.0 on
+ *     app startup so trusted LAN devices can reach them. Default-off.
  *   - `mcpEnabled` allows the optional MCP stdio server to use this
  *     API. It is separate from the HTTP API kill-switch so users can
  *     expose scripts while keeping MCP disabled.
@@ -194,16 +209,34 @@ interface ScheduledImportConfig {
 interface ApiConfig {
   enabled: boolean
   allowUnauthenticated: boolean
+  allowLanAccess: boolean
   mcpEnabled: boolean
   token: string
 }
 
-// General desktop-app behavior (ported from upstream 0e292ee).
-// `closeBehavior` drives what the Rust window-close handler does when
-// the title-bar close button is clicked; `autostart` toggles the OS
-// launch-at-login entry. Persisted via generalConfig (project-store.ts)
-// and pushed to Rust on save + startup.
 export type CloseBehavior = "ask" | "minimize" | "exit"
+
+export type GraphColorMode = "type" | "community"
+
+export interface GraphUiState {
+  colorMode: GraphColorMode
+  filters: GraphFilterState
+  nodeScale: number
+  graphSpacingDraft: number
+}
+
+export function createDefaultGraphUiState(): GraphUiState {
+  return {
+    colorMode: "type",
+    filters: {
+      ...DEFAULT_GRAPH_FILTERS,
+      hiddenTypes: new Set(),
+      hiddenNodeIds: new Set(),
+    },
+    nodeScale: 1,
+    graphSpacingDraft: 1,
+  }
+}
 
 export interface GeneralConfig {
   autostart: boolean
@@ -220,9 +253,6 @@ interface SourceWatchConfig {
   maxFileSizeMb: number
 }
 
-// MinerU cloud PDF parser (opt-in). Default ingest stays on the built-in
-// pdfium extractor; MinerU only kicks in when explicitly enabled with a
-// token. PDF parsing supports the "pipeline" and "vlm" model versions.
 export type MineruModelVersion = "pipeline" | "vlm"
 
 export interface MineruConfig {
@@ -292,15 +322,34 @@ export interface ProviderOverride {
   apiMode?: CustomApiMode
   maxContextSize?: number
   reasoning?: ReasoningConfig
+  localCliIsolation?: boolean
+  codexCliTimeoutMinutes?: number
 }
 
 export type ProviderConfigs = Record<string, ProviderOverride>
 
+export interface ExternalPreview {
+  title: string
+  path: string
+  source: string
+  url: string
+  snippet: string
+}
+
 interface WikiState {
   project: WikiProject | null
   fileTree: FileNode[]
+  /**
+   * Lightweight lookup index derived from `fileTree`. Production code must
+   * update fileTree through `setFileTree` so this stays in sync; direct
+   * `useWikiStore.setState({ fileTree })` is only for tests that also reset or
+   * do not read path resolution.
+   */
+  projectPathIndex: ProjectPathIndex
   selectedFile: string | null
   fileContent: string
+  previewContentPath: string | null
+  externalPreview: ExternalPreview | null
   /**
    * One-shot scroll target for the markdown preview. When the user
    * clicks an image in search results and chooses "jump to source",
@@ -316,25 +365,7 @@ interface WikiState {
    * one wiki-relative) still works.
    */
   pendingScrollImageSrc: string | null
-  /**
-   * When a view opens a page directly in the preview (search result,
-   * graph node, wikilink click, research synthesis, …) it stashes the
-   * content via `openFileInPreview` and records the path here. The
-   * PreviewPanel's load effect short-circuits when this matches
-   * `selectedFile`, so the freshly-passed content (which may be
-   * synthesized — e.g. "Unable to load …" — rather than on-disk) is
-   * shown verbatim instead of being clobbered by a redundant disk read.
-   * Cleared on any plain `setSelectedFile` / `openPathInPreview`.
-   */
-  previewContentPath: string | null
-  /**
-   * Chat used to live in a collapsible bottom bar (`chatExpanded`).
-   * As of the "chat as standalone view" refactor it is a first-class
-   * entry in `activeView` selected from the icon sidebar, so the bar —
-   * and its expanded flag — are gone. `"chat"` is a valid
-   * `previousView` target, so Esc-from-search can return to chat.
-   */
-  activeView: "chat" | "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "settings"
+  activeView: "chat" | "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "skills" | "settings"
   /**
    * The view we were on immediately before the current one. Lets a view
    * like global search offer "Esc / close → go back where I came from"
@@ -360,106 +391,23 @@ interface WikiState {
   embeddingConfig: EmbeddingConfig
   multimodalConfig: MultimodalConfig
   outputLanguage: OutputLanguage
-  /**
-   * Light / dark theme preference. `"system"` follows the OS via the
-   * `prefers-color-scheme` media query; `"light"` / `"dark"` are
-   * explicit overrides. Applied to `<html>` via the `.dark` class —
-   * see `src/lib/theme.ts` for the apply / subscribe seam.
-   */
-  theme: Theme
   proxyConfig: ProxyConfig
   scheduledImportConfig: ScheduledImportConfig
   sourceWatchConfig: SourceWatchConfig
   mineruConfig: MineruConfig
   apiConfig: ApiConfig
   generalConfig: GeneralConfig
-  /**
-   * **Labs / experimental** — turn on the 🤖 agent-ingest button on
-   * source files. Off by default in v0.4.23 because the pipeline is
-   * not yet validated on real long sources; users who opt in are
-   * implicitly volunteering for Phase F. See
-   * `docs/agent-ingest-design.md` for the architecture.
-   *
-   * Persisted via `saveExperimentalConfig` (project-store.ts).
-   */
-  experimentalAgentIngest: boolean
-  /**
-   * **Labs / experimental** — replace the lint Fix button's hardcoded
-   * actions (orphan → append to index.md, broken-link → push to Review,
-   * etc.) with an agent-driven mini-loop that decides per-item how to
-   * repair the wiki. Off by default; users opting in get smarter fixes
-   * but also LLM-cost overhead per click. See
-   * `src/lib/agent-lint-fix/` for the implementation.
-   *
-   * Persisted via `saveExperimentalConfig` (project-store.ts).
-   */
-  experimentalAiLintFix: boolean
-  /**
-   * **Labs / experimental** — when ON, SaveToWiki SKIPS the wikify LLM
-   * rewrite pass and persists the chat content verbatim. Default OFF
-   * (wikify runs, stripping chat tone). Useful when you want the
-   * agent's exact reply preserved — e.g. for record-keeping, when the
-   * reply is already encyclopedic, or when wikify keeps over-editing
-   * specific kinds of content (poetry, code-heavy answers, …).
-   *
-   * Independent of `hasUsableLlm` — the toggle only matters when an
-   * LLM IS configured. With no LLM, wikify is skipped regardless.
-   *
-   * Persisted via `saveExperimentalRawSaveToWiki` (project-store.ts).
-   */
-  experimentalRawSaveToWiki: boolean
-  /**
-   * **Labs / experimental** — when ON, every reconcile pass also runs
-   * the LLM annotator (`wiki-index-annotate`). For each index.md
-   * bullet that lacks a `— description`, the annotator reads the page,
-   * batch-calls the LLM with up to ~25 entries per call, and writes
-   * back one-line descriptions. Cached by body hash so unchanged
-   * pages don't re-spend tokens.
-   *
-   * Cost: ~one LLM round-trip per ~25 newly-written pages. Skipped
-   * entirely when no bullets need annotation (idempotent). Default
-   * OFF because it spends tokens.
-   *
-   * Persisted via `saveExperimentalIndexAnnotations` (project-store.ts).
-   */
-  experimentalIndexAnnotations: boolean
-  /**
-   * **Labs / experimental** — when ON, every autoIngest run pauses
-   * between LLM generation and the actual writeFile step. A preview
-   * dialog shows the LLM's proposed file list (paths + content
-   * preview); the user clicks Apply to commit or Cancel to skip
-   * without writing.
-   *
-   * The LLM tokens for analyse + generate are spent regardless —
-   * the gate exists to prevent disk pollution from a misguided LLM
-   * split (wrong slugs, duplicate concept pages, off-topic
-   * decompositions). Cancel = no disk damage; Apply = same as
-   * the current default.
-   *
-   * Persisted via `saveExperimentalIngestPreview` (project-store.ts).
-   */
-  experimentalIngestPreview: boolean
+  graphUiState: GraphUiState
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
-  setFileTree: (tree: FileNode[]) => void
+  setFileTree: (tree: FileNode[], options?: { syncPathIndex?: boolean }) => void
+  setProjectPathIndexFromTree: (tree: FileNode[]) => void
   setSelectedFile: (path: string | null) => void
   setFileContent: (content: string) => void
-  /**
-   * Select a wiki page by path and switch to the wiki view so the
-   * preview shows up in the center work area. The page's content is
-   * loaded from disk by PreviewPanel. Use this for navigation where
-   * you don't already hold the content (file tree, frontmatter links,
-   * wikilinks resolved to a path, …).
-   */
   openPathInPreview: (path: string) => void
-  /**
-   * Like `openPathInPreview` but you already have the content in hand
-   * (search read it, research synthesized it, "Unable to load …"
-   * placeholder, …). Stashes the content and marks `previewContentPath`
-   * so PreviewPanel shows it verbatim without a redundant disk read.
-   */
   openFileInPreview: (path: string, content: string) => void
+  setExternalPreview: (preview: ExternalPreview | null) => void
   setPendingScrollImageSrc: (src: string | null) => void
   setActiveView: (view: WikiState["activeView"]) => void
   requestSearchFocus: () => void
@@ -470,28 +418,26 @@ interface WikiState {
   setEmbeddingConfig: (config: EmbeddingConfig) => void
   setMultimodalConfig: (config: MultimodalConfig) => void
   setOutputLanguage: (lang: OutputLanguage) => void
-  setTheme: (theme: Theme) => void
   setProxyConfig: (config: ProxyConfig) => void
   setScheduledImportConfig: (config: ScheduledImportConfig) => void
   setSourceWatchConfig: (config: SourceWatchConfig) => void
   setMineruConfig: (config: MineruConfig) => void
   setApiConfig: (config: ApiConfig) => void
   setGeneralConfig: (config: GeneralConfig) => void
-  setExperimentalAgentIngest: (enabled: boolean) => void
-  setExperimentalAiLintFix: (enabled: boolean) => void
-  setExperimentalRawSaveToWiki: (enabled: boolean) => void
-  setExperimentalIndexAnnotations: (enabled: boolean) => void
-  setExperimentalIngestPreview: (enabled: boolean) => void
+  setGraphUiState: (state: GraphUiState | ((current: GraphUiState) => GraphUiState)) => void
+  resetGraphUiState: () => void
   bumpDataVersion: () => void
 }
 
 export const useWikiStore = create<WikiState>((set) => ({
   project: null,
   fileTree: [],
+  projectPathIndex: createEmptyProjectPathIndex(),
   selectedFile: null,
   fileContent: "",
-  pendingScrollImageSrc: null,
   previewContentPath: null,
+  externalPreview: null,
+  pendingScrollImageSrc: null,
   activeView: "wiki",
   previousView: "wiki",
   searchFocusRequest: 0,
@@ -504,6 +450,7 @@ export const useWikiStore = create<WikiState>((set) => ({
     customEndpoint: "",
     azureApiVersion: "2024-10-21",
     reasoning: { mode: "auto" },
+    localCliIsolation: false,
   },
   providerConfigs: {},
   activePresetId: null,
@@ -511,40 +458,43 @@ export const useWikiStore = create<WikiState>((set) => ({
   dataVersion: 0,
 
   setProject: (project) => set({ project }),
-  setFileTree: (fileTree) => set({ fileTree }),
-  setSelectedFile: (selectedFile) => set({ selectedFile, previewContentPath: null }),
+  setFileTree: (fileTree, options) => {
+    if (options?.syncPathIndex === false) {
+      set({ fileTree })
+      return
+    }
+    set({ fileTree, projectPathIndex: buildProjectPathIndexFromTree(fileTree) })
+  },
+  setProjectPathIndexFromTree: (tree) =>
+    set({ projectPathIndex: buildProjectPathIndexFromTree(tree) }),
+  setSelectedFile: (selectedFile) =>
+    set({ selectedFile, previewContentPath: null, externalPreview: null }),
   setFileContent: (fileContent) => set({ fileContent }),
-  // Navigate to a wiki page and surface the preview in the center work
-  // area. Switching to "wiki" goes through the same "remember previous"
-  // dance as `setActiveView` so that, e.g., clicking a wikilink from
-  // chat lets Esc/back return to chat. previewContentPath is cleared so
-  // PreviewPanel re-reads the page from disk.
   openPathInPreview: (selectedFile) =>
     set((state) => ({
       selectedFile,
       previewContentPath: null,
+      externalPreview: null,
       activeView: "wiki",
       ...(state.activeView === "wiki" ? {} : { previousView: state.activeView }),
     })),
-  // Same navigation as openPathInPreview, but the caller already holds
-  // the content (search read it, research synthesized it, an "Unable to
-  // load …" placeholder). Stash it and mark previewContentPath so
-  // PreviewPanel shows it verbatim without a redundant disk read.
   openFileInPreview: (selectedFile, fileContent) =>
     set((state) => ({
       selectedFile,
       fileContent,
       previewContentPath: selectedFile,
+      externalPreview: null,
       activeView: "wiki",
       ...(state.activeView === "wiki" ? {} : { previousView: state.activeView }),
     })),
+  setExternalPreview: (externalPreview) => set({ externalPreview }),
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),
+  // Remember where we came from so a view can navigate "back". Only record
+  // a real transition — re-selecting the same view (e.g. Cmd+F while already
+  // in search) must not make previousView point at itself, which would trap
+  // Esc inside search.
   setActiveView: (activeView) =>
     set((state) =>
-      // Remember where we came from so a view can navigate "back".
-      // Only record a real transition — re-selecting the same view
-      // (e.g. Cmd+F while already in search) must not make previousView
-      // point at itself, which would trap Esc inside search.
       activeView === state.activeView
         ? { activeView }
         : { activeView, previousView: state.activeView },
@@ -557,6 +507,14 @@ export const useWikiStore = create<WikiState>((set) => ({
     searXngUrl: "",
     searXngCategories: ["general"],
     providerConfigs: {},
+    deepResearchSource: "web",
+    anyTxt: {
+      enabled: false,
+      endpoint: "http://127.0.0.1:9920",
+      filterDir: "",
+      filterExt: "*",
+      limit: 20,
+    },
   },
 
   embeddingConfig: {
@@ -585,7 +543,6 @@ export const useWikiStore = create<WikiState>((set) => ({
   },
 
   outputLanguage: "auto",
-  theme: "system",
 
   proxyConfig: {
     enabled: false,
@@ -611,20 +568,17 @@ export const useWikiStore = create<WikiState>((set) => ({
   apiConfig: {
     enabled: true,
     allowUnauthenticated: false,
+    allowLanAccess: false,
     mcpEnabled: false,
     token: "",
   },
 
   generalConfig: {
     autostart: false,
-    closeBehavior: "ask",
+    closeBehavior: "minimize",
   },
 
-  experimentalAgentIngest: false,
-  experimentalAiLintFix: false,
-  experimentalRawSaveToWiki: false,
-  experimentalIndexAnnotations: false,
-  experimentalIngestPreview: false,
+  graphUiState: createDefaultGraphUiState(),
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
@@ -633,24 +587,20 @@ export const useWikiStore = create<WikiState>((set) => ({
   setEmbeddingConfig: (embeddingConfig) => set({ embeddingConfig }),
   setMultimodalConfig: (multimodalConfig) => set({ multimodalConfig }),
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
-  setTheme: (theme) => set({ theme }),
   setProxyConfig: (proxyConfig) => set({ proxyConfig }),
   setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
   setMineruConfig: (mineruConfig) => set({ mineruConfig }),
   setApiConfig: (apiConfig) => set({ apiConfig }),
   setGeneralConfig: (generalConfig) => set({ generalConfig }),
-  setExperimentalAgentIngest: (experimentalAgentIngest) =>
-    set({ experimentalAgentIngest }),
-  setExperimentalAiLintFix: (experimentalAiLintFix) =>
-    set({ experimentalAiLintFix }),
-  setExperimentalRawSaveToWiki: (experimentalRawSaveToWiki) =>
-    set({ experimentalRawSaveToWiki }),
-  setExperimentalIndexAnnotations: (experimentalIndexAnnotations) =>
-    set({ experimentalIndexAnnotations }),
-  setExperimentalIngestPreview: (experimentalIngestPreview) =>
-    set({ experimentalIngestPreview }),
+  setGraphUiState: (graphUiState) =>
+    set((state) => ({
+      graphUiState: typeof graphUiState === "function"
+        ? graphUiState(state.graphUiState)
+        : graphUiState,
+    })),
+  resetGraphUiState: () => set({ graphUiState: createDefaultGraphUiState() }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
-export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig, Theme }
+export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig }

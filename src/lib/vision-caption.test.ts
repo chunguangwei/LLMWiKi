@@ -103,7 +103,11 @@ describe("captionImage", () => {
     })
 
     const overrides = mockStreamChat.mock.calls[0][4]
-    expect(overrides).toEqual({ temperature: 0.3, max_tokens: 256 })
+    expect(overrides).toEqual({
+      temperature: 0.3,
+      max_tokens: 256,
+      reasoning: { mode: "off" },
+    })
   })
 
   it("uses defaults (temp=0, max_tokens=4096) when no options passed", async () => {
@@ -114,7 +118,38 @@ describe("captionImage", () => {
     await captionImage(TINY_B64, "image/png", cfg)
 
     const overrides = mockStreamChat.mock.calls[0][4]
-    expect(overrides).toEqual({ temperature: 0, max_tokens: 4096 })
+    expect(overrides).toEqual({
+      temperature: 0,
+      max_tokens: 4096,
+      reasoning: { mode: "off" },
+    })
+  })
+
+  it("forces reasoning off so main reasoning models produce captions instead of thinking-only streams", async () => {
+    mockStreamChat.mockImplementation(async (_c, _m, cb) => {
+      cb.onToken("caption")
+      cb.onDone()
+    })
+
+    const reasoningCfg: LlmConfig = {
+      ...cfg,
+      reasoning: { mode: "high" },
+    }
+    await captionImage(TINY_B64, "image/png", reasoningCfg)
+
+    expect(mockStreamChat.mock.calls[0][4]).toMatchObject({
+      reasoning: { mode: "off" },
+    })
+  })
+
+  it("rejects Codex CLI captioning because that transport omits image bytes", async () => {
+    await expect(
+      captionImage(TINY_B64, "image/png", {
+        ...cfg,
+        provider: "codex-cli",
+      }),
+    ).rejects.toThrow(/does not support image input/)
+    expect(mockStreamChat).not.toHaveBeenCalled()
   })
 
   it("forwards the AbortSignal to streamChat (lets callers cancel batch captioning)", async () => {

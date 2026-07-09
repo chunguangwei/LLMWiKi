@@ -13,6 +13,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import type { LlmConfig } from "@/stores/wiki-store"
+import { useWikiStore } from "@/stores/wiki-store"
 import type { ChatMessage, RequestOverrides } from "./llm-providers"
 import type { StreamCallbacks } from "./llm-client"
 
@@ -33,9 +34,6 @@ export function createClaudeCodeStreamParser() {
   // turn via `assistant` events so we can diff new content off the end
   // and only emit what wasn't already streamed.
   let emittedFromAssistant = ""
-  // Whether we've emitted ANY text this run (deltas or assistant). Drives
-  // the `result`-event fallback below.
-  let emittedAnything = false
 
   return function parseLine(rawLine: string): string | null {
     const line = rawLine.trim()
@@ -60,7 +58,6 @@ export function createClaudeCodeStreamParser() {
         const delta = event.delta as Record<string, unknown> | undefined
         if (delta?.type === "text_delta" && typeof delta.text === "string") {
           sawDelta = true
-          emittedAnything = true
           return delta.text
         }
       }
@@ -89,34 +86,15 @@ export function createClaudeCodeStreamParser() {
       if (text.startsWith(emittedFromAssistant)) {
         const novel = text.slice(emittedFromAssistant.length)
         emittedFromAssistant = text
-        if (novel) emittedAnything = true
         return novel || null
       }
       // Non-prefix change: cli sent something different than expected.
       // Reset tracker and emit the new text wholesale.
       emittedFromAssistant = text
-      emittedAnything = true
       return text
     }
 
-    // Final result summary. Normally redundant with the assistant
-    // text we already streamed, so we skip it. But in environments
-    // where the assistant turn arrives empty or is dropped (observed
-    // when the CLI is spawned from the macOS GUI with a stripped env /
-    // a SessionStart hook reshaping the first turn), the `result`
-    // event still carries the authoritative final answer string. Use
-    // it as a last-resort fallback so the user gets the reply instead
-    // of a misleading "connected but returned empty content".
-    if (type === "result" && obj.subtype === "success" && !emittedAnything) {
-      const result = obj.result
-      if (typeof result === "string" && result.trim()) {
-        emittedAnything = true
-        return result
-      }
-      return null
-    }
-
-    // Ignore session init, tool_use, unknown types.
+    // Ignore session init, tool_use, result summary, unknown types.
     return null
   }
 }
@@ -130,6 +108,8 @@ type SpawnPayload = Record<string, unknown> & {
   streamId: string
   model: string
   messages: ChatMessage[]
+  isolateLocalConfig: boolean
+  workingDirectory: string
 }
 
 /**
@@ -166,6 +146,16 @@ export async function streamClaudeCodeCli(
   let unlistenData: UnlistenFn | undefined
   let unlistenDone: UnlistenFn | undefined
   let finished = false
+  let aborted = signal?.aborted ?? false
+  // Track whether any assistant text was received — used to detect the
+  // silent-exit case where the CLI exits 0 but emits no content.
+  let emittedToken = false
+  // Completion promise: resolves when finishWith() fires so the caller
+  // awaits the full round-trip rather than returning after spawn.
+  let resolveCompletion: () => void = () => {}
+  const completion = new Promise<void>((resolve) => {
+    resolveCompletion = resolve
+  })
 
   // Diagnostic capture for failure paths. The Rust side emits every
   // stdout line; lines the parser doesn't recognize (non-JSON,
@@ -191,22 +181,6 @@ export async function streamClaudeCodeCli(
     unlistenDone?.()
   }
 
-  // The HTTP transport's contract is that the returned promise stays
-  // pending until streaming is fully done (onDone/onError fired). The
-  // subprocess `invoke("claude_cli_spawn")` call, however, resolves the
-  // moment the child is spawned — long before the model's tokens arrive
-  // over events. Awaiting only the spawn meant callers that read the
-  // accumulated text right after `await streamChat(...)` (the connection
-  // / function provider tests) always saw an empty string, while
-  // streaming chat — which consumes tokens via callbacks as they land —
-  // looked fine. We gate the returned promise on this completion latch
-  // so both paths honour the same "resolves when the stream ends"
-  // contract.
-  let resolveCompletion!: () => void
-  const completion = new Promise<void>((resolve) => {
-    resolveCompletion = resolve
-  })
-
   const finishWith = (cb: () => void) => {
     if (finished) return
     finished = true
@@ -216,28 +190,32 @@ export async function streamClaudeCodeCli(
   }
 
   const abortListener = () => {
+    aborted = true
     void invoke("claude_cli_kill", { streamId }).catch(() => {
       // Kill is best-effort; if the process already exited, the Rust
       // side returns Ok and the done handler fires normally.
     })
     finishWith(onDone)
   }
+  if (aborted) {
+    finishWith(onDone)
+    return
+  }
   signal?.addEventListener("abort", abortListener)
 
-  // Whether the parser ever produced visible text. Drives the
-  // clean-but-empty diagnostic below: a code-0 exit with zero emitted
-  // text is the confusing "connected but returned empty content" case.
-  // Instead of leaving the caller with a bare empty string, we surface
-  // whatever stdout the CLI did emit (hook events, a result we couldn't
-  // classify, etc.) so the failure is self-explaining.
-  let emittedText = false
-
   try {
+    const workingDirectory = useWikiStore.getState().project?.path
+    if (!workingDirectory) {
+      throw new Error("Claude Code CLI requires an active project working directory")
+    }
+
     // Listen FIRST so we don't miss the very first event on fast CLIs.
+    // The active-project guard above is intentionally earlier: without
+    // a valid project CWD we will not spawn, so no CLI events can race.
     unlistenData = await listen<string>(`claude-cli:${streamId}`, (event) => {
       const token = parse(event.payload)
       if (token !== null) {
-        if (token.trim()) emittedText = true
+        emittedToken = true
         onToken(token)
       } else {
         // Parser didn't recognize this line. Stash it in case the
@@ -247,6 +225,10 @@ export async function streamClaudeCodeCli(
         captureUnparsed(event.payload)
       }
     })
+    if (aborted || finished) {
+      cleanup()
+      return
+    }
 
     unlistenDone = await listen<{ code: number | null; stderr: string }>(
       `claude-cli:${streamId}:done`,
@@ -259,31 +241,47 @@ export async function streamClaudeCodeCli(
               new Error(buildExitError(code, stderr, unparsedLines.join("\n"))),
             ),
           )
-        } else if (!emittedText) {
-          // Clean exit (code 0) but the CLI produced no assistant text
-          // and no usable `result`. Common cause: a SessionStart hook or
-          // output-style in the user's ~/.claude config that consumes the
-          // turn, or a model that returned only a tool_use / thinking
-          // block. Surface the captured stdout so the user can see what
-          // actually came back instead of a blank "empty content".
+        } else if (!emittedToken) {
+          // CLI exited successfully but produced no assistant text.
+          // Surface this as an explicit error so the ingest pipeline
+          // retries rather than silently writing an empty stub page.
+          const details = stderr || unparsedLines.join("\n").trim()
           finishWith(() =>
-            onError(new Error(buildEmptyError(stderr, unparsedLines.join("\n")))),
+            onError(new Error(
+              details
+                ? `Claude Code CLI completed but returned no content:\n${details}`
+                : "Claude Code CLI completed but returned no content. Try running `claude -p` in a terminal to inspect the output, or switch to the Anthropic API in Settings.",
+            )),
           )
         } else {
           finishWith(onDone)
         }
       },
     )
+    if (aborted || finished) {
+      cleanup()
+      return
+    }
 
     const payload: SpawnPayload = {
       streamId,
       model: config.model,
       messages,
+      isolateLocalConfig: config.localCliIsolation === true,
+      workingDirectory,
     }
     await invoke("claude_cli_spawn", payload)
-    // Spawn succeeded — now wait for the stream to actually finish
-    // (onDone/onError via the :done event) before resolving, so callers
-    // that synchronously inspect accumulated text see the full reply.
+    if (aborted || signal?.aborted) {
+      aborted = true
+      await invoke("claude_cli_kill", { streamId }).catch(() => {})
+      finishWith(onDone)
+      return
+    }
+    // Wait for the done event to be processed before returning.
+    // Without this await the caller sees an empty analysis buffer
+    // because streamClaudeCodeCli() resolves immediately after spawn
+    // while the CLI subprocess is still running. (Same race that was
+    // fixed for the Codex CLI transport in #238.)
     await completion
   } catch (err) {
     finishWith(() => {
@@ -358,31 +356,4 @@ export function buildExitError(
     "terminal with the same prompt to see what's wrong, or switch to",
     "the official Anthropic API in Settings.",
   ].join(" ")
-}
-
-/**
- * Build the message for a clean exit (code 0) that produced no usable
- * assistant text. The most common real-world trigger is a SessionStart
- * hook or custom output-style in the user's ~/.claude config that
- * reshapes or swallows the first turn when `claude` is run
- * non-interactively (`-p`). We show the captured stdout so the user can
- * see what the CLI actually emitted and act on it, rather than a blank
- * "connected but returned empty content".
- */
-export function buildEmptyError(
-  stderr: string = "",
-  unparsedStdout: string = "",
-): string {
-  const head =
-    "Claude Code CLI connected but returned no answer text. This usually " +
-    "means a SessionStart hook or a custom output-style in your ~/.claude " +
-    "config is intercepting the non-interactive (`claude -p`) turn. Try " +
-    "running `claude -p \"hi\"` in a terminal: if that's also empty, the " +
-    "fix is in your Claude config, not LLM Wiki."
-  const diag = stderr.trim()
-    ? `\n\n— stderr —\n${stderr.trim()}`
-    : unparsedStdout.trim()
-      ? `\n\n— captured stdout —\n${unparsedStdout.trim()}`
-      : ""
-  return head + diag
 }

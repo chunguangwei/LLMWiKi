@@ -1,15 +1,20 @@
+mod agent;
 mod api_server;
 mod clip_server;
 mod commands;
 mod cors;
 mod panic_guard;
 mod proxy;
+mod server_bind;
 mod tray;
 mod types;
 
 use panic_guard::run_guarded;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+use uuid::Uuid;
 
 // Close-to-tray behavior, ported from upstream 0e292ee. Holds the
 // user's title-bar-close preference ("ask" | "minimize" | "exit") so
@@ -18,6 +23,24 @@ use tauri::Manager;
 // in sync from the frontend via the `set_close_behavior` command +
 // the persisted generalConfig (see src/lib/project-store.ts).
 struct CloseBehaviorState(Mutex<String>);
+struct TrayAvailabilityState(Mutex<bool>);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentProjectEntry {
+    id: String,
+    name: String,
+    path: String,
+    current: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct AgentRuntimeConfig {
+    embedding: Option<commands::search::SearchEmbeddingConfig>,
+    llm: Option<agent::provider::LlmConfig>,
+    web_search: Option<agent::tools::WebSearchConfig>,
+    anytxt: Option<agent::tools::AnyTxtConfig>,
+}
 
 #[tauri::command]
 fn clip_server_status() -> String {
@@ -42,6 +65,225 @@ fn api_server_reload_config() -> String {
         Ok("ok".to_string())
     })
     .unwrap_or_else(|e| format!("error: {e}"))
+}
+
+#[tauri::command]
+async fn agent_start_turn(
+    app: tauri::AppHandle,
+    project_id: String,
+    mut request: agent::AgentChatRequest,
+) -> Result<agent::types::AgentChatResponse, String> {
+    let project = resolve_agent_project(&app, &project_id)?;
+    if request
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        request.session_id = Some(format!("ui_{}", Uuid::new_v4()));
+    }
+    let active_session_id = request.session_id.clone().unwrap_or_default();
+    if request
+        .run_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        request.run_id = Some(format!("run_{}", Uuid::new_v4()));
+    }
+    let active_run_id = request.run_id.clone().unwrap_or_default();
+    if let Some(session_id) = request.session_id.clone() {
+        if request.history.is_empty() && !request.history_explicit {
+            request.history = app
+                .state::<agent::session::AgentSessionStore>()
+                .recent_messages(&project.path, &session_id, 12)
+                .into_iter()
+                .map(|message| agent::types::AgentConversationMessage {
+                    role: message.role,
+                    content: message.content,
+                })
+                .collect();
+        }
+    }
+    let runtime_config = load_agent_runtime_config(&app);
+    let runtime = agent::AgentRuntime::new(
+        project.id.clone(),
+        project.path.clone(),
+        runtime_config.embedding,
+        runtime_config.llm,
+        runtime_config.web_search,
+        runtime_config.anytxt,
+    );
+    let user_message = request.message.clone();
+    let persist_session = request.persist_session;
+    let cancellation = app
+        .state::<agent::cancel::AgentCancellationRegistry>()
+        .start(&project.id, &active_session_id, &active_run_id);
+    let result = runtime
+        .run_once_with_cancel(request, Some(cancellation))
+        .await;
+    app.state::<agent::cancel::AgentCancellationRegistry>()
+        .finish(&project.id, &active_session_id, &active_run_id);
+    let response = result?;
+    if persist_session {
+        app.state::<agent::session::AgentSessionStore>()
+            .append_turn(
+                &project.path,
+                &project.id,
+                &response.session_id,
+                &user_message,
+                &response.message,
+            );
+    }
+    Ok(response)
+}
+
+#[tauri::command]
+fn agent_cancel_turn(
+    app: tauri::AppHandle,
+    project_id: String,
+    session_id: String,
+    run_id: Option<String>,
+) -> Result<bool, String> {
+    let project = resolve_agent_project(&app, &project_id)?;
+    Ok(app
+        .state::<agent::cancel::AgentCancellationRegistry>()
+        .cancel(&project.id, &session_id, run_id.as_deref()))
+}
+
+#[tauri::command]
+async fn agent_start_turn_stream(
+    app: tauri::AppHandle,
+    project_id: String,
+    mut request: agent::AgentChatRequest,
+) -> Result<String, String> {
+    let project = resolve_agent_project(&app, &project_id)?;
+    if request
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        request.session_id = Some(format!("ui_{}", Uuid::new_v4()));
+    }
+    let active_session_id = request.session_id.clone().unwrap_or_default();
+    if request
+        .run_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        request.run_id = Some(format!("run_{}", Uuid::new_v4()));
+    }
+    let active_run_id = request.run_id.clone().unwrap_or_default();
+    if request.history.is_empty() && !request.history_explicit {
+        request.history = app
+            .state::<agent::session::AgentSessionStore>()
+            .recent_messages(&project.path, &active_session_id, 12)
+            .into_iter()
+            .map(|message| agent::types::AgentConversationMessage {
+                role: message.role,
+                content: message.content,
+            })
+            .collect();
+    }
+    let runtime_config = load_agent_runtime_config(&app);
+    let runtime = agent::AgentRuntime::new(
+        project.id.clone(),
+        project.path.clone(),
+        runtime_config.embedding,
+        runtime_config.llm,
+        runtime_config.web_search,
+        runtime_config.anytxt,
+    );
+    let app_for_task = app.clone();
+    let project_for_task = project.clone();
+    let session_for_task = active_session_id.clone();
+    let run_for_task = active_run_id.clone();
+    let user_message = request.message.clone();
+    let persist_session = request.persist_session;
+    let cancellation = app
+        .state::<agent::cancel::AgentCancellationRegistry>()
+        .start(&project.id, &active_session_id, &active_run_id);
+    tauri::async_runtime::spawn(async move {
+        let emit_app = app_for_task.clone();
+        let emit_session = session_for_task.clone();
+        let emit_run = run_for_task.clone();
+        let sink: agent::runtime::AgentEventSink = std::sync::Arc::new(move |event| {
+            let _ = emit_app.emit(
+                "agent-event",
+                serde_json::json!({
+                    "sessionId": emit_session.clone(),
+                    "runId": emit_run.clone(),
+                    "event": event,
+                }),
+            );
+        });
+        let result = runtime
+            .run_once_with_cancel_and_events(request, Some(cancellation), Some(sink))
+            .await;
+        app_for_task
+            .state::<agent::cancel::AgentCancellationRegistry>()
+            .finish(&project_for_task.id, &session_for_task, &run_for_task);
+        match result {
+            Ok(response) => {
+                if persist_session {
+                    app_for_task
+                        .state::<agent::session::AgentSessionStore>()
+                        .append_turn(
+                            &project_for_task.path,
+                            &project_for_task.id,
+                            &response.session_id,
+                            &user_message,
+                            &response.message,
+                        );
+                }
+            }
+            Err(err) => {
+                let _ = app_for_task.emit(
+                    "agent-event",
+                    serde_json::json!({
+                        "sessionId": session_for_task,
+                        "runId": run_for_task,
+                        "event": { "type": "error", "message": err },
+                    }),
+                );
+            }
+        }
+    });
+    Ok(active_session_id)
+}
+
+#[tauri::command]
+fn agent_get_session(
+    app: tauri::AppHandle,
+    project_id: String,
+    session_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<agent::session::AgentSessionMessage>, String> {
+    let project = resolve_agent_project(&app, &project_id)?;
+    Ok(app
+        .state::<agent::session::AgentSessionStore>()
+        .recent_messages(
+            &project.path,
+            &session_id,
+            limit.unwrap_or(40).clamp(1, 200),
+        ))
+}
+
+#[tauri::command]
+fn agent_list_sessions(
+    app: tauri::AppHandle,
+    project_id: String,
+) -> Result<Vec<agent::session::AgentSession>, String> {
+    let project = resolve_agent_project(&app, &project_id)?;
+    Ok(app
+        .state::<agent::session::AgentSessionStore>()
+        .list_sessions(&project.path))
 }
 
 /// Resolve the absolute path to the bundled MCP server entry
@@ -94,6 +336,176 @@ fn mcp_server_entry_path(app: tauri::AppHandle) -> Result<String, String> {
     })
 }
 
+fn resolve_agent_project(
+    app: &tauri::AppHandle,
+    project_id: &str,
+) -> Result<AgentProjectEntry, String> {
+    let decoded = percent_decode(project_id);
+    let wants_current = decoded.eq_ignore_ascii_case("current");
+    load_agent_projects(app)
+        .into_iter()
+        .find(|project| {
+            project.id == decoded
+                || project_path_matches(&project.path, &decoded)
+                || (wants_current && project.current)
+        })
+        .ok_or_else(|| format!("Unknown project: {decoded}"))
+}
+
+fn load_agent_projects(app: &tauri::AppHandle) -> Vec<AgentProjectEntry> {
+    let current = normalize_path(&clip_server::current_project_path());
+    let mut projects = Vec::new();
+    if let Some(parsed) = load_agent_app_state(app) {
+        if let Some(registry) = parsed.get("projectRegistry").and_then(Value::as_object) {
+            for (id, value) in registry {
+                let path = value.get("path").and_then(Value::as_str).unwrap_or("");
+                if path.is_empty() {
+                    continue;
+                }
+                let path = normalize_path(path);
+                let name = value
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| project_name_from_path(&path));
+                projects.push(AgentProjectEntry {
+                    id: id.clone(),
+                    name,
+                    current: path == current,
+                    path,
+                });
+            }
+        }
+        if let Some(recents) = parsed.get("recentProjects").and_then(Value::as_array) {
+            for value in recents {
+                let path = value.get("path").and_then(Value::as_str).unwrap_or("");
+                if path.is_empty() {
+                    continue;
+                }
+                let path = normalize_path(path);
+                if projects.iter().any(|project| project.path == path) {
+                    continue;
+                }
+                let name = value
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| project_name_from_path(&path));
+                projects.push(AgentProjectEntry {
+                    id: read_project_id(&path).unwrap_or_else(|| path.clone()),
+                    name,
+                    current: path == current,
+                    path,
+                });
+            }
+        }
+    }
+    if !current.is_empty() && !projects.iter().any(|project| project.path == current) {
+        projects.push(AgentProjectEntry {
+            id: read_project_id(&current).unwrap_or_else(|| current.clone()),
+            name: project_name_from_path(&current),
+            current: true,
+            path: current,
+        });
+    }
+    projects
+}
+
+fn load_agent_app_state(app: &tauri::AppHandle) -> Option<Value> {
+    let path = app.path().app_data_dir().ok()?.join("app-state.json");
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn load_agent_runtime_config(app: &tauri::AppHandle) -> AgentRuntimeConfig {
+    let Some(parsed) = load_agent_app_state(app) else {
+        return AgentRuntimeConfig::default();
+    };
+    AgentRuntimeConfig {
+        embedding: parsed
+            .get("embeddingConfig")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok()),
+        llm: parsed
+            .get("llmConfig")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok()),
+        web_search: parsed
+            .get("searchApiConfig")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok()),
+        anytxt: parsed
+            .get("searchApiConfig")
+            .and_then(|value| value.get("anyTxt"))
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok()),
+    }
+}
+
+fn read_project_id(path: &str) -> Option<String> {
+    let raw = std::fs::read_to_string(
+        std::path::Path::new(path)
+            .join(".llm-wiki")
+            .join("project.json"),
+    )
+    .ok()?;
+    serde_json::from_str::<Value>(&raw)
+        .ok()?
+        .get("id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn project_name_from_path(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Project")
+        .to_string()
+}
+
+fn project_path_matches(stored_path: &str, candidate: &str) -> bool {
+    let stored = normalize_path(stored_path);
+    let candidate = normalize_path(candidate);
+    if cfg!(windows) {
+        stored.eq_ignore_ascii_case(&candidate)
+    } else {
+        stored == candidate
+    }
+}
+
+fn normalize_path(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_string()
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// Apply a proxy configuration to the process env immediately, so the
 /// next outbound HTTP request picks it up without needing the user to
 /// restart the app. tauri-plugin-http builds a fresh
@@ -143,6 +555,15 @@ fn close_behavior<R: tauri::Runtime>(window: &tauri::Window<R>) -> String {
         .lock()
         .map(|value| value.clone())
         .unwrap_or_else(|_| "ask".to_string())
+}
+
+fn tray_available<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
+    window
+        .state::<TrayAvailabilityState>()
+        .0
+        .lock()
+        .map(|value| *value)
+        .unwrap_or(false)
 }
 
 // IDENTIFIER LOCK: the bundle identifier in tauri.conf.json
@@ -203,7 +624,7 @@ pub fn run() {
             // secondary instance — which the single-instance plugin exits
             // before reaching this setup hook — never tries to bind the
             // clip port out from under the primary.
-            clip_server::start_clip_server();
+            clip_server::start_clip_server(app.handle().clone());
             // Config safety net — runs BEFORE anything reads
             // app-state.json (proxy config below, and the frontend's
             // first store load). On a fresh/empty install, restore the
@@ -252,22 +673,37 @@ pub fn run() {
             app.manage(commands::claude_cli::ClaudeCliState::default());
             app.manage(commands::codex_cli::CodexCliState::default());
             app.manage(commands::file_sync::FileSyncState::default());
-            // Tray + close-to-tray state, ported from upstream 0e292ee.
-            // Seed the close behavior to "ask"; the frontend rehydrates
-            // it from the persisted generalConfig on startup. Tray
-            // creation is best-effort: some Linux desktops lack a tray,
-            // so a failure logs and continues rather than aborting
-            // startup.
+            app.manage(agent::session::AgentSessionStore::default());
+            app.manage(agent::cancel::AgentCancellationRegistry::default());
+            // Seed the close behavior to "ask"; the frontend rehydrates it
+            // from the persisted generalConfig on startup.
             app.manage(CloseBehaviorState(Mutex::new("ask".to_string())));
-            if let Err(err) = tray::create_tray(app.handle()) {
-                eprintln!("[tray] system tray unavailable, continuing without it: {err}");
-            }
+            app.manage(TrayAvailabilityState(Mutex::new(false)));
+            // Start the API before optional desktop integrations so the
+            // backend is reachable if tray setup or another integration fails.
+            clip_server::start_clip_server(app.handle().clone());
             api_server::start_api_server(app.handle().clone());
+            let tray_available = match tray::create_tray(app.handle()) {
+                Ok(()) => true,
+                Err(err) => {
+                    eprintln!("[tray] system tray unavailable, continuing without it: {err}");
+                    false
+                }
+            };
+            match app.state::<TrayAvailabilityState>().0.lock() {
+                Ok(mut state) => {
+                    *state = tray_available;
+                }
+                Err(err) => {
+                    eprintln!("[tray] failed to update tray availability state: {err}");
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::fs::read_file,
             commands::fs::write_file,
+            commands::fs::write_file_base64,
             commands::fs::write_file_atomic,
             commands::fs::write_binary_file,
             commands::fs::list_directory,
@@ -288,10 +724,20 @@ pub fn run() {
             commands::package::export_package,
             commands::package::import_package,
             commands::package::inspect_package,
+            commands::project::open_path_in_project,
             commands::search::search_project,
+            commands::search::embedding_fetch,
+            commands::external_search::web_search,
+            commands::external_search::anytxt_search,
             clip_server_status,
             api_server_status,
             api_server_reload_config,
+            agent_start_turn,
+            agent_start_turn_stream,
+            agent_cancel_turn,
+            agent_get_session,
+            agent_list_sessions,
+            agent::skills::agent_list_skills,
             mcp_server_entry_path,
             commands::vectorstore::vector_upsert,
             commands::vectorstore::vector_search,
@@ -359,17 +805,25 @@ pub fn run() {
                         });
                     }
                     "minimize" => {
-                        let _ = window.hide();
+                        if tray_available(window) {
+                            let _ = window.hide();
+                        } else {
+                            let _ = window.minimize();
+                        }
                     }
                     _ => {
                         tauri::async_runtime::spawn(async move {
-                            use tauri_plugin_dialog::DialogExt;
+                            use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
                             let confirmed = app
                                 .dialog()
                                 .message(
-                                    "Quit LLM Wiki? Choose OK to exit. Choose Cancel to hide the window and keep background features running.",
+                                    "Quit LLM Wiki? Choose Quit to exit. Choose Hide Window to keep background features running.",
                                 )
                                 .title("LLM Wiki")
+                                .buttons(MessageDialogButtons::OkCancelCustom(
+                                    "Quit".to_string(),
+                                    "Hide Window".to_string(),
+                                ))
                                 .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
                                 .blocking_show();
 

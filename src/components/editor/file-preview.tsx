@@ -15,7 +15,12 @@ import {
   FileSpreadsheet,
   FileQuestion,
 } from "lucide-react"
-import { getFileCategory, getCodeLanguage } from "@/lib/file-types"
+import {
+  getFileCategory,
+  getCodeLanguage,
+  getFileExtension,
+  isExtractedTextPreviewFile,
+} from "@/lib/file-types"
 import type { FileCategory } from "@/lib/file-types"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
@@ -35,6 +40,7 @@ interface FilePreviewProps {
 export function FilePreview({ filePath, textContent }: FilePreviewProps) {
   const category = getFileCategory(filePath)
   const fileName = getFileName(filePath)
+  const extension = getFileExtension(filePath)
 
   switch (category) {
     case "image":
@@ -45,18 +51,69 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
       return <AudioPreview filePath={filePath} fileName={fileName} />
     case "pdf":
       return <TextPreview filePath={filePath} content={textContent} label="PDF (extracted text)" />
-    case "office":
-      return <TextPreview filePath={filePath} content={textContent} label="Document (extracted text)" />
     case "code":
+      if (extension === "svg" && isAgentWorkspacePath(filePath)) {
+        return <ImagePreview filePath={filePath} fileName={fileName} />
+      }
+      if (extension === "html" || extension === "htm") {
+        return <HtmlPreview filePath={filePath} fileName={fileName} />
+      }
       return <CodePreview filePath={filePath} content={textContent} />
     case "data":
       return <CodePreview filePath={filePath} content={textContent} />
     case "text":
       return <TextPreview filePath={filePath} content={textContent} label="Text" />
     case "document":
+      if (isExtractedTextPreviewFile(filePath)) {
+        return <TextPreview filePath={filePath} content={textContent} label={extractedTextLabel(filePath)} />
+      }
       return <BinaryPlaceholder filePath={filePath} fileName={fileName} category={category} />
     default:
       return <BinaryPlaceholder filePath={filePath} fileName={fileName} category={category} />
+  }
+}
+
+function HtmlPreview({ filePath, fileName }: { filePath: string; fileName: string }) {
+  const src = convertFileSrc(filePath)
+  return (
+    <div className="flex h-full flex-col p-4">
+      <div className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate" title={filePath}>{filePath}</span>
+        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase">HTML</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-background">
+        <iframe
+          title={fileName}
+          src={src}
+          className="h-full w-full bg-white"
+          sandbox="allow-scripts"
+        />
+      </div>
+    </div>
+  )
+}
+
+function isAgentWorkspacePath(filePath: string): boolean {
+  return normalizePath(filePath).split("/").includes("agent-workspace")
+}
+
+function extractedTextLabel(filePath: string): string {
+  switch (getFileExtension(filePath)) {
+    case "doc":
+      return "Word DOC (extracted text)"
+    case "docx":
+      return "Word DOCX (extracted text)"
+    case "pptx":
+      return "PowerPoint (extracted text)"
+    case "xls":
+    case "xlsx":
+      return "Spreadsheet (extracted text)"
+    case "odt":
+    case "ods":
+    case "odp":
+      return "OpenDocument (extracted text)"
+    default:
+      return "Extracted text"
   }
 }
 

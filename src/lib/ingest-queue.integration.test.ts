@@ -83,18 +83,26 @@ async function readQueueFile(): Promise<string> {
   return readFileRaw(`${tmp.path}/.llm-wiki/ingest-queue.json`)
 }
 
+async function waitForQueueSnapshot<T>(predicate: (parsed: T) => boolean): Promise<T> {
+  let snapshot: T | null = null
+  await waitFor(async () => {
+    try {
+      const parsed = JSON.parse(await readQueueFile()) as T
+      if (!predicate(parsed)) return false
+      snapshot = parsed
+      return true
+    } catch {
+      return false
+    }
+  })
+  if (snapshot === null) throw new Error("Queue snapshot was not captured")
+  return snapshot
+}
+
 describe("ingest-queue persistence — write", () => {
   it("writes .llm-wiki/ingest-queue.json after enqueue", async () => {
     await enqueueIngest(TEST_ID_A, "raw/sources/a.md")
-    await waitFor(async () => {
-      try {
-        const c = await readQueueFile()
-        return JSON.parse(c).length === 1
-      } catch {
-        return false
-      }
-    })
-    const parsed = JSON.parse(await readQueueFile())
+    const parsed = await waitForQueueSnapshot<Array<{ sourcePath: string }>>((items) => items.length === 1)
     expect(parsed[0].sourcePath).toBe("raw/sources/a.md")
   })
 
@@ -103,15 +111,7 @@ describe("ingest-queue persistence — write", () => {
       { sourcePath: "raw/sources/a.md", folderContext: "" },
       { sourcePath: `${tmp.path}/raw/sources/a.md`, folderContext: "" },
     ])
-    await waitFor(async () => {
-      try {
-        const parsed = JSON.parse(await readQueueFile())
-        return parsed.length === 1
-      } catch {
-        return false
-      }
-    })
-    const parsed = JSON.parse(await readQueueFile())
+    const parsed = await waitForQueueSnapshot<Array<{ sourcePath: string }>>((items) => items.length === 1)
     expect(parsed).toHaveLength(1)
     expect(parsed[0].sourcePath).toBe("raw/sources/a.md")
   })
@@ -121,15 +121,9 @@ describe("ingest-queue persistence — write", () => {
       { sourcePath: "raw/sources/注意力机制.pdf", folderContext: "AI研究 > 论文" },
       { sourcePath: "raw/日本語.md", folderContext: "" },
     ])
-    await waitFor(async () => {
-      try {
-        const c = await readQueueFile()
-        return JSON.parse(c).length === 2
-      } catch {
-        return false
-      }
-    })
-    const parsed = JSON.parse(await readQueueFile()) as Array<{ sourcePath: string; folderContext: string }>
+    const parsed = await waitForQueueSnapshot<Array<{ sourcePath: string; folderContext: string }>>(
+      (items) => items.length === 2,
+    )
     const paths = parsed.map((p) => p.sourcePath)
     expect(paths).toContain("raw/sources/注意力机制.pdf")
     expect(paths).toContain("raw/日本語.md")
@@ -144,24 +138,11 @@ describe("ingest-queue persistence — write", () => {
 
   it("each enqueue updates the persisted JSON in-place", async () => {
     await enqueueIngest(TEST_ID_A, "first.md")
-    await waitFor(async () => {
-      try {
-        return JSON.parse(await readQueueFile()).length === 1
-      } catch {
-        return false
-      }
-    })
+    await waitForQueueSnapshot<Array<{ sourcePath: string }>>((items) => items.length === 1)
 
     await enqueueIngest(TEST_ID_A, "second.md")
-    await waitFor(async () => {
-      try {
-        return JSON.parse(await readQueueFile()).length === 2
-      } catch {
-        return false
-      }
-    })
+    const arr = await waitForQueueSnapshot<Array<{ sourcePath: string }>>((items) => items.length === 2)
 
-    const arr = JSON.parse(await readQueueFile()) as Array<{ sourcePath: string }>
     expect(arr.map((t) => t.sourcePath)).toEqual(
       expect.arrayContaining(["first.md", "second.md"]),
     )
@@ -262,19 +243,18 @@ describe("ingest-queue persistence — restore round-trip", () => {
     await enqueueBatch(TEST_ID_A, [
       { sourcePath: "raw/sources/注意力.pdf", folderContext: "研究 > 深度学习" },
     ])
-    await waitFor(async () => {
-      try {
-        return JSON.parse(await readQueueFile()).length === 1
-      } catch {
-        return false
-      }
-    })
     // Verify on-disk state before we blow away memory
-    const onDisk = JSON.parse(await readQueueFile()) as Array<{ sourcePath: string; folderContext: string }>
+    const onDisk = await waitForQueueSnapshot<Array<{ sourcePath: string; folderContext: string }>>(
+      (items) => items.length === 1,
+    )
     expect(onDisk[0].sourcePath).toBe("raw/sources/注意力.pdf")
     expect(onDisk[0].folderContext).toBe("研究 > 深度学习")
 
     clearQueueState()
+    await writeFileRaw(
+      `${tmp.path}/.llm-wiki/ingest-queue.json`,
+      JSON.stringify(onDisk, null, 2),
+    )
     await restoreQueue(TEST_ID_A, tmp.path)
 
     const restored = getQueue()

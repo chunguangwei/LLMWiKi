@@ -245,6 +245,29 @@ describe("chat persistence — round-trip (new format)", () => {
     expect(loaded.messages).toHaveLength(2)
   })
 
+  it("does not persist base64 chat images into conversation JSON", async () => {
+    const convs = [makeConv("c1", "Vision")]
+    const msg: DisplayMessage = {
+      ...makeMsg("m1", "c1", "what is this?"),
+      images: [{ mediaType: "image/png", dataBase64: "A".repeat(1024) }],
+    }
+
+    await saveChatHistory(tmp.path, convs, [msg])
+    expect(msg.images).toHaveLength(1)
+    expect(msg.images?.[0].dataBase64).toBe("A".repeat(1024))
+
+    const raw = await readFileRaw(`${tmp.path}/.llm-wiki-local/chats/c1.json`)
+    expect(raw).not.toContain("dataBase64")
+    expect(raw).not.toContain("image/png")
+
+    const loaded = await loadChatHistory(tmp.path)
+    expect(loaded.messages[0]).toMatchObject({
+      id: "m1",
+      content: "what is this?",
+    })
+    expect(loaded.messages[0].images).toBeUndefined()
+  })
+
   it("caps each conversation's persisted messages at 100 (oldest dropped)", async () => {
     const convs = [makeConv("c1")]
     const msgs = Array.from({ length: 150 }, (_, i) =>
@@ -263,18 +286,84 @@ describe("chat persistence — round-trip (new format)", () => {
     expect(loaded).toEqual({ conversations: [], messages: [] })
   })
 
+  it("round-trips chat search preferences", async () => {
+    await saveChatPreferences(tmp.path, {
+      useWebSearch: true,
+      useAnyTxtSearch: false,
+      agentMode: "deep",
+      selectedSkills: ["reviewer", "illustrator"],
+      disabledSkills: ["legacy"],
+    })
+    await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
+      useWebSearch: true,
+      useAnyTxtSearch: false,
+      agentMode: "deep",
+      selectedSkills: ["reviewer", "illustrator"],
+      disabledSkills: ["legacy"],
+    })
+
+    const raw = await readFileRaw(`${tmp.path}/.llm-wiki-local/chat-preferences.json`)
+    expect(raw).toContain('"useWebSearch": true')
+  })
+
+  it("defaults chat search preferences to off when no file exists", async () => {
+    await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
+      useWebSearch: false,
+      useAnyTxtSearch: false,
+      agentMode: "standard",
+      selectedSkills: [],
+      disabledSkills: [],
+    })
+  })
+
   it("skips missing per-conversation files without throwing", async () => {
     // conversations.json references c1 + c2, but chats/c2.json is missing
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/conversations.json`,
+      `${tmp.path}/.llm-wiki-local/conversations.json`,
       JSON.stringify([makeConv("c1"), makeConv("c2")]),
     )
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/chats/c1.json`,
+      `${tmp.path}/.llm-wiki-local/chats/c1.json`,
       JSON.stringify([makeMsg("m1", "c1", "hi")]),
     )
     const loaded = await loadChatHistory(tmp.path)
     expect(loaded.conversations).toHaveLength(2)
+    expect(loaded.messages).toHaveLength(1)
+  })
+
+  it("recovers conversations from orphan chat files when conversation index was overwritten empty", async () => {
+    await writeFileRaw(`${tmp.path}/.llm-wiki-local/conversations.json`, "[]")
+    await writeFileRaw(
+      `${tmp.path}/.llm-wiki-local/chats/c1.json`,
+      JSON.stringify([
+        makeMsg("m1", "c1", "First recovered question"),
+        { ...makeMsg("m2", "c1", "answer"), role: "assistant" },
+      ]),
+    )
+    await writeFileRaw(
+      `${tmp.path}/.llm-wiki-local/chats/c2.json`,
+      JSON.stringify([makeMsg("m3", "c2", "Second recovered question")]),
+    )
+
+    const loaded = await loadChatHistory(tmp.path)
+
+    expect(loaded.conversations.map((conversation) => conversation.id).sort()).toEqual(["c1", "c2"])
+    expect(loaded.conversations.find((conversation) => conversation.id === "c1")?.title).toBe(
+      "First recovered question",
+    )
+    expect(loaded.messages).toHaveLength(3)
+  })
+
+  it("recovers conversations from orphan chat files when conversation index is missing", async () => {
+    await writeFileRaw(
+      `${tmp.path}/.llm-wiki-local/chats/c1.json`,
+      JSON.stringify([makeMsg("m1", "c1", "Recovered without index")]),
+    )
+
+    const loaded = await loadChatHistory(tmp.path)
+
+    expect(loaded.conversations).toHaveLength(1)
+    expect(loaded.conversations[0].id).toBe("c1")
     expect(loaded.messages).toHaveLength(1)
   })
 
@@ -288,29 +377,6 @@ describe("chat persistence — round-trip (new format)", () => {
     const loaded = await loadChatHistory(tmp.path)
     expect(loaded.conversations[0].title).toBe("中文对话 🎌")
     expect(loaded.messages[0].content).toBe("你好，世界 🌍")
-  })
-
-  // Chat-agent search preferences (ported from upstream cea0029). Note:
-  // the fork keeps these under `.llm-wiki-local/` (per-user, never
-  // cloud-synced) — upstream parked them in `.llm-wiki/`.
-  it("round-trips chat search preferences", async () => {
-    await saveChatPreferences(tmp.path, { useWebSearch: true, useAnyTxtSearch: false, agentMode: "deep" })
-    await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
-      useWebSearch: true,
-      useAnyTxtSearch: false,
-      agentMode: "deep",
-    })
-
-    const raw = await readFileRaw(`${tmp.path}/.llm-wiki-local/chat-preferences.json`)
-    expect(raw).toContain('"useWebSearch": true')
-  })
-
-  it("defaults chat search preferences to off when no file exists", async () => {
-    await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
-      useWebSearch: false,
-      useAnyTxtSearch: false,
-      agentMode: "standard",
-    })
   })
 })
 

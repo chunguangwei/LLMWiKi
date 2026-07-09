@@ -1,17 +1,17 @@
 import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import { Sun, Moon, Monitor, Plus, Minus } from "lucide-react"
+import { Plus, Minus } from "lucide-react"
 import i18n from "@/i18n"
 import { Label } from "@/components/ui/label"
-import { saveLanguage, saveTheme } from "@/lib/project-store"
-import { useWikiStore } from "@/stores/wiki-store"
-import { MAX_ZOOM_LEVEL, MIN_ZOOM_LEVEL, ZOOM_STEP, clampZoomLevel, roundZoomLevel } from "@/stores/zoom-store"
-import type { Theme } from "@/lib/theme"
+import { saveLanguage } from "@/lib/project-store"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
+import type { AppTheme } from "@/lib/theme"
+import { MAX_ZOOM_LEVEL, MIN_ZOOM_LEVEL, ZOOM_STEP, clampZoomLevel, roundZoomLevel } from "@/stores/zoom-store"
 
 interface Props {
   draft: SettingsDraft
   setDraft: DraftSetter
+  onThemeChange?: (theme: AppTheme) => void
 }
 
 const UI_LANGUAGES = [
@@ -19,36 +19,18 @@ const UI_LANGUAGES = [
   { value: "zh", label: "中文" },
 ]
 
-interface ThemeOption {
-  value: Theme
-  icon: typeof Sun
-  /** i18n key under `settings.sections.interface.themeOptions`. */
-  i18nKey: string
-  /** Fallback label when the translation key is missing. */
-  fallback: string
-}
-
-const THEME_OPTIONS: ReadonlyArray<ThemeOption> = [
-  { value: "system", icon: Monitor, i18nKey: "system", fallback: "System" },
-  { value: "light", icon: Sun, i18nKey: "light", fallback: "Light" },
-  { value: "dark", icon: Moon, i18nKey: "dark", fallback: "Dark" },
+const THEMES = [
+  { value: "light" as const, labelKey: "settings.sections.interface.themeLight" },
+  { value: "dark" as const, labelKey: "settings.sections.interface.themeDark" },
+  { value: "system" as const, labelKey: "settings.sections.interface.themeSystem" },
 ]
 
-export function InterfaceSection({ draft, setDraft }: Props) {
+export function InterfaceSection({ draft, setDraft, onThemeChange }: Props) {
   const { t } = useTranslation()
-  const theme = useWikiStore((s) => s.theme)
-  const setTheme = useWikiStore((s) => s.setTheme)
-
-  // Interface zoom lives in the shared draft and is applied + persisted
-  // by the global Save bar (see settings-view handleSave) — unlike the
-  // language / theme pickers above, which take effect one-click without
-  // Save. We mirror the percentage into local input text so the user can
-  // type a value freely (e.g. "125") and only commit it on blur/Enter.
   const level = draft.zoomLevel
   const [inputText, setInputText] = useState(String(Math.round(level * 100)))
 
-  // Resync the local input when the draft level changes from outside the
-  // text field (e.g. the +/− buttons, or a project switch).
+  // Sync local input text when draft changes externally (e.g. +/− buttons)
   useEffect(() => {
     setInputText(String(Math.round(level * 100)))
   }, [level])
@@ -78,16 +60,6 @@ export function InterfaceSection({ draft, setDraft }: Props) {
     await i18n.changeLanguage(value)
     await saveLanguage(value).catch((err) =>
       console.warn("[interface] could not persist language:", err),
-    )
-  }
-
-  // Theme is applied via the App-level subscribe-to-store hook (see
-  // App.tsx) — set the store value here and the .dark class flips
-  // automatically. Persist alongside so a reload reflects the choice.
-  const pickTheme = async (value: Theme) => {
-    setTheme(value)
-    await saveTheme(value).catch((err) =>
-      console.warn("[interface] could not persist theme:", err),
     )
   }
 
@@ -127,37 +99,31 @@ export function InterfaceSection({ draft, setDraft }: Props) {
       </div>
 
       <div className="space-y-2">
-        <Label>
-          {t("settings.sections.interface.theme", { defaultValue: "Theme" })}
-        </Label>
+        <Label>{t("settings.sections.interface.theme")}</Label>
         <div className="flex flex-wrap gap-2">
-          {THEME_OPTIONS.map((opt) => {
-            const active = theme === opt.value
-            const Icon = opt.icon
+          {THEMES.map((th) => {
+            const active = draft.theme === th.value
             return (
               <button
-                key={opt.value}
+                key={th.value}
                 type="button"
-                onClick={() => void pickTheme(opt.value)}
-                className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                onClick={() => {
+                  setDraft("theme", th.value)
+                  onThemeChange?.(th.value)
+                }}
+                className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
                   active
                     ? "border-primary bg-primary text-primary-foreground"
                     : "border-border hover:bg-accent"
                 }`}
               >
-                <Icon className="h-4 w-4" />
-                {t(`settings.sections.interface.themeOptions.${opt.i18nKey}`, {
-                  defaultValue: opt.fallback,
-                })}
+                {t(th.labelKey)}
               </button>
             )
           })}
         </div>
         <p className="text-xs text-muted-foreground">
-          {t("settings.sections.interface.themeHint", {
-            defaultValue:
-              "System follows your OS preference and flips live when you toggle it. Light / Dark force the choice regardless of OS.",
-          })}
+          {t("settings.sections.interface.themeHint")}
         </p>
       </div>
 

@@ -6,12 +6,7 @@ import type { LintScenario } from "./types"
 // [[link]] to it. Scenario wikis here are built with that in mind.
 
 function page(title: string, body: string): string {
-  // Frontmatter `type: concept` is required by the new
-  // `frontmatter-type` lint rule. We pick `concept` arbitrarily —
-  // the lint scenarios here are exercising orphan / broken-link /
-  // no-outlinks behavior, not the type taxonomy, so any canonical
-  // type works as long as it's PRESENT.
-  return `---\ntype: concept\ntitle: ${title}\n---\n\n# ${title}\n\n${body}\n`
+  return `---\ntitle: ${title}\n---\n\n# ${title}\n\n${body}\n`
 }
 
 export const lintScenarios: LintScenario[] = [
@@ -80,113 +75,6 @@ export const lintScenarios: LintScenario[] = [
           linkName: "nonexistent-page",
         },
       ],
-    },
-  },
-
-  // 3b. broken-link DEDUP — same missing target referenced from
-  //     multiple source pages collapses into ONE lint row with
-  //     affectedPages populated. Without this, every reference
-  //     produces a separate row, flooding the Lint view (a popular
-  //     missing target like a wiki concept can appear 5–10 times).
-  {
-    name: "structural/broken-link-dedup",
-    description:
-      "[[missing-target]] is referenced from three different pages. The " +
-      "structural lint should emit exactly ONE broken-link row whose " +
-      "affectedPages list names all three.",
-    initialWiki: {
-      "wiki/index.md":
-        "# Index\n\n- [[page-a]]\n- [[page-b]]\n- [[page-c]]\n",
-      // Cross-link page-a / page-b / page-c so they're NOT orphans —
-      // the lint that's being tested here is the broken-link dedup,
-      // not the orphan flag. Each page also references the missing
-      // target with its OWN wording (same target, three references).
-      "wiki/page-a.md": page(
-        "Page A",
-        "Page A talks about [[missing-target]]. See also [[page-b]].",
-      ),
-      "wiki/page-b.md": page(
-        "Page B",
-        "Page B also mentions [[missing-target]] for the same reason. " +
-          "Cross-ref: [[page-a]], [[page-c]].",
-      ),
-      "wiki/page-c.md": page(
-        "Page C",
-        "And [[missing-target]] comes up again here, in Page C. " +
-          "Related: [[page-b]].",
-      ),
-    },
-    expected: {
-      structural: [
-        {
-          type: "broken-link",
-          // page = first affected (sorted alphabetically), the lint UI
-          // uses this as the row anchor.
-          page: "page-a.md",
-          linkName: "missing-target",
-          affectedPages: ["page-a.md", "page-b.md", "page-c.md"],
-        },
-      ],
-    },
-  },
-
-  // 3c. lint exclusion: raw-source paths (sources/, queries/) are
-  //     skipped by default. A page directly under wiki/sources/ has
-  //     a broken link AND no inbound link — without the exclusion it
-  //     would produce orphan + no-outlinks + broken-link. With the
-  //     default LintConfig it produces NONE.
-  {
-    name: "structural/ignore-raw-sources",
-    description:
-      "sources/raw-import.md has [[non-existent]] and no other linking page. " +
-      "Default lint config skips sources/ so the page produces zero findings.",
-    initialWiki: {
-      "wiki/index.md": "# Index\n\n",
-      "wiki/sources/raw-import.md": page(
-        "Raw import",
-        "Some imported content referencing [[non-existent]] and nothing else.",
-      ),
-    },
-    expected: {
-      structural: [],
-    },
-  },
-
-  // 3d. structural pages (overview / purpose / schema) are filtered
-  //     from orphan + no-outlinks + broken-link checks — they're
-  //     entry points / framing docs, not knowledge nodes. BUT they
-  //     remain valid wikilink targets, so a knowledge page that
-  //     references [[overview]] doesn't get a broken-link warning.
-  //
-  //     A real user lost their overview.md page when bulk-delete
-  //     acted on a stale "orphan: overview.md" lint warning. This
-  //     scenario pins the fix.
-  {
-    name: "structural/skip-overview-as-orphan",
-    description:
-      "overview.md exists at wiki root with no inbound links. Lint must " +
-      "NOT flag it as orphan / no-outlinks. A knowledge page also " +
-      "wikilinks to [[overview]] — that resolves cleanly, no broken-link.",
-    initialWiki: {
-      "wiki/index.md": "# Index\n\n- [[note]]\n- [[concept]]\n",
-      "wiki/overview.md": "---\ntype: overview\ntitle: Project Overview\n---\n\nNo other page links here, but that's intentional.\n",
-      // note + concept cross-link each other so neither is orphan;
-      // both reference [[overview]] to test the resolution path.
-      "wiki/note.md": page(
-        "A note",
-        "See the [[overview]] for framing context. Related: [[concept]].",
-      ),
-      "wiki/concept.md": page(
-        "A concept",
-        "Background in the [[overview]]; cross-ref [[note]].",
-      ),
-    },
-    expected: {
-      // Without the structural skip: overview.md gets orphan +
-      // no-outlinks. With the fix: zero findings — overview is a
-      // recognised entry point and its lack of inbound/outbound
-      // links is by design.
-      structural: [],
     },
   },
 

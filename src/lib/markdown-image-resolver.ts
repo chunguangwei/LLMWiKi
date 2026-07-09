@@ -39,6 +39,28 @@ import { normalizePath } from "@/lib/path-utils"
 
 const PASSTHROUGH_RE = /^(https?:|data:|blob:|file:|tauri:)/i
 
+function trimTrailingSlash(path: string): string {
+  return path.replace(/\/+$/, "")
+}
+
+function comparePath(path: string): string {
+  return /^[a-zA-Z]:/.test(path) ? path.toLowerCase() : path
+}
+
+function isInsideProject(path: string, projectPath: string): boolean {
+  const root = comparePath(trimTrailingSlash(normalizePath(projectPath)))
+  const candidate = comparePath(trimTrailingSlash(normalizePath(path)))
+  return candidate === root || candidate.startsWith(`${root}/`)
+}
+
+function decodePathSrc(src: string): string {
+  try {
+    return decodeURIComponent(src)
+  } catch {
+    return src
+  }
+}
+
 /**
  * Collapse `.` and `..` segments in a forward-slashed path without
  * touching the filesystem. A leading `..` that would escape the
@@ -86,9 +108,16 @@ export function resolveMarkdownImageSrc(
   const isAbsolute =
     rawSrc.startsWith("/") || /^[a-zA-Z]:/.test(rawSrc) || rawSrc.startsWith("\\\\")
 
-  // Absolute paths get fed straight to convertFileSrc — the user (or
-  // some plugin) explicitly chose that path; we don't second-guess.
-  if (isAbsolute) return convertFileSrc(rawSrc)
+  // Absolute paths are allowed only inside the current project. This resolver
+  // is used for both generated/imported markdown and normal wiki reading, so
+  // this intentionally trades off rendering arbitrary external local images
+  // for a single safe rule: markdown cannot turn into a project-external local
+  // file read through Tauri's asset server. External web URLs still pass
+  // through via PASSTHROUGH_RE above.
+  if (isAbsolute) {
+    const absolute = collapsePath(normalizePath(decodePathSrc(rawSrc)))
+    return isInsideProject(absolute, pp) ? convertFileSrc(absolute) : rawSrc
+  }
 
   // Strip a leading `./` for cleanliness; treat `media/foo.png` and
   // `./media/foo.png` identically.
@@ -106,25 +135,21 @@ export function resolveMarkdownImageSrc(
   // "%E6", finds nothing, and the image 404s (showing the alt text).
   // Decoding is wrapped because a malformed `%` sequence throws; in
   // that case we keep the raw value rather than crash the renderer.
-  let cleaned: string
-  try {
-    cleaned = decodeURIComponent(stripped)
-  } catch {
-    cleaned = stripped
-  }
+  const cleaned = decodePathSrc(stripped)
 
-  // Generated-wiki convention takes precedence: ingest always emits
+  // Generated-wiki convention takes precedence: ingest normally emits
   // embedded images as `media/<source-slug>/img-N.png` — a path
-  // relative to the project's `wiki/` ROOT, regardless of which
-  // wiki subdirectory the page lives in (`wiki/sources/foo.md`,
-  // `wiki/concepts/bar.md`, …). If we let `currentFileDir` win for
-  // these, a page in `wiki/sources/` would resolve `media/…` to
-  // `wiki/sources/media/…` — one level too deep — and the image
-  // 404s. So a `media/`-prefixed src is ALWAYS wiki-root-relative,
-  // never file-relative. File-relative refs use `../assets/…` /
-  // `./x.png` / bare names and never start with `media/`, so this
-  // doesn't steal any of those cases.
-  const isGeneratedMediaRef = cleaned.startsWith("media/")
+  // relative to the project's `wiki/` ROOT. Source-summary pages are
+  // written one level deeper (`wiki/sources/*.md`), so we persist those
+  // refs as `../media/...` for external Markdown apps such as Obsidian.
+  // Treat both forms as wiki-root media refs; otherwise call sites that
+  // do not know the current file dir (chat/search snippets) would resolve
+  // `../media/...` against `<project>/wiki/` and escape to `<project>/media`.
+  const isGeneratedMediaRef =
+    cleaned.startsWith("media/") || cleaned.startsWith("../media/")
+  const wikiRootMediaPath = cleaned.startsWith("../media/")
+    ? cleaned.slice("../".length)
+    : cleaned
 
   // Preferred path: resolve relative to the markdown file's own
   // directory, exactly like Obsidian. This is what makes
@@ -138,13 +163,13 @@ export function resolveMarkdownImageSrc(
       dir.startsWith("/") || /^[a-zA-Z]:/.test(dir) || dir.startsWith("\\\\")
     const baseDir = dirIsAbsolute ? dir : `${pp}/${dir}`
     const absolute = collapsePath(`${baseDir.replace(/\/+$/, "")}/${cleaned}`)
-    return convertFileSrc(absolute)
+    return isInsideProject(absolute, pp) ? convertFileSrc(absolute) : rawSrc
   }
 
   // Fallback: resolve as wiki-root-relative. Image references in
   // generated wiki content use this convention (`media/<slug>/…`)
   // so the path is stable regardless of page depth, and callers
   // without a file context (chat replies) rely on it too.
-  const absolute = collapsePath(`${pp}/wiki/${cleaned}`)
-  return convertFileSrc(absolute)
+  const absolute = collapsePath(`${pp}/wiki/${wikiRootMediaPath}`)
+  return isInsideProject(absolute, pp) ? convertFileSrc(absolute) : rawSrc
 }

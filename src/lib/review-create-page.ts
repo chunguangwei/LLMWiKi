@@ -1,20 +1,5 @@
 import type { ReviewItem } from "@/stores/review-store"
 
-/**
- * Drafts for pages created from a review item ("Create Page" action).
- *
- * SCOPE NOTE (fork): this is purely the UI-side "turn a review into a wiki
- * page" type guesser — it is the SAME small taxonomy the old inline
- * detectPageType() in review-view.tsx used (entity / concept / comparison /
- * synthesis / query). It does NOT participate in the ingest split or the
- * core page-type schema; it only decides which sub-directory + frontmatter
- * `type` a manually-created review page gets. Don't confuse it with the
- * project's full page-type taxonomy.
- *
- * A single missing-page review can name several missing pages
- * ("缺少 X、Y 页面" / "missing pages A and B"); createReviewPageDrafts splits
- * those into one draft per page so each gets its own concrete wiki file.
- */
 export type ReviewPageType = "entity" | "concept" | "comparison" | "synthesis" | "query"
 
 export interface ReviewPageDraft {

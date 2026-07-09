@@ -4,7 +4,6 @@ import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
-import { openUrl } from "@tauri-apps/plugin-opener"
 import { transformImageEmbeds, transformWikilinks } from "@/lib/wikilink-transform"
 import { resolveRelatedSlug } from "@/lib/wiki-page-resolver"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
@@ -40,7 +39,7 @@ interface WikiReaderProps {
  */
 export function WikiReader({ body, filePath }: WikiReaderProps) {
   const project = useWikiStore((s) => s.project)
-  const fileTree = useWikiStore((s) => s.fileTree)
+  const projectPathIndex = useWikiStore((s) => s.projectPathIndex)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
 
   // Image embeds (`![[…]]`) must be rewritten BEFORE the generic
@@ -75,7 +74,7 @@ export function WikiReader({ body, filePath }: WikiReaderProps) {
         return href.slice(1)
       }
     })()
-    const path = resolveRelatedSlug(fileTree, slug, wikiRoot)
+    const path = resolveRelatedSlug(projectPathIndex, slug, wikiRoot)
     if (path) openPathInPreview(path)
   }
 
@@ -93,26 +92,10 @@ export function WikiReader({ body, filePath }: WikiReaderProps) {
           a: ({ href, children, ...props }) => {
             const h = typeof href === "string" ? href : ""
             const isWikilink = h.startsWith("#")
-            // External http(s) links — without intercept, the Tauri
-            // webview navigates AWAY from the app and there's no back
-            // button to return to the wiki. preventDefault + openUrl
-            // routes the link through the OS default browser instead.
-            const isExternal = /^https?:\/\//i.test(h)
             return (
               <a
                 href={h || undefined}
-                onClick={(e) => {
-                  if (isWikilink) {
-                    handleAnchorClick(e, h)
-                    return
-                  }
-                  if (isExternal) {
-                    e.preventDefault()
-                    void openUrl(h).catch((err) => {
-                      console.error("[wiki-reader] openUrl failed:", err)
-                    })
-                  }
-                }}
+                onClick={(e) => isWikilink && handleAnchorClick(e, h)}
                 className={
                   isWikilink
                     ? "cursor-pointer text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
@@ -124,6 +107,30 @@ export function WikiReader({ body, filePath }: WikiReaderProps) {
               </a>
             )
           },
+          h1: ({ children, ...props }) => (
+            <h1
+              className="mb-4 mt-0 border-b border-border/60 pb-3 text-3xl font-semibold leading-tight tracking-normal text-foreground"
+              {...props}
+            >
+              {children}
+            </h1>
+          ),
+          h2: ({ children, ...props }) => (
+            <h2
+              className="mb-3 mt-8 border-b border-border/40 pb-2 text-2xl font-semibold leading-tight tracking-normal text-foreground"
+              {...props}
+            >
+              {children}
+            </h2>
+          ),
+          h3: ({ children, ...props }) => (
+            <h3
+              className="mb-2 mt-6 text-xl font-semibold leading-snug tracking-normal text-foreground"
+              {...props}
+            >
+              {children}
+            </h3>
+          ),
           img: ({ src, alt, ...props }) => (
             <img
               src={

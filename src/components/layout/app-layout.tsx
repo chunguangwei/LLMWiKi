@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useWikiStore } from "@/stores/wiki-store"
-import { listDirectory } from "@/commands/fs"
-import { normalizePath } from "@/lib/path-utils"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { IconSidebar } from "./icon-sidebar"
 import { UpdateBanner } from "./update-banner"
 import { SidebarPanel } from "./sidebar-panel"
@@ -20,7 +19,6 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   const project = useWikiStore((s) => s.project)
   const activeView = useWikiStore((s) => s.activeView)
   const researchPanelOpen = useResearchStore((s) => s.panelOpen)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
   const [leftWidth, setLeftWidth] = useState(220)
   const [rightWidth, setRightWidth] = useState(400)
   const isDraggingLeft = useRef(false)
@@ -29,13 +27,11 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
 
   const loadFileTree = useCallback(async () => {
     if (!project) return
-    try {
-      const tree = await listDirectory(normalizePath(project.path))
-      setFileTree(tree)
-    } catch (err) {
-      console.error("Failed to load file tree:", err)
-    }
-  }, [project, setFileTree])
+    await refreshProjectFileTree(project.path, {
+      projectId: project.id,
+      clearDisplayTreeFirst: true,
+    })
+  }, [project])
 
   useEffect(() => {
     loadFileTree()
@@ -84,9 +80,7 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
 
   // Settings and Chat are standalone views. Hide the project file tree,
   // activity strip, and optional right research panel there so those
-  // screens use the whole work area. (Centralized in
-  // app-layout-visibility so the icon-sidebar's research-panel toggle
-  // and this layout agree on what "standalone" means.)
+  // screens use the whole work area.
   const { showLeftPanel, hasRightPanel } = getAppLayoutVisibility(activeView, researchPanelOpen)
 
   return (
@@ -95,7 +89,7 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
     // existing IconSidebar + content row below. Banner is shrink-0
     // so it doesn't compress the work area; main row is flex-1 so
     // it fills the rest of the viewport.
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <div className="flex h-full flex-col bg-background text-foreground">
       <UpdateBanner />
       <div className="flex min-h-0 flex-1">
         <IconSidebar onSwitchProject={onSwitchProject} />
@@ -119,17 +113,14 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
             </>
           )}
 
-          {/* Center: Chat, wiki preview, or tool view. The wiki page
-              preview now renders here (as the "wiki" view) rather than in
-              a right-side panel — see ContentArea. */}
+          {/* Center: Chat, wiki preview, or tool view */}
           <div className="min-w-0 flex-1 overflow-hidden">
             <ErrorBoundary>
               <ContentArea />
             </ErrorBoundary>
           </div>
 
-          {/* Right panel — Deep Research only (the file preview moved to
-              the center work area). */}
+          {/* Right panels */}
           {hasRightPanel && (
             <>
               <div

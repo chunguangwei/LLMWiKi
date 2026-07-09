@@ -1,8 +1,9 @@
 import {
-  copyDirectory,
   copyFile,
+  createDirectory,
   deleteFile,
   fileExists,
+  getFileSize,
   listDirectory,
   preprocessFile,
   readFile,
@@ -32,14 +33,17 @@ import {
   stripDeletedWikilinks,
 } from "@/lib/wiki-cleanup"
 import { collectAllFilesIncludingDot } from "@/lib/sources-tree-delete"
+import { isPathAllowedBySourceWatch, normalizeSourceWatchConfig } from "@/lib/source-watch-config"
+import { isSensitiveConfigSourceFile } from "@/lib/source-filter"
 import { naturalCompare } from "@/lib/natural-sort"
+import type { SourceWatchConfig } from "@/stores/wiki-store"
 
 export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "md",
   "mdx",
   "txt",
   "pdf",
-  "epub",
+  "doc",
   "docx",
   "pptx",
   "xlsx",
@@ -56,6 +60,40 @@ export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "yaml",
   "yml",
 ])
+
+function flattenFiles(nodes: FileNode[]): FileNode[] {
+  const files: FileNode[] = []
+  for (const node of nodes) {
+    if (node.is_dir) {
+      files.push(...flattenFiles(node.children ?? []))
+    } else {
+      files.push(node)
+    }
+  }
+  return files
+}
+
+function parentPath(path: string): string {
+  const normalized = normalizePath(path)
+  const index = normalized.lastIndexOf("/")
+  return index > 0 ? normalized.slice(0, index) : ""
+}
+
+function stripTrailingSlash(path: string): string {
+  return normalizePath(path).replace(/\/+$/, "")
+}
+
+function isSameOrInside(path: string, parent: string): boolean {
+  const p = stripTrailingSlash(path).toLowerCase()
+  const base = stripTrailingSlash(parent).toLowerCase()
+  return p === base || p.startsWith(`${base}/`)
+}
+
+function isProjectScopedImport(projectPath: string, selectedFolder: string): boolean {
+  const pp = stripTrailingSlash(projectPath)
+  const sourceRoot = stripTrailingSlash(selectedFolder)
+  return isSameOrInside(pp, sourceRoot) || isSameOrInside(sourceRoot, pp)
+}
 
 export interface DeleteSourceResult {
   deletedWikiPaths: string[]
@@ -103,7 +141,10 @@ export async function enqueueSourceIngest(
 ): Promise<string[]> {
   if (!hasUsableLlm(llmConfig)) return []
   const files = sourcePaths
-    .filter(isIngestableSourcePath)
+    .filter((sourcePath) =>
+      isIngestableSourcePath(sourcePath) &&
+      !isSensitiveConfigSourceFile(sourcePath)
+    )
     .map((sourcePath) => ({
       sourcePath,
       folderContext: withRootContext(
@@ -119,12 +160,28 @@ export async function importSourceFiles(
   project: WikiProject,
   sourcePaths: string[],
   llmConfig: LlmConfig,
+  sourceWatchConfig?: SourceWatchConfig,
 ): Promise<string[]> {
   const pp = normalizePath(project.path)
   const importedPaths: string[] = []
+  const cfg = normalizeSourceWatchConfig(sourceWatchConfig)
+  const maxBytes = cfg.maxFileSizeMb * 1024 * 1024
 
   for (const sourcePath of sourcePaths) {
     const originalName = getFileName(sourcePath) || "unknown"
+    if (isSensitiveConfigSourceFile(sourcePath)) {
+      continue
+    }
+    let allowed = isPathAllowedBySourceWatch(sourcePath, cfg)
+    if (allowed) {
+      try {
+        allowed = await getFileSize(sourcePath) <= maxBytes
+      } catch {
+        allowed = false
+      }
+    }
+    if (!allowed) continue
+
     const destPath = await getUniqueDestPath(`${pp}/raw/sources`, originalName)
     try {
       await copyFile(sourcePath, destPath)
@@ -144,21 +201,50 @@ export async function importSourceFolder(
   project: WikiProject,
   selectedFolder: string,
   llmConfig: LlmConfig,
+  sourceWatchConfig?: SourceWatchConfig,
 ): Promise<string[]> {
   const pp = normalizePath(project.path)
+  const sourceRoot = normalizePath(selectedFolder)
+  if (isProjectScopedImport(pp, sourceRoot)) {
+    throw new Error("Cannot import the project folder or a folder inside the current project.")
+  }
   const folderName = getFileName(selectedFolder) || "imported"
   const destDir = `${pp}/raw/sources/${folderName}`
-  const copiedFiles = await copyDirectory(selectedFolder, destDir)
+  const cfg = normalizeSourceWatchConfig(sourceWatchConfig)
+  const maxBytes = cfg.maxFileSizeMb * 1024 * 1024
+  const allowedFiles: string[] = []
+  // include hidden: a user importing a folder into raw/sources may
+  // legitimately want dotfolder notes. Config-like files under known
+  // agent/tool config folders are still filtered before copy so API
+  // keys / tool config do not enter ingest.
+  const sourceFiles = flattenFiles(await listDirectory(selectedFolder, true))
 
-  // Ingest in human-natural order (file2 < file10) so multi-part sources
-  // are summarized in the order a reader expects.
-  const naturallyOrderedFiles = [...copiedFiles].sort((a, b) =>
+  for (const file of sourceFiles) {
+    const relativeSourcePath = getRelativePath(file.path, sourceRoot)
+    const destPath = `${destDir}/${relativeSourcePath}`
+    const relPath = `raw/sources/${folderName}/${relativeSourcePath}`
+    if (isSensitiveConfigSourceFile(file.path)) {
+      continue
+    }
+    let allowed = isPathAllowedBySourceWatch(relPath, cfg)
+    if (allowed) {
+      try {
+        allowed = await getFileSize(file.path) <= maxBytes
+      } catch {
+        allowed = false
+      }
+    }
+    if (!allowed) continue
+    const parent = parentPath(destPath)
+    if (parent) await createDirectory(parent)
+    await copyFile(file.path, destPath)
+    allowedFiles.push(destPath)
+    preprocessFile(destPath).catch(() => {})
+  }
+
+  const naturallyOrderedFiles = [...allowedFiles].sort((a, b) =>
     naturalCompare(getRelativePath(a, destDir), getRelativePath(b, destDir)),
   )
-
-  for (const filePath of naturallyOrderedFiles) {
-    preprocessFile(filePath).catch(() => {})
-  }
 
   if (hasUsableLlm(llmConfig)) {
     await enqueueSourceIngest(project, naturallyOrderedFiles, llmConfig, {

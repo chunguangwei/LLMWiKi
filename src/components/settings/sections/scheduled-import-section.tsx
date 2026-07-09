@@ -7,7 +7,11 @@ import { Button } from "@/components/ui/button"
 import { Folder, Play, RefreshCw } from "lucide-react"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 import { useWikiStore } from "@/stores/wiki-store"
-import { scanAndImport } from "@/lib/scheduled-import"
+import {
+  isProjectManagedScheduledImportPath,
+  resolveImportPath,
+  scanAndImport,
+} from "@/lib/scheduled-import"
 
 interface Props {
   draft: SettingsDraft
@@ -49,6 +53,14 @@ export function ScheduledImportSection({ draft, setDraft }: Props) {
   const lastScanDate = scheduledImportConfig.lastScan
     ? new Date(scheduledImportConfig.lastScan).toLocaleString()
     : t("settings.sections.scheduledImport.never", { defaultValue: "Never" })
+  const managedPathSelected = Boolean(
+    project &&
+    draft.scheduledImportPath &&
+    isProjectManagedScheduledImportPath(
+      project.path,
+      resolveImportPath(project.path, draft.scheduledImportPath),
+    ),
+  )
 
   return (
     <div className="space-y-6">
@@ -118,9 +130,17 @@ export function ScheduledImportSection({ draft, setDraft }: Props) {
         <p className="text-xs text-muted-foreground">
           {t("settings.sections.scheduledImport.directoryHelp", {
             defaultValue:
-              "Files in this directory (and subdirectories) will be automatically imported. New files are copied to sources; modified files are re-ingested.",
+              "Choose an external folder outside the current LLM Wiki project. Project folders are already handled by source folder monitoring.",
           })}
         </p>
+        {managedPathSelected && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+            {t("settings.sections.scheduledImport.managedPathWarning", {
+              defaultValue:
+                "This path is inside the current LLM Wiki project and is already managed by source folder monitoring. Pick an external folder to avoid duplicate scans.",
+            })}
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -156,7 +176,7 @@ export function ScheduledImportSection({ draft, setDraft }: Props) {
           variant="outline"
           size="sm"
           onClick={handleManualScan}
-          disabled={!draft.scheduledImportEnabled || !draft.scheduledImportPath || isScanning}
+          disabled={!draft.scheduledImportEnabled || !draft.scheduledImportPath || managedPathSelected || isScanning}
         >
           {isScanning ? (
             <RefreshCw className="mr-2 h-4 w-4 animate-spin" />

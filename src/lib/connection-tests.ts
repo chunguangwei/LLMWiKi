@@ -7,14 +7,14 @@ export interface ProviderTestResult {
   message: string
 }
 
-// Reasoning-native models (MiniMax M-series, DeepSeek-R1, QwQ, …) often
-// emit chain-of-thought before any answer and may not honor a
-// reasoning-off request. A tiny cap (e.g. 32) gets fully consumed by
-// thinking, so the model returns no `content` and the test wrongly reads
-// as "empty content". Give enough headroom for a thinking model to reach
-// its (short) answer; if it still only thinks, llm-client's reasoning
-// diagnostic fires with a clear message instead of a vague empty result.
-const CONNECTION_TEST_MAX_TOKENS = 512
+export const LLM_PROVIDER_TEST_MAX_TOKENS = 512
+
+function configForProviderTest(cfg: LlmConfig): LlmConfig {
+  if (cfg.provider === "claude-code" || cfg.provider === "codex-cli") {
+    return { ...cfg, localCliIsolation: true }
+  }
+  return cfg
+}
 
 export async function testEmbeddingConnection(cfg: EmbeddingConfig): Promise<ProviderTestResult> {
   if (!cfg.endpoint.trim()) {
@@ -71,11 +71,12 @@ export async function testEmbeddingFunction(cfg: EmbeddingConfig): Promise<Provi
 
 export async function testLlmConnection(cfg: LlmConfig): Promise<ProviderTestResult> {
   const started = performance.now()
+  const testCfg = configForProviderTest(cfg)
   let content = ""
   let errorMessage: string | null = null
 
   await streamChat(
-    cfg,
+    testCfg,
     [
       { role: "system", content: "You are a connection checker. Reply briefly." },
       { role: "user", content: "Reply with one short word." },
@@ -86,7 +87,7 @@ export async function testLlmConnection(cfg: LlmConfig): Promise<ProviderTestRes
       onError: (err) => { errorMessage = err.message },
     },
     undefined,
-    { max_tokens: CONNECTION_TEST_MAX_TOKENS, reasoning: { mode: "off" } },
+    { max_tokens: LLM_PROVIDER_TEST_MAX_TOKENS, reasoning: { mode: "off" } },
   )
 
   if (errorMessage) return { ok: false, message: errorMessage }
@@ -98,11 +99,12 @@ export async function testLlmConnection(cfg: LlmConfig): Promise<ProviderTestRes
 }
 
 export async function testLlmFunction(cfg: LlmConfig): Promise<ProviderTestResult> {
+  const testCfg = configForProviderTest(cfg)
   let content = ""
   let errorMessage: string | null = null
 
   await streamChat(
-    cfg,
+    testCfg,
     [
       {
         role: "system",
@@ -116,7 +118,7 @@ export async function testLlmFunction(cfg: LlmConfig): Promise<ProviderTestResul
       onError: (err) => { errorMessage = err.message },
     },
     undefined,
-    { max_tokens: CONNECTION_TEST_MAX_TOKENS, reasoning: { mode: "off" } },
+    { max_tokens: LLM_PROVIDER_TEST_MAX_TOKENS, reasoning: { mode: "off" } },
   )
 
   if (errorMessage) return { ok: false, message: errorMessage }

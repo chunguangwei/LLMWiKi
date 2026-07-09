@@ -5,7 +5,7 @@
  * http://127.0.0.1:19828/api/v1 and use a real project id. They are gated
  * behind RUN_API_TESTS=1 (or RUN_LLM_TESTS=1 for the repo's shared real-test
  * script) because they require the app to be running and the API server to be
- * enabled in Settings -> API Server.
+ * enabled in Settings -> API + MCP.
  *
  * WARNING: the auth/config tests mutate the live app-state.json to verify
  * enabled=false and unauthenticated mode. They restore the original file in
@@ -46,6 +46,7 @@ interface ApiHealth extends ApiEnvelope {
   authRequired?: boolean
   authConfigured?: boolean
   allowUnauthenticated?: boolean
+  allowLanAccess?: boolean
   tokenSource?: "env" | "store" | "none"
 }
 
@@ -207,7 +208,7 @@ async function requireUsableApi(): Promise<ApiHealth> {
   expect(h.enabled).toBe(true)
   if (h.authRequired && !h.allowUnauthenticated && !API_TOKEN) {
     throw new Error(
-      "API requires auth. Re-run with API_TOKEN=<token> or enable Settings -> API Server -> Allow access without a token.",
+      "API requires auth. Re-run with API_TOKEN=<token> or enable Settings -> API + MCP -> Allow access without a token.",
     )
   }
   return h
@@ -259,10 +260,11 @@ async function readAppState(): Promise<Record<string, unknown>> {
 async function writeApiConfig(config: {
   enabled: boolean
   allowUnauthenticated: boolean
+  allowLanAccess?: boolean
   token: string
 }): Promise<void> {
   const state = await readAppState()
-  state.apiConfig = config
+  state.apiConfig = { allowLanAccess: false, ...config }
   await fs.writeFile(appStatePath!, `${JSON.stringify(state, null, 2)}\n`, "utf8")
   appStateMutated = true
 }

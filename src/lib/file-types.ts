@@ -6,7 +6,6 @@ export type FileCategory =
   | "video"
   | "audio"
   | "pdf"
-  | "office"
   | "document"
   | "data"
   | "unknown"
@@ -97,24 +96,20 @@ const EXT_MAP: Record<string, FileCategory> = {
   // PDF
   pdf: "pdf",
 
-  // Office documents whose text the backend can extract (read_file ->
-  // extract_office_text). Previewed as extracted markdown, like PDF.
-  docx: "office",
-  xlsx: "office",
-  pptx: "office",
-  odt: "office",
-  ods: "office",
-  odp: "office",
-  // EPUB: text extracted via the `epub` crate (OPF spine walker).
-  epub: "office",
-
-  // Documents we can't extract text from yet — show a placeholder.
+  // Documents. Some are previewable through backend text extraction.
   doc: "document",
+  docx: "document",
   xls: "document",
+  xlsx: "document",
   ppt: "document",
+  pptx: "document",
+  odt: "document",
+  ods: "document",
+  odp: "document",
   pages: "document",
   numbers: "document",
   key: "document",
+  epub: "document",
 
   // Data
   json: "data",
@@ -133,6 +128,27 @@ export function getFileCategory(filePath: string): FileCategory {
 
 export function isTextReadable(category: FileCategory): boolean {
   return ["markdown", "text", "code", "data"].includes(category)
+}
+
+export const EXTRACTED_TEXT_PREVIEW_EXTENSIONS = new Set([
+  "pdf",
+  "doc",
+  "docx",
+  "pptx",
+  "xls",
+  "xlsx",
+  "odt",
+  "ods",
+  "odp",
+])
+
+export function getFileExtension(filePath: string): string {
+  const fileName = filePath.split(/[\\/]/).pop() ?? ""
+  return fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() ?? "" : ""
+}
+
+export function isExtractedTextPreviewFile(filePath: string): boolean {
+  return EXTRACTED_TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(filePath))
 }
 
 export function isBinary(category: FileCategory): boolean {

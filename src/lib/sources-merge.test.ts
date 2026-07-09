@@ -64,6 +64,20 @@ describe("parseSources — inline `sources: [...]`", () => {
       "test.md",
     ])
   })
+
+  it("keeps commas inside quoted source filenames", () => {
+    expect(parseSources(WRAP('sources: ["reports/Q1, revised.pdf", "测试，最终版.md"]'))).toEqual([
+      "reports/Q1, revised.pdf",
+      "测试，最终版.md",
+    ])
+  })
+
+  it("round-trips source filenames with quotes and backslashes", () => {
+    const after = writeSources(WRAP("title: X"), ['drafts/"quoted".md', "folder\\note.md"])
+
+    expect(after).toContain('sources: ["drafts/\\"quoted\\".md", "folder\\\\note.md"]')
+    expect(parseSources(after)).toEqual(['drafts/"quoted".md', "folder\\note.md"])
+  })
 })
 
 describe("parseSources — multi-line YAML list form", () => {

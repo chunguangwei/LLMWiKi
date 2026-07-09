@@ -59,10 +59,45 @@ export function parseFrontmatterArray(content: string, fieldName: string): strin
   if (!inline) return []
   const body = inline[1].trim()
   if (body === "") return []
-  return body
-    .split(",")
-    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-    .filter((s) => s.length > 0)
+  return splitInlineArray(body)
+}
+
+function splitInlineArray(body: string): string[] {
+  const out: string[] = []
+  let current = ""
+  let quote: "\"" | "'" | null = null
+  let escaped = false
+
+  for (const ch of body) {
+    if (escaped) {
+      current += ch
+      escaped = false
+      continue
+    }
+    if (quote === "\"" && ch === "\\") {
+      escaped = true
+      continue
+    }
+    if ((ch === "\"" || ch === "'") && quote === null) {
+      quote = ch
+      continue
+    }
+    if (quote === ch) {
+      quote = null
+      continue
+    }
+    if (ch === "," && quote === null) {
+      const value = current.trim()
+      if (value) out.push(value)
+      current = ""
+      continue
+    }
+    current += ch
+  }
+
+  const value = current.trim()
+  if (value) out.push(value)
+  return out
 }
 
 /**
@@ -86,7 +121,7 @@ export function writeFrontmatterArray(
 
   const [, openDelim, fmBody, closeDelim] = fmMatch
   const escapedName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const serialized = values.map((s) => `"${s}"`).join(", ")
+  const serialized = values.map(quoteInlineArrayValue).join(", ")
   const newLine = `${fieldName}: [${serialized}]`
 
   // Replace inline form in place — preserves field ordering.
@@ -109,6 +144,10 @@ export function writeFrontmatterArray(
   // Field absent — append at end of frontmatter.
   const rewritten = `${fmBody}\n${newLine}`
   return `${openDelim}${rewritten}${closeDelim}${content.slice(fmMatch[0].length)}`
+}
+
+function quoteInlineArrayValue(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 }
 
 /**

@@ -3,14 +3,22 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import "@/i18n";
+import { loadAndApplyTheme, watchSystemTheme } from "@/lib/theme";
 
-// Startup error boundary. On Windows in particular, an exception thrown before
-// React mounts (e.g. a synchronous module init that blows up) leaves the
-// webview showing a blank white screen with no clue what happened. Catch it,
-// log it, and paint a minimal diagnostic page directly into #root so the user
-// (and bug reports) can see the actual error instead of a blank window.
-function initApp() {
+function applyPlatformClass() {
+  const isTauri = "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
+  if (isTauri && navigator.userAgent.includes("Mac OS X")) {
+    document.documentElement.classList.add("platform-macos");
+  }
+}
+
+// Apply theme before render to avoid flash
+async function initApp() {
   try {
+    applyPlatformClass();
+    await loadAndApplyTheme();
+    watchSystemTheme();
+
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         <App />
