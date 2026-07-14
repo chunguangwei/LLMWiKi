@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from "react"
+import { useRef, useEffect, useCallback, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { convertFileSrc, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
@@ -14,7 +14,7 @@ import { executeIngestWrites } from "@/lib/ingest"
 import { deleteFile, openPathInProject, readFile } from "@/commands/fs"
 import { getFileName, isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { hasConfiguredAnyTxt } from "@/lib/anytxt-search"
-import type { ChatAgentEvent, ChatAgentStep, ChatUserInputRequest } from "@/lib/chat-agent-types"
+import type { ChatAgentEvent, ChatAgentFileChange, ChatAgentStep, ChatUserInputRequest } from "@/lib/chat-agent-types"
 import type { ChatMessage as LlmChatMessage, ContentBlock } from "@/lib/llm-client"
 import { FilePreview } from "@/components/editor/file-preview"
 import { WikiReader } from "@/components/editor/wiki-reader"
@@ -22,6 +22,7 @@ import { FrontmatterPanel } from "@/components/editor/frontmatter-panel"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { getFileCategory, getFileExtension, isTextReadable } from "@/lib/file-types"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { summarizeAgentFileChange } from "@/lib/agent-file-activity"
 
 type InternalChatSendOptions = ChatSendOptions & {
   suppressUserMessage?: boolean
@@ -34,12 +35,18 @@ interface BackendAgentReference {
   kind: string
   snippet?: string
   score?: number
+  knowledgeContext?: {
+    relatedTo?: string[]
+    outgoingLinks?: string[]
+    backlinks?: string[]
+  }
 }
 
 interface BackendAgentToolEvent {
   tool: string
   status: string
   detail?: string
+  timestamp?: number
 }
 
 interface BackendAgentEventPayload {
@@ -55,6 +62,9 @@ interface BackendAgentEventPayload {
     reference?: BackendAgentReference
     request?: ChatUserInputRequest
     sessionId?: string
+    path?: string
+    existedBefore?: boolean
+    previousContent?: string
   }
 }
 
@@ -79,6 +89,16 @@ export let lastQueryPages: { title: string; path: string }[] = []
 
 const AGENT_STREAM_IDLE_TIMEOUT_MS = 8 * 60 * 1000
 const AGENT_SKILL_STREAM_IDLE_TIMEOUT_MS = 15 * 60 * 1000
+const MAX_AGENT_ACTIVITY_SNAPSHOT_CHARS = 512_000
+
+async function readAgentActivitySnapshot(path: string): Promise<string | null> {
+  try {
+    const content = await readFile(path)
+    return content.length <= MAX_AGENT_ACTIVITY_SNAPSHOT_CHARS ? content : null
+  } catch {
+    return null
+  }
+}
 
 function parentDirectory(path: string): string {
   const normalized = normalizePath(path).replace(/\/+$/g, "")
@@ -250,6 +270,7 @@ function backendReferenceToMessageReference(ref: BackendAgentReference): Message
     source,
     url: isWeb ? ref.path : undefined,
     snippet: ref.snippet,
+    graphRelations: ref.knowledgeContext?.relatedTo,
   }
 }
 
@@ -277,6 +298,7 @@ function backendToolToAgentStep(event: BackendAgentToolEvent, index: number) {
       type: "routing" as const,
       message: event.detail ?? event.tool,
       status: event.status === "failed" ? "error" as const : "success" as const,
+      timestamp: event.timestamp,
     }
   }
   if (event.tool === "llm.generate") {
@@ -287,6 +309,7 @@ function backendToolToAgentStep(event: BackendAgentToolEvent, index: number) {
       status: event.status === "failed" ? "error" as const
         : event.status === "started" ? "running" as const
           : "success" as const,
+      timestamp: event.timestamp,
     }
   }
   const tool = normalizeBackendToolName(event.tool)
@@ -299,6 +322,7 @@ function backendToolToAgentStep(event: BackendAgentToolEvent, index: number) {
       : event.status === "available" ? "skipped" as const
         : event.status === "started" ? "running" as const
           : "success" as const,
+    timestamp: event.timestamp,
   }
 }
 
@@ -310,6 +334,7 @@ function normalizeBackendToolName(tool: string) {
   if (normalized === "workspace_write_file") return "project_files" as const
   if (normalized === "workspace_append_file") return "project_files" as const
   if (normalized === "skills_load") return "project_file_read" as const
+  if (normalized === "context_attach") return "project_file_read" as const
   if (normalized === "skill_read_file") return "project_file_read" as const
   if (normalized === "source_search") return "project_file_read" as const
   if (normalized === "graph_search") return "graph_search" as const
@@ -326,6 +351,7 @@ function backendToolToAgentEvent(event: BackendAgentToolEvent): ChatAgentEvent {
       stage: "routing",
       message: event.detail ?? event.tool,
       status: event.status === "failed" ? "error" : "success",
+      timestamp: event.timestamp,
     }
   }
   if (event.tool === "llm.generate") {
@@ -335,6 +361,7 @@ function backendToolToAgentEvent(event: BackendAgentToolEvent): ChatAgentEvent {
       status: event.status === "failed" ? "error"
         : event.status === "started" ? "running"
           : "success",
+      timestamp: event.timestamp,
     }
   }
   const tool = normalizeBackendToolName(event.tool)
@@ -354,6 +381,7 @@ function backendToolToAgentEvent(event: BackendAgentToolEvent): ChatAgentEvent {
       : event.status === "started" ? "running"
         : event.status === "available" ? "skipped"
           : "success",
+    timestamp: event.timestamp,
   }
 }
 
@@ -415,12 +443,16 @@ export function ChatPanel() {
   const useWebSearch = useChatStore((s) => s.useWebSearch)
   const useAnyTxtSearch = useChatStore((s) => s.useAnyTxtSearch)
   const agentMode = useChatStore((s) => s.agentMode)
+  const retrievalMode = useChatStore((s) => s.retrievalMode)
   const selectedSkills = useChatStore((s) => s.selectedSkills)
+  const selectedContextFiles = useChatStore((s) => s.selectedContextFiles)
   const disabledSkills = useChatStore((s) => s.disabledSkills)
   const setUseWebSearch = useChatStore((s) => s.setUseWebSearch)
   const setUseAnyTxtSearch = useChatStore((s) => s.setUseAnyTxtSearch)
   const setAgentMode = useChatStore((s) => s.setAgentMode)
+  const setRetrievalMode = useChatStore((s) => s.setRetrievalMode)
   const setSelectedSkills = useChatStore((s) => s.setSelectedSkills)
+  const setSelectedContextFiles = useChatStore((s) => s.setSelectedContextFiles)
 
   // Derive active messages via selector to re-render on message changes
   const allMessages = useChatStore((s) => s.messages)
@@ -429,10 +461,22 @@ export function ChatPanel() {
     : []
 
   const project = useWikiStore((s) => s.project)
+  const projectPathIndex = useWikiStore((s) => s.projectPathIndex)
   const llmConfig = useWikiStore((s) => s.llmConfig)
   const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
   const anyTxtAvailable = hasConfiguredAnyTxt(searchApiConfig.anyTxt)
   const imageInputAvailable = supportsImageInput(llmConfig)
+  const availableContextFiles = useMemo(() => {
+    if (!project) return []
+    const root = normalizePath(project.path).replace(/\/+$/g, "")
+    const files = [...projectPathIndex.filesByName.values()].flat()
+    return [...new Set(files
+      .map((entry) => normalizePath(entry.path))
+      .filter((path) => path.startsWith(`${root}/`))
+      .map((path) => path.slice(root.length + 1))
+      .filter((path) => !path.split("/").some((segment) => segment.startsWith("."))))]
+      .sort((left, right) => left.localeCompare(right))
+  }, [project, projectPathIndex])
 
   const abortRef = useRef<AbortController | null>(null)
   const activeRunSessionIdRef = useRef<string | null>(null)
@@ -645,7 +689,9 @@ export function ChatPanel() {
         useWebSearch: useChatStore.getState().useWebSearch,
         useAnyTxtSearch: useChatStore.getState().useAnyTxtSearch,
         agentMode: useChatStore.getState().agentMode,
+        retrievalMode: useChatStore.getState().retrievalMode,
         skills: useChatStore.getState().selectedSkills,
+        contextFiles: useChatStore.getState().selectedContextFiles,
         skillMode: useChatStore.getState().selectedSkills.length > 0 ? "explicit" : "auto",
       }
       const allowedSkills = enabledSkillIds(
@@ -665,7 +711,10 @@ export function ChatPanel() {
       }
 
       if (!sendOptions.suppressUserMessage) {
-        addMessageToConversation(convId, "user", text, images)
+        const messageContextFiles = project
+          ? sendOptions.contextFiles.map((path) => projectAbsolutePath(project.path, path))
+          : []
+        addMessageToConversation(convId, "user", text, images, messageContextFiles)
       }
       setStreamingConversationId(convId)
       setStreaming(true)
@@ -702,6 +751,13 @@ export function ChatPanel() {
           let accumulated = ""
           const references: MessageReference[] = []
           const backendEvents: BackendAgentToolEvent[] = []
+          const fileChanges = new Map<string, ChatAgentFileChange>()
+          const fileEditChanges: ChatAgentFileChange[] = []
+          let fileEditSequence = 0
+          const fileEditOrder = new Map<string, number>()
+          const trackedFilePaths = new Set<string>()
+          const fileActivityTasks: Promise<void>[] = []
+          const fileActivityChains = new Map<string, Promise<void>>()
           const seenRefs = new Set<string>()
           let pendingUserInputRequest: ChatUserInputRequest | undefined
           let streamFinished = false
@@ -771,7 +827,72 @@ export function ChatPanel() {
                   if (prev.some((item) => item.path === preview.path)) return prev
                   return [...prev, preview]
                 })
+                if (!trackedFilePaths.has(outputPath) && !fileChanges.has(outputPath)) {
+                  const editSequence = ++fileEditSequence
+                  const editId = `${backendRunId}:${outputPath}:${editSequence}`
+                  const editTimestamp = Date.now()
+                  fileEditOrder.set(editId, editSequence)
+                  const task = readAgentActivitySnapshot(outputPath).then((afterContent) => {
+                    if (afterContent === null) return
+                    const change = summarizeAgentFileChange({
+                      id: editId,
+                      path: outputPath,
+                      tool: "shell.exec",
+                      // Shell can create or replace multiple files, but it cannot
+                      // provide an atomic pre-write snapshot. Never guess that an
+                      // observed file is new because Undo could delete user data.
+                      beforeContent: "",
+                      afterContent,
+                      timestamp: editTimestamp,
+                    })
+                    change.operation = "modified"
+                    change.additions = 0
+                    change.deletions = 0
+                    change.diff = t("chat.agentChanges.shellSnapshotUnavailable")
+                    change.beforeContent = undefined
+                    change.afterContent = undefined
+                    fileChanges.set(outputPath, change)
+                    fileEditChanges.push(change)
+                  })
+                  fileActivityTasks.push(task)
+                }
               }
+              return
+            }
+            if (agentEvent.type === "fileChanged" && project && agentEvent.path && agentEvent.tool) {
+              const filePath = projectAbsolutePath(project.path, agentEvent.path)
+              const editSequence = ++fileEditSequence
+              const editId = `${backendRunId}:${filePath}:${editSequence}`
+              const editTimestamp = Date.now()
+              fileEditOrder.set(editId, editSequence)
+              trackedFilePaths.add(filePath)
+              const previousTask = fileActivityChains.get(filePath) ?? Promise.resolve()
+              const task = previousTask.then(async () => {
+                const afterContent = await readAgentActivitySnapshot(filePath)
+                if (afterContent === null) return
+                const originalBefore = agentEvent.existedBefore ? agentEvent.previousContent : null
+                const beforeKnown = !agentEvent.existedBefore || typeof originalBefore === "string"
+                const change = summarizeAgentFileChange({
+                  id: editId,
+                  path: filePath,
+                  tool: agentEvent.tool!,
+                  beforeContent: beforeKnown ? (originalBefore ?? null) : "",
+                  afterContent,
+                  timestamp: editTimestamp,
+                })
+                if (!beforeKnown) {
+                  change.operation = "modified"
+                  change.additions = 0
+                  change.deletions = 0
+                  change.diff = t("chat.agentChanges.diffUnavailable")
+                  change.beforeContent = undefined
+                  change.afterContent = undefined
+                }
+                fileChanges.set(filePath, change)
+                fileEditChanges.push(change)
+              })
+              fileActivityChains.set(filePath, task)
+              fileActivityTasks.push(task)
               return
             }
             if (agentEvent.type === "userInputRequired" && agentEvent.request) {
@@ -789,6 +910,7 @@ export function ChatPanel() {
                 tool: agentEvent.tool,
                 status: "started",
                 detail: agentEvent.input,
+                timestamp: Date.now(),
               }
               backendEvents.push(toolEvent)
               setAgentEvents((prev) => [...prev, backendToolToAgentEvent(toolEvent)].slice(-6))
@@ -801,6 +923,7 @@ export function ChatPanel() {
                 tool: agentEvent.tool,
                 status: failed ? "failed" : skipped ? "available" : "completed",
                 detail: agentEvent.output,
+                timestamp: Date.now(),
               }
               backendEvents.push(toolEvent)
               setAgentEvents((prev) => [...prev, backendToolToAgentEvent(toolEvent)].slice(-6))
@@ -811,6 +934,7 @@ export function ChatPanel() {
                 tool: "agent",
                 status: "failed",
                 detail: agentEvent.message,
+                timestamp: Date.now(),
               }
               backendEvents.push(toolEvent)
               setAgentEvents((prev) => [...prev, backendToolToAgentEvent(toolEvent)].slice(-6))
@@ -829,6 +953,7 @@ export function ChatPanel() {
                 sessionId: convId,
                 runId: backendRunId,
                 mode: sendOptions.agentMode,
+                retrievalMode: sendOptions.retrievalMode,
                 stream: true,
                 tools: {
                   wiki: true,
@@ -840,6 +965,7 @@ export function ChatPanel() {
                 history: activeConvMessages,
                 historyExplicit: true,
                 skills: requestSkills,
+                contextFiles: sendOptions.contextFiles,
                 skillMode: requestedSkillMode,
                 approvedShellCommands: sendOptions.approvedShellCommands ?? [],
                 shellCommand: sendOptions.shellCommand,
@@ -850,6 +976,10 @@ export function ChatPanel() {
               },
             })
             await streamDone
+            await Promise.allSettled(fileActivityTasks)
+            fileEditChanges.sort(
+              (left, right) => (fileEditOrder.get(left.id) ?? 0) - (fileEditOrder.get(right.id) ?? 0),
+            )
           } finally {
             clearStreamTimeout()
             streamUnlisten?.()
@@ -860,7 +990,14 @@ export function ChatPanel() {
             .map((ref) => ({ title: ref.title, path: ref.path }))
           const steps = backendEvents.map(backendToolToAgentStep)
           finalized = true
-          finalizeStreamForConversation(convId, accumulated, references, steps, pendingUserInputRequest)
+          finalizeStreamForConversation(
+            convId,
+            accumulated,
+            references,
+            steps,
+            pendingUserInputRequest,
+            fileEditChanges,
+          )
           if (!pendingUserInputRequest) {
             autoOpenSingleGeneratedOutput(convId, references)
           }
@@ -894,6 +1031,7 @@ export function ChatPanel() {
             runId: backendRunId,
             persistSession: false,
             mode: sendOptions.agentMode,
+            retrievalMode: sendOptions.retrievalMode,
             tools: {
               wiki: true,
               web: sendOptions.useWebSearch,
@@ -902,6 +1040,7 @@ export function ChatPanel() {
             topK: sendOptions.agentMode === "deep" ? 8 : 5,
             includeContent: sendOptions.agentMode === "deep",
             skills: requestSkills,
+            contextFiles: sendOptions.contextFiles,
             skillMode: requestedSkillMode,
             historyExplicit: true,
             approvedShellCommands: sendOptions.approvedShellCommands ?? [],
@@ -1175,7 +1314,9 @@ export function ChatPanel() {
         useWebSearch: useChatStore.getState().useWebSearch,
         useAnyTxtSearch: useChatStore.getState().useAnyTxtSearch,
         agentMode: useChatStore.getState().agentMode,
+        retrievalMode: useChatStore.getState().retrievalMode,
         skills: useChatStore.getState().selectedSkills,
+        contextFiles: useChatStore.getState().selectedContextFiles,
         skillMode: useChatStore.getState().selectedSkills.length > 0 ? "explicit" : "auto",
         approvedShellCommands: [command.trim()],
         shellCommand: command.trim(),
@@ -1205,7 +1346,9 @@ export function ChatPanel() {
       useWebSearch: useChatStore.getState().useWebSearch,
       useAnyTxtSearch: useChatStore.getState().useAnyTxtSearch,
       agentMode: useChatStore.getState().agentMode,
+      retrievalMode: useChatStore.getState().retrievalMode,
       skills: useChatStore.getState().selectedSkills,
+      contextFiles: useChatStore.getState().selectedContextFiles,
       skillMode: useChatStore.getState().selectedSkills.length > 0 ? "explicit" : "auto",
     })
     return true
@@ -1296,12 +1439,17 @@ export function ChatPanel() {
           useWebSearch={useWebSearch}
           useAnyTxtSearch={useAnyTxtSearch}
           agentMode={agentMode}
+          retrievalMode={retrievalMode}
           availableSkills={availableSkills}
           selectedSkills={selectedSkills}
+          availableContextFiles={availableContextFiles}
+          selectedContextFiles={selectedContextFiles}
           onUseWebSearchChange={setUseWebSearch}
           onUseAnyTxtSearchChange={setUseAnyTxtSearch}
           onAgentModeChange={setAgentMode}
+          onRetrievalModeChange={setRetrievalMode}
           onSelectedSkillsChange={setSelectedSkills}
+          onSelectedContextFilesChange={setSelectedContextFiles}
           anyTxtAvailable={anyTxtAvailable}
           imageInputAvailable={imageInputAvailable}
           placeholder={

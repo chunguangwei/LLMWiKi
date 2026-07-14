@@ -13,7 +13,7 @@ export function PreviewPanel() {
   const previewContentPath = useWikiStore((s) => s.previewContentPath)
   const externalPreview = useWikiStore((s) => s.externalPreview)
   const setFileContent = useWikiStore((s) => s.setFileContent)
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
+  const closePreview = useWikiStore((s) => s.closePreview)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Snapshot of what was most recently loaded from disk. Milkdown re-emits
   // `markdownUpdated` on initial parse (before the user types anything),
@@ -111,7 +111,7 @@ export function PreviewPanel() {
           {fileName}
         </span>
         <button
-          onClick={() => setSelectedFile(null)}
+          onClick={closePreview}
           className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent"
         >
           <X className="h-3.5 w-3.5" />

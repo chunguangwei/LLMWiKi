@@ -93,6 +93,12 @@ const EXT_MAP: Record<string, FileCategory> = {
   m4a: "audio",
   wma: "audio",
 
+  // Standalone Mermaid sources use the same renderer as fenced Mermaid
+  // blocks. Keep them in the code family so callers load their UTF-8 source
+  // before handing the content to FilePreview.
+  mmd: "code",
+  mermaid: "code",
+
   // PDF
   pdf: "pdf",
 
@@ -177,6 +183,8 @@ export function getCodeLanguage(filePath: string): string {
     yaml: "yaml",
     yml: "yaml",
     xml: "xml",
+    mmd: "mermaid",
+    mermaid: "mermaid",
     sh: "bash",
     bash: "bash",
     toml: "toml",

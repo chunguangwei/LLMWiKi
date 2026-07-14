@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,7 +10,9 @@ import {
   embedAllPages,
   getEmbeddingCount,
   getLastEmbeddingError,
+  getEmbeddingReindexState,
   legacyVectorRowCount,
+  subscribeEmbeddingReindexState,
 } from "@/lib/embedding"
 import { testEmbeddingConnection, testEmbeddingFunction, type ProviderTestResult } from "@/lib/connection-tests"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
@@ -19,12 +21,6 @@ interface Props {
   draft: SettingsDraft
   setDraft: DraftSetter
 }
-
-type ReindexState =
-  | { kind: "idle" }
-  | { kind: "running"; done: number; total: number }
-  | { kind: "done"; count: number }
-  | { kind: "error"; message: string }
 
 type TestState =
   | { kind: "idle" }
@@ -89,7 +85,15 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
   const [chunkCount, setChunkCount] = useState<number | null>(null)
   const [legacyCount, setLegacyCount] = useState<number>(0)
   const [lastError, setLastError] = useState<string | null>(null)
-  const [reindex, setReindex] = useState<ReindexState>({ kind: "idle" })
+  const sharedReindex = useSyncExternalStore(
+    subscribeEmbeddingReindexState,
+    getEmbeddingReindexState,
+  )
+  const reindex = "projectPath" in sharedReindex
+    && project
+    && sharedReindex.projectPath === project.path.replace(/\\/g, "/")
+    ? sharedReindex
+    : { kind: "idle" as const }
   const [testState, setTestState] = useState<TestState>({ kind: "idle" })
   const [legacyDropped, setLegacyDropped] = useState(false)
   const [headersText, setHeadersText] = useState<string>(() => headersToText(draft.embeddingExtraHeaders ?? {}))
@@ -115,26 +119,15 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
 
   const handleReindex = useCallback(async () => {
     if (!project) return
-    setReindex({ kind: "running", done: 0, total: 0 })
-    // Re-index is a destructive rebuild: pass clearExisting so the chunk
-    // table is replaced atomically (old rows are only dropped once every
-    // page re-embedded successfully). On any failure embedAllPages throws
-    // and leaves the existing index untouched — surface that as an error
-    // state rather than silently reporting "done".
     try {
-      const count = await embedAllPages(
+      await embedAllPages(
         project.path,
         embeddingConfig,
-        (done, total) => {
-          setReindex({ kind: "running", done, total })
-        },
+        undefined,
         { clearExisting: true },
       )
-      setReindex({ kind: "done", count })
       await refreshStats()
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setReindex({ kind: "error", message })
       await refreshStats()
     }
   }, [project, embeddingConfig, refreshStats])

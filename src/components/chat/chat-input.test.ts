@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   filterSlashSkillOptions,
+  findContextFileTrigger,
   findSlashSkillTrigger,
   removeSlashSkillToken,
   skillChipDeleteTarget,
@@ -29,6 +30,14 @@ const skills: ChatSkillOption[] = [
 ]
 
 describe("chat slash skill helpers", () => {
+  it("detects project-file mentions without matching email-like text", () => {
+    expect(findContextFileTrigger("Use @wiki/page", 14)).toEqual({
+      start: 4,
+      end: 14,
+      query: "wiki/page",
+    })
+    expect(findContextFileTrigger("name@example.com", 16)).toBeNull()
+  })
   it("detects slash skill tokens at the cursor", () => {
     expect(findSlashSkillTrigger("/re", 3)).toEqual({ start: 0, end: 3, query: "re" })
     expect(findSlashSkillTrigger("hi /re", 6)).toEqual({ start: 3, end: 6, query: "re" })

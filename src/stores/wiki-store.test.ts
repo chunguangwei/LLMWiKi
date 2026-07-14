@@ -10,6 +10,7 @@ describe("wiki preview store actions", () => {
       fileContent: "",
       previewContentPath: null,
       externalPreview: null,
+      previewReturnView: null,
     })
   })
 
@@ -149,6 +150,26 @@ describe("wiki preview store actions", () => {
     expect(state.fileContent).toBe("# Page")
     expect(state.previewContentPath).toBe("/project/wiki/page.md")
     expect(state.externalPreview).toBeNull()
+  })
+
+  it("returns to the originating sources view when closing a preview", () => {
+    useWikiStore.setState({ activeView: "sources", previewReturnView: null })
+
+    useWikiStore.getState().openFileInPreview(
+      "/project/raw/sources/report.pdf",
+      "extracted text",
+    )
+
+    expect(useWikiStore.getState().activeView).toBe("wiki")
+    expect(useWikiStore.getState().previewReturnView).toBe("sources")
+
+    useWikiStore.getState().closePreview()
+
+    const state = useWikiStore.getState()
+    expect(state.activeView).toBe("sources")
+    expect(state.selectedFile).toBeNull()
+    expect(state.fileContent).toBe("")
+    expect(state.previewReturnView).toBeNull()
   })
 
   it("keeps graph ui state until explicitly reset", () => {

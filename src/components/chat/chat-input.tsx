@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react"
-import { FileSearch, Globe2, ImagePlus, Send, Sparkles, Square, X } from "lucide-react"
+import { BrainCircuit, FileSearch, FileText, Globe2, ImagePlus, Send, Sparkles, Square, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import type { MessageImage } from "@/stores/chat-store"
-import type { ChatAgentMode } from "@/lib/chat-agent-types"
+import type { ChatAgentMode, ChatRetrievalMode } from "@/lib/chat-agent-types"
 import {
   MAX_IMAGE_BYTES,
   MAX_IMAGE_MB,
@@ -19,13 +19,16 @@ export interface ChatSendOptions {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
   agentMode: ChatAgentMode
+  retrievalMode: ChatRetrievalMode
   skills: string[]
+  contextFiles: string[]
   skillMode?: "auto" | "explicit"
   approvedShellCommands?: string[]
   shellCommand?: string
 }
 
 const AGENT_MODE_OPTIONS: ChatAgentMode[] = ["fast", "standard", "deep", "local_first"]
+const RETRIEVAL_MODE_OPTIONS: ChatRetrievalMode[] = ["standard", "smart"]
 
 export interface ChatSkillOption {
   id: string
@@ -51,6 +54,21 @@ export function findSlashSkillTrigger(value: string, cursor: number): SlashSkill
   if (cursor < 0 || cursor > value.length) return null
   const prefix = value.slice(0, cursor)
   const match = /(^|\s)\/([^\s/]*)$/.exec(prefix)
+  if (!match) return null
+  const query = match[2] ?? ""
+  const suffix = value.slice(cursor)
+  const suffixEnd = suffix.search(/\s/)
+  return {
+    start: cursor - query.length - 1,
+    end: suffixEnd === -1 ? value.length : cursor + suffixEnd,
+    query,
+  }
+}
+
+export function findContextFileTrigger(value: string, cursor: number): SlashSkillTrigger | null {
+  if (cursor < 0 || cursor > value.length) return null
+  const prefix = value.slice(0, cursor)
+  const match = /(^|\s)@([^\s@]*)$/.exec(prefix)
   if (!match) return null
   const query = match[2] ?? ""
   const suffix = value.slice(cursor)
@@ -118,12 +136,17 @@ interface ChatInputProps {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
   agentMode: ChatAgentMode
+  retrievalMode: ChatRetrievalMode
   availableSkills: ChatSkillOption[]
   selectedSkills: string[]
+  availableContextFiles: string[]
+  selectedContextFiles: string[]
   onUseWebSearchChange: (enabled: boolean) => void
   onUseAnyTxtSearchChange: (enabled: boolean) => void
   onAgentModeChange: (mode: ChatAgentMode) => void
+  onRetrievalModeChange: (mode: ChatRetrievalMode) => void
   onSelectedSkillsChange: (skills: string[]) => void
+  onSelectedContextFilesChange: (paths: string[]) => void
   anyTxtAvailable?: boolean
   imageInputAvailable?: boolean
   placeholder?: string
@@ -136,12 +159,17 @@ export function ChatInput({
   useWebSearch,
   useAnyTxtSearch,
   agentMode,
+  retrievalMode,
   availableSkills,
   selectedSkills,
+  availableContextFiles,
+  selectedContextFiles,
   onUseWebSearchChange,
   onUseAnyTxtSearchChange,
   onAgentModeChange,
+  onRetrievalModeChange,
   onSelectedSkillsChange,
+  onSelectedContextFilesChange,
   anyTxtAvailable = true,
   imageInputAvailable = true,
   placeholder,
@@ -154,6 +182,8 @@ export function ChatInput({
   const [cursorPosition, setCursorPosition] = useState(0)
   const [slashSkillIndex, setSlashSkillIndex] = useState(0)
   const [dismissedSlashKey, setDismissedSlashKey] = useState<string | null>(null)
+  const [contextFileIndex, setContextFileIndex] = useState(0)
+  const [dismissedContextKey, setDismissedContextKey] = useState<string | null>(null)
   const inputFrameRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -185,6 +215,25 @@ export function ChatInput({
     && slashSkillKey !== dismissedSlashKey
     && slashSkillOptions.length > 0
     && !isStreaming
+  const contextFileTrigger = useMemo(
+    () => findContextFileTrigger(value, cursorPosition),
+    [cursorPosition, value],
+  )
+  const contextFileKey = slashSkillTokenKey(value, contextFileTrigger)
+  const contextFileOptions = useMemo(() => {
+    if (!contextFileTrigger) return []
+    const query = contextFileTrigger.query.toLowerCase()
+    return availableContextFiles
+      .filter((path) => !selectedContextFiles.includes(path))
+      .filter((path) => !query || path.toLowerCase().includes(query))
+      .slice(0, 50)
+  }, [availableContextFiles, contextFileTrigger, selectedContextFiles])
+  const showContextFiles = Boolean(
+    contextFileTrigger
+    && contextFileKey !== dismissedContextKey
+    && contextFileOptions.length > 0
+    && !isStreaming
+  )
 
   useEffect(() => {
     if (!anyTxtAvailable && useAnyTxtSearch) onUseAnyTxtSearchChange(false)
@@ -196,15 +245,21 @@ export function ChatInput({
   }, [slashSkillKey])
 
   useEffect(() => {
+    setContextFileIndex(0)
+    setDismissedContextKey(null)
+  }, [contextFileKey])
+
+  useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       const frame = inputFrameRef.current
       if (!frame || frame.contains(event.target as Node)) return
       setShowSkills(false)
       if (slashSkillKey) setDismissedSlashKey(slashSkillKey)
+      if (contextFileKey) setDismissedContextKey(contextFileKey)
     }
     document.addEventListener("pointerdown", onPointerDown)
     return () => document.removeEventListener("pointerdown", onPointerDown)
-  }, [slashSkillKey])
+  }, [contextFileKey, slashSkillKey])
 
   // Validate + decode a batch of files (from paste, drop, or the file
   // picker) and append the accepted ones to `images`. Rejections set a
@@ -320,7 +375,9 @@ export function ChatInput({
       useWebSearch,
       useAnyTxtSearch,
       agentMode,
+      retrievalMode,
       skills: selectedSkills,
+      contextFiles: selectedContextFiles,
       skillMode: selectedSkills.length > 0 ? "explicit" : "auto",
     })
     setValue("")
@@ -330,7 +387,7 @@ export function ChatInput({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
     }
-  }, [agentMode, imageInputAvailable, images, isStreaming, onSend, selectedSkills, t, useAnyTxtSearch, useWebSearch, value])
+  }, [agentMode, imageInputAvailable, images, isStreaming, onSend, retrievalMode, selectedContextFiles, selectedSkills, t, useAnyTxtSearch, useWebSearch, value])
 
   const applySlashSkill = useCallback(
     (skill: ChatSkillOption) => {
@@ -356,6 +413,22 @@ export function ChatInput({
     [onSelectedSkillsChange, selectedSkills, slashSkillTrigger, value],
   )
 
+  const applyContextFile = useCallback((path: string) => {
+    const trigger = contextFileTrigger
+    if (!trigger) return
+    const edit = removeSlashSkillToken(value, trigger)
+    setValue(edit.value)
+    setCursorPosition(edit.cursor)
+    setDismissedContextKey(null)
+    onSelectedContextFilesChange([...selectedContextFiles, path])
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+      textarea.focus()
+      textarea.setSelectionRange(edit.cursor, edit.cursor)
+    })
+  }, [contextFileTrigger, onSelectedContextFilesChange, selectedContextFiles, value])
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // Don't submit on the Enter that commits an IME candidate —
@@ -374,6 +447,29 @@ export function ChatInput({
         e.stopPropagation()
         removeSelectedSkill(chipDeleteTarget === "last" ? selectedSkills[selectedSkills.length - 1] : selectedSkills[0])
         return
+      }
+      if (showContextFiles) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault()
+          setContextFileIndex((index) => Math.min(index + 1, contextFileOptions.length - 1))
+          return
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault()
+          setContextFileIndex((index) => Math.max(index - 1, 0))
+          return
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+          e.preventDefault()
+          const path = contextFileOptions[contextFileIndex] ?? contextFileOptions[0]
+          if (path) applyContextFile(path)
+          return
+        }
+        if (e.key === "Escape") {
+          e.preventDefault()
+          if (contextFileKey) setDismissedContextKey(contextFileKey)
+          return
+        }
       }
       if (showSlashSkills) {
         if (e.key === "Enter" && e.shiftKey) {
@@ -410,7 +506,7 @@ export function ChatInput({
         handleSend()
       }
     },
-    [applySlashSkill, handleSend, removeSelectedSkill, selectedSkills, showSlashSkills, slashSkillIndex, slashSkillKey, slashSkillOptions, value],
+    [applyContextFile, applySlashSkill, contextFileIndex, contextFileKey, contextFileOptions, handleSend, removeSelectedSkill, selectedSkills, showContextFiles, showSlashSkills, slashSkillIndex, slashSkillKey, slashSkillOptions, value],
   )
 
   const searchToggleClass = (active: boolean) =>
@@ -475,6 +571,24 @@ export function ChatInput({
           </p>
         )}
         <div className="flex flex-wrap items-start gap-1 px-1">
+          {selectedContextFiles.map((path) => (
+            <span
+              key={path}
+              className="group mt-1 inline-flex h-7 max-w-[18rem] items-center gap-1.5 rounded-md border border-blue-500/25 bg-blue-500/10 px-2 text-xs font-medium text-blue-700 dark:text-blue-300"
+              title={path}
+            >
+              <FileText className="h-3 w-3 shrink-0" />
+              <span className="truncate">{path.split("/").pop() ?? path}</span>
+              <button
+                type="button"
+                onClick={() => onSelectedContextFilesChange(selectedContextFiles.filter((item) => item !== path))}
+                className="rounded p-0.5 opacity-70 hover:bg-blue-500/15 group-hover:opacity-100"
+                title={t("chat.removeContextFile", { name: path })}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
           {selectedSkillOptions.map((skill) => (
             <span
               key={skill.id}
@@ -542,6 +656,29 @@ export function ChatInput({
                   </button>
                 )
               })}
+            </div>
+          </div>
+        )}
+        {showContextFiles && (
+          <div className="absolute bottom-[4.75rem] left-4 right-4 z-30 max-w-xl rounded-md border border-border bg-popover p-1.5 text-popover-foreground shadow-lg">
+            <div className="px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+              {t("chat.contextFileHint")}
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              {contextFileOptions.map((path, index) => (
+                <button
+                  key={path}
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    applyContextFile(path)
+                  }}
+                  className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs ${index === contextFileIndex ? "bg-accent" : "hover:bg-accent/60"}`}
+                >
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">{path}</span>
+                </button>
+              ))}
             </div>
           </div>
         )}
@@ -673,6 +810,36 @@ export function ChatInput({
                   </div>
                 </div>
               )}
+            </div>
+            <div
+              className="inline-flex h-7 items-center rounded-md border border-border/70 bg-muted/30 p-0.5"
+              role="radiogroup"
+              aria-label={t("chat.retrievalMode")}
+              title={t("chat.retrievalModeHint")}
+            >
+              <BrainCircuit className="mx-1 h-3.5 w-3.5 text-muted-foreground" />
+              {RETRIEVAL_MODE_OPTIONS.map((retrieval) => {
+                const active = retrievalMode === retrieval
+                return (
+                  <button
+                    key={retrieval}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    disabled={isStreaming}
+                    onClick={() => onRetrievalModeChange(retrieval)}
+                    className={`h-6 rounded px-2 text-xs font-medium transition-colors ${
+                      active
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                    } disabled:pointer-events-none disabled:opacity-50`}
+                  >
+                    {retrieval === "smart"
+                      ? t("chat.retrievalModes.smart")
+                      : t("chat.retrievalModes.standard")}
+                  </button>
+                )
+              })}
             </div>
             <div
               className="inline-flex h-7 items-center rounded-md border border-border/70 bg-muted/30 p-0.5"

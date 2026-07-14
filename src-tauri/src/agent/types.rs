@@ -15,6 +15,22 @@ impl Default for AgentMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRetrievalMode {
+    // Preserve the established single-pass/planner-driven retrieval behavior.
+    Standard,
+    // Let the Agent iteratively close evidence gaps under a strict retrieval
+    // budget and no-progress guard.
+    Smart,
+}
+
+impl Default for AgentRetrievalMode {
+    fn default() -> Self {
+        Self::Standard
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentToolOptions {
@@ -77,6 +93,8 @@ pub struct AgentChatRequest {
     #[serde(default)]
     pub mode: AgentMode,
     #[serde(default)]
+    pub retrieval_mode: AgentRetrievalMode,
+    #[serde(default)]
     pub tools: AgentToolOptions,
     #[serde(default)]
     pub top_k: Option<usize>,
@@ -93,6 +111,12 @@ pub struct AgentChatRequest {
     pub history_explicit: bool,
     #[serde(default)]
     pub skills: Vec<String>,
+    // Explicit project-relative files selected by the user in the chat
+    // composer. The context loader re-validates project containment and applies
+    // strict count/character budgets; callers cannot use this as an arbitrary
+    // filesystem read channel.
+    #[serde(default)]
+    pub context_files: Vec<String>,
     #[serde(default)]
     pub skill_mode: AgentSkillMode,
     // Security boundary: these commands must come from an explicit trusted
@@ -119,12 +143,14 @@ impl Default for AgentChatRequest {
             session_id: None,
             run_id: None,
             mode: AgentMode::default(),
+            retrieval_mode: AgentRetrievalMode::default(),
             tools: AgentToolOptions::default(),
             top_k: None,
             include_content: None,
             history: Vec::new(),
             history_explicit: false,
             skills: Vec::new(),
+            context_files: Vec::new(),
             skill_mode: AgentSkillMode::default(),
             approved_shell_commands: Vec::new(),
             shell_command: None,
@@ -152,6 +178,35 @@ pub struct AgentReference {
     pub snippet: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_context: Option<AgentKnowledgeContext>,
+}
+
+/// Lightweight graph and provenance briefing attached to wiki retrievals.
+/// Keep this bounded: the complete page body is already available through the
+/// read/search result and duplicating an unbounded graph would waste context.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentKnowledgeContext {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_to: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outgoing_links: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backlinks: Vec<String>,
+    pub link_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_version: Option<AgentVersionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentVersionSummary {
+    pub timestamp: i64,
+    pub author: String,
+    pub tool: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -235,7 +290,8 @@ mod tests {
         let req: AgentChatRequest = serde_json::from_value(serde_json::json!({
             "message": "hello",
             "sessionId": "s1",
-            "topK": 7
+            "topK": 7,
+            "contextFiles": ["wiki/page.md"]
         }))
         .unwrap();
 
@@ -243,7 +299,9 @@ mod tests {
         assert_eq!(req.session_id.as_deref(), Some("s1"));
         assert!(req.run_id.is_none());
         assert_eq!(req.mode, AgentMode::Standard);
+        assert_eq!(req.retrieval_mode, AgentRetrievalMode::Standard);
         assert_eq!(req.top_k, Some(7));
+        assert_eq!(req.context_files, vec!["wiki/page.md".to_string()]);
         assert_eq!(req.skill_mode, AgentSkillMode::Explicit);
         assert!(req.tools.wiki);
         assert!(!req.tools.web);
@@ -256,6 +314,7 @@ mod tests {
         let req: AgentChatRequest = serde_json::from_value(serde_json::json!({
             "message": "hello",
             "mode": "local_first",
+            "retrievalMode": "smart",
             "tools": {
                 "wiki": false,
                 "web": true,
@@ -265,6 +324,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(req.mode, AgentMode::LocalFirst);
+        assert_eq!(req.retrieval_mode, AgentRetrievalMode::Smart);
         assert!(!req.tools.wiki);
         assert!(req.tools.web);
         assert!(req.tools.anytxt);

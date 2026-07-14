@@ -574,6 +574,8 @@ fn tray_available<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
 // and decryption key. Do NOT change it. Locked since 0.4.10.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    apply_linux_webkit_compat_env();
+
     let mut builder = tauri::Builder::default();
 
     // Single-instance guard MUST be the first plugin registered. When a
@@ -706,6 +708,10 @@ pub fn run() {
             commands::fs::write_file_base64,
             commands::fs::write_file_atomic,
             commands::fs::write_binary_file,
+            commands::fs::apply_text_selection_edit,
+            commands::fs::create_missing_wiki_page,
+            commands::file_history::list_file_history,
+            commands::file_history::restore_file_history,
             commands::fs::list_directory,
             commands::fs::copy_file,
             commands::fs::copy_directory,
@@ -727,6 +733,7 @@ pub fn run() {
             commands::project::open_path_in_project,
             commands::search::search_project,
             commands::search::embedding_fetch,
+            commands::search::get_page_links,
             commands::external_search::web_search,
             commands::external_search::anytxt_search,
             clip_server_status,
@@ -858,3 +865,18 @@ pub fn run() {
             let _ = (app, event); // suppress unused warnings on non-macOS
         });
 }
+
+#[cfg(target_os = "linux")]
+fn apply_linux_webkit_compat_env() {
+    // WebKitGTK can crash during startup on some Wayland compositors
+    // (reported on Fedora 44) unless compositing mode is disabled before
+    // the WebView is created. Keep this as a Linux-only default and do not
+    // override an explicit user setting so advanced users and packagers can
+    // opt back into the platform default if their stack supports it.
+    if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn apply_linux_webkit_compat_env() {}

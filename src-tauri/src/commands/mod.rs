@@ -6,6 +6,7 @@ pub mod config_backup;
 pub mod config_crypto;
 pub mod external_search;
 pub mod extract_images;
+pub mod file_history;
 pub mod file_sync;
 pub mod github_backup;
 pub mod fs;

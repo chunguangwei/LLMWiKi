@@ -26,6 +26,28 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.4",
+    date: "2026-07-14",
+    highlights: {
+      en: [
+        "Synced with upstream v0.6.1–v0.6.3: smart retrieval mode, in-page selection assistant, expanded in-page knowledge editing, persistent file history and restore, enriched agent content interactions, document and media preview expansion, and ingest lifecycle fixes.",
+        "Improved Agent context so selected files, Skills, project knowledge, and retrieval evidence remain available throughout a turn.",
+        "Expanded Hybrid Search with adaptive keyword, vector, and knowledge-graph retrieval, including graph-aware references and an interactive local graph preview.",
+        "Added Agent file activity with per-file change summaries, diffs, and guarded undo when the file has not changed again.",
+        "Added file history comparison and restore controls for recorded project file versions.",
+        "Kept all fork features on top: .llmwiki import/export, scheduled web refresh, GitHub versioned backup, encrypted config backup, 34-type comprehensive schema, embedded user manual, and one-click language switch.",
+      ],
+      zh: [
+        "同步上游 v0.6.1–v0.6.3：智能检索模式、页内选择助手、页内知识编辑扩展、文件历史持久化与恢复、Agent 内容交互增强、文档与媒体预览扩展、ingest 生命周期修复。",
+        "增强 Agent 上下文能力，选中的文件、Skill、项目知识和检索证据可在整轮执行中持续使用。",
+        "扩展 Hybrid Search：自适应融合关键词、向量与知识图谱召回，并新增图谱引用和可交互的局部知识图谱预览。",
+        "新增 Agent 文件修改记录，支持按文件查看变更摘要、Diff，以及在文件未被再次修改时安全撤销。",
+        "新增文件历史比较和恢复功能，可查看并恢复已记录的项目文件版本。",
+        "保留全部 fork 自定义功能：.llmwiki 导入导出、页面级定时联网刷新、GitHub 版本化备份、加密配置备份、34 类综合 schema、内嵌用户手册、一键切换语言。",
+      ],
+    },
+  },
+  {
     version: "0.6.1",
     date: "2026-07-09",
     highlights: {

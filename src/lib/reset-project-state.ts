@@ -27,6 +27,7 @@ export async function resetProjectState(): Promise<void> {
     useWebSearch: false,
     useAnyTxtSearch: false,
     agentMode: "standard",
+    retrievalMode: "standard",
     selectedSkills: [],
     disabledSkills: [],
   })

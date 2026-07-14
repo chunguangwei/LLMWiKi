@@ -85,6 +85,58 @@
     "knowledge": "Knowledge",
     "files": "Files"
   },
+  "editor": {
+    "edit": "Edit",
+    "done": "Done",
+    "editRaw": "Edit raw Markdown",
+    "doneEditing": "Done editing",
+    "selection": {
+      "askAgent": "Ask Agent about selection",
+      "placeholder": "Explain, rewrite, shorten...",
+      "send": "Send",
+      "ask": "Ask",
+      "edit": "Edit",
+      "generating": "Generating...",
+      "stop": "Stop",
+      "askAgain": "Ask again",
+      "askOnlyHint": "This rendered selection cannot be mapped to one exact Markdown source range. You can ask about it, but editing is disabled to prevent changing the wrong text.",
+      "wordDiff": "Word-level changes",
+      "regenerate": "Regenerate",
+      "closeReference": "Close",
+      "requestFailed": "The selection assistant could not complete this request.",
+      "applyFailed": "The selected text could not be updated.",
+      "sourceChanged": "The file changed after this text was selected. Select the text again before applying the edit.",
+      "referenceFailed": "The referenced page could not be opened.",
+      "emptyResponse": "The model returned no answer. Please try again."
+    },
+    "pageLinks": {
+      "button": "Links",
+      "title": "Page links",
+      "outgoing": "Outgoing links",
+      "backlinks": "Backlinks",
+      "missing": "Missing links",
+      "noOutgoing": "This page has no outgoing wiki links.",
+      "noBacklinks": "No other page links here yet.",
+      "noMissing": "All wiki links resolve to existing pages.",
+      "create": "Create",
+      "draft": "Agent draft",
+      "loadFailed": "Page links could not be loaded.",
+      "createFailed": "The missing page could not be created.",
+      "emptyDraftError": "The model returned an empty draft."
+    },
+    "rawMarkdownEditor": "Raw Markdown editor",
+    "refresh": {
+      "title": "Web refresh",
+      "intervalLabel": "every {{n}}d",
+      "never": "Never refreshed",
+      "result": {
+        "ok": "Done — page updated",
+        "no-change": "No change detected",
+        "pending-review": "Pending review",
+        "error": "Refresh failed"
+      }
+    }
+  },
   "research": {
     "title": "Deep Research",
     "notConfigured": "Deep Research sources are not configured. Go to Settings → External Information Sources to configure Web Search or AnyTXT.",
@@ -195,6 +247,33 @@
     "sourceCount_plural": "{{count}} sources"
   },
   "chat": {
+    "selectionEdit": {
+      "title": "Proposed selection edit",
+      "reviewHint": "Review before writing",
+      "original": "Original",
+      "replacement": "Replacement",
+      "accept": "Accept",
+      "reject": "Reject",
+      "applying": "Applying..."
+    },
+    "agentChanges": {
+      "title": "Agent file changes",
+      "taskTitle": "Agent activity",
+      "fileCount": "{{count}} file",
+      "fileCount_other": "{{count}} files",
+      "editCount": "{{count}} edit",
+      "editCount_other": "{{count}} edits",
+      "editNumber": "edit {{number}}",
+      "expandDiff": "Expand file diff",
+      "collapseDiff": "Collapse file diff",
+      "undo": "Undo this Agent change",
+      "undoUnavailable": "Undo is unavailable after the app restarts",
+      "diffUnavailable": "Diff unavailable because the previous file was too large to snapshot safely.",
+      "shellSnapshotUnavailable": "This file was changed by a shell command. A safe before-write snapshot is unavailable.",
+      "undoConflict": "Undo stopped because the file changed after the Agent wrote it."
+    },
+    "contextFileHint": "Add project files to this conversation",
+    "removeContextFile": "Remove {{name}} from context",
     "placeholder": "Ask about your wiki...",
     "ingestPlaceholder": "Discuss the source or ask follow-up questions...",
     "saveToWiki": "Save to Wiki",
@@ -234,6 +313,12 @@
       "agents": "Agents"
     },
     "agentMode": "Agent mode",
+    "retrievalMode": "Retrieval mode",
+    "retrievalModeHint": "Standard keeps the existing retrieval behavior. Smart iteratively closes evidence gaps under a strict budget.",
+    "retrievalModes": {
+      "standard": "Standard retrieval",
+      "smart": "Smart retrieval"
+    },
     "agentModes": {
       "fast": "Fast",
       "standard": "Standard",
@@ -1029,7 +1114,21 @@
   },
   "preview": {
     "selectFile": "Select a file to preview",
-    "notAvailable": "Preview not available for this file type"
+    "notAvailable": "Preview not available for this file type",
+    "viewAsText": "View as text",
+    "loadingText": "Loading text...",
+    "openWithSystem": "Open with system app",
+    "showSource": "Show source",
+    "showRendered": "Show rendered preview",
+    "reload": "Reload preview",
+    "history": "File history",
+    "historyLoading": "Loading...",
+    "historyEmpty": "No recorded versions yet.",
+    "historySelect": "Select a version to compare.",
+    "historyRestore": "Restore this version",
+    "pdfText": "Text",
+    "pdfDocument": "PDF",
+    "pdfPage": "Page"
   },
   "find": {
     "placeholder": "Find in page",
@@ -1137,18 +1236,5 @@
     "minutesAgo": "{{count}} min ago",
     "hoursAgo": "{{count}} h ago",
     "daysAgo": "{{count}} d ago"
-  },
-  "editor": {
-    "refresh": {
-      "title": "Web refresh",
-      "intervalLabel": "every {{n}}d",
-      "never": "Never refreshed",
-      "result": {
-        "ok": "Done — page updated",
-        "no-change": "No change detected",
-        "pending-review": "Pending review",
-        "error": "Refresh failed"
-      }
-    }
   }
 }

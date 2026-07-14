@@ -35,6 +35,8 @@ import type { ChatAgentEvent, ChatAgentEventStage, ChatAgentStep, ChatUserInputF
 import { filterRawSourceTree } from "@/lib/source-filter"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { getFileCategory, getFileExtension, isTextReadable } from "@/lib/file-types"
+import { AgentFileActivity } from "@/components/chat/agent-file-activity"
+import { ReferenceKnowledgeGraph } from "@/components/chat/reference-knowledge-graph"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -119,6 +121,20 @@ function ChatMessageImpl({
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
       </div>
       <div className="max-w-[80%] flex flex-col gap-1.5">
+        {isUser && message.contextFiles && message.contextFiles.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-1">
+            {message.contextFiles.map((path) => (
+              <span
+                key={path}
+                className="inline-flex h-7 max-w-[18rem] items-center gap-1.5 rounded-md border border-blue-500/25 bg-blue-500/10 px-2 text-xs font-medium text-blue-700 dark:text-blue-300"
+                title={path}
+              >
+                <FileText className="h-3 w-3 shrink-0" />
+                <span className="truncate">@{getFileName(path)}</span>
+              </span>
+            ))}
+          </div>
+        )}
         {isUser && message.images && message.images.length > 0 && (
           <div className={`flex flex-wrap gap-1.5 ${isUser ? "justify-end" : ""}`}>
             {message.images.map((img, i) => (
@@ -133,8 +149,12 @@ function ChatMessageImpl({
           </div>
         )}
         {isAssistant && (
-          <SavedAgentActivity
+          (message.agentSteps?.some((step) => step.type !== "final") ?? false)
+          || (message.agentFileChanges?.length ?? 0) > 0
+        ) && (
+          <AgentTurnActivity
             steps={message.agentSteps ?? []}
+            changes={message.agentFileChanges ?? []}
             canApproveShellCommand={Boolean(isLastAssistant && onApproveShellCommand)}
             onApproveShellCommand={(command) => onApproveShellCommand?.(command, message.id)}
           />
@@ -188,14 +208,49 @@ function ChatMessageImpl({
   )
 }
 
-function SavedAgentActivity({
+function AgentTurnActivity({
   steps,
+  changes,
   canApproveShellCommand,
   onApproveShellCommand,
 }: {
   steps: ChatAgentStep[]
+  changes: NonNullable<DisplayMessage["agentFileChanges"]>
   canApproveShellCommand?: boolean
   onApproveShellCommand?: (command: string) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <section className="rounded-md border border-border/50 bg-background/50" aria-label={t("chat.agentChanges.taskTitle")}>
+      <div className="flex items-center justify-between border-b border-border/50 px-2.5 py-1.5">
+        <span className="text-xs font-medium">{t("chat.agentChanges.taskTitle")}</span>
+        {changes.length > 0 && (
+          <span className="text-[10px] text-muted-foreground">
+            {t("chat.agentChanges.fileCount", { count: new Set(changes.map((change) => change.path)).size })}
+          </span>
+        )}
+      </div>
+      <SavedAgentActivity
+        steps={steps}
+        canApproveShellCommand={canApproveShellCommand}
+        onApproveShellCommand={onApproveShellCommand}
+        embedded
+      />
+      {changes.length > 0 && <AgentFileActivity changes={changes} embedded />}
+    </section>
+  )
+}
+
+function SavedAgentActivity({
+  steps,
+  canApproveShellCommand,
+  onApproveShellCommand,
+  embedded = false,
+}: {
+  steps: ChatAgentStep[]
+  canApproveShellCommand?: boolean
+  onApproveShellCommand?: (command: string) => void
+  embedded?: boolean
 }) {
   const { t } = useTranslation()
   const events = useMemo<ChatAgentEvent[]>(() => steps
@@ -213,11 +268,12 @@ function SavedAgentActivity({
       message: step.message,
       count: step.count,
       status: step.status,
+      timestamp: step.timestamp,
     })), [steps])
   const shellCommand = useMemo(() => extractShellApprovalCommand(steps), [steps])
   if (events.length === 0 && !shellCommand) return null
   return (
-    <div className="space-y-1 rounded-md border border-border/50 bg-background/50 px-2 py-1">
+    <div className={embedded ? "space-y-1 border-b border-border/40 px-2 py-1.5" : "space-y-1 rounded-md border border-border/50 bg-background/50 px-2 py-1"}>
       {events.length > 0 && <AgentActivity events={events} compact />}
       {shellCommand && canApproveShellCommand && (
         <button
@@ -1064,6 +1120,7 @@ function CitedReferencesPanel({
             )}
           </button>
           <div className="px-2 pb-1.5">
+        <ReferenceKnowledgeGraph references={citedPages} onOpenReference={openCitedPage} />
         {visiblePages.map((page, i) => {
           const refType = getRefType(page.path, page)
           const config = REF_TYPE_CONFIG[refType] ?? REF_TYPE_CONFIG.source
@@ -1293,6 +1350,15 @@ function AgentActivity({ events, compact = false }: { events: ChatAgentEvent[]; 
                 <span className="text-muted-foreground"> · {t("chat.agent.resultCount", { count: event.count })}</span>
               ) : null}
             </span>
+            {event.timestamp && (
+              <time className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground/70">
+                {new Date(event.timestamp).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </time>
+            )}
           </div>
         )
       })}

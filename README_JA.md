@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | <a href="README_CN.md">中文</a> | 日本語
+  <a href="README.md">English</a> | <a href="README_CN.md">中文</a> | 日本語 | <a href="README_KO.md">한국어</a>
 </p>
 
 ---
@@ -28,18 +28,11 @@
   <img src="assets/overview.jpg" width="100%" alt="概要">
 </p>
 
-> 📦 **これは LLMWiKi fork です** — nashsu/llm_wiki に複数の機能を追加：
-> **`.llmwiki` ワンクリック import / export**、**ページ単位の定期 Web リフレッシュ**、
-> **クラウド共有 / チーム配備に対応したローカル状態分離**、
-> **中国語 i18n 完全化 + ワンクリック言語切替**、**34 種類の総合スキーマ + スマート分割**、
-> **セルフホスト型インプレース自動更新**、**暗号化された設定バックアップ**、**docx/Office ソースプレビュー**、**編集可能なページタイプセレクタ**。
-> 詳細は外側の [`UPSTREAM.md`](UPSTREAM.md) と [`docs/features.md`](docs/features.md) を参照。
-> フォークの追加機能は下記 §19〜27 にあります。
-
 ## 主な機能
 
 - **2 段階 Chain-of-Thought インジェスト** — LLM がまず分析を行い、その後ソース追跡可能な Wiki ページを生成。増分キャッシュ対応
 - **マルチモーダル画像インジェスト** — PDF 内の埋め込み画像を抽出し、Vision LLM で事実ベースのキャプションを生成。画像対応の検索結果、ライトボックスプレビュー、元資料の該当位置へのジャンプに対応
+- **任意の MinerU PDF 解析** — 表、数式、複雑なレイアウトを含む PDF には MinerU クラウド解析を利用可能。既定では内蔵ローカル解析を使用
 - **4 シグナル知識グラフ** — 直接リンク、ソース重複、Adamic-Adar、タイプ親和性による関連度モデル
 - **Louvain コミュニティ検出** — 知識クラスタを自動発見し、凝集度を評価
 - **グラフインサイト** — 意外な関連や知識の空白を検出し、ワンクリックで Deep Research を起動
@@ -48,17 +41,19 @@
 - **フォルダインポート** — ディレクトリ構造を保持した再帰インポート。フォルダパスを LLM の分類ヒントとして利用
 - **ソースフォルダの自動監視** — `raw/sources/` の外部変更を検出し、インジェスト・削除クリーンアップを同期
 - **Deep Research** — LLM が検索トピックを最適化生成し、Tavily / SerpApi / SearXNG によるマルチクエリ Web 検索結果を自動で Wiki 化
+- **Rust バックエンド Chat Agent** — Wiki / Source / Graph / Web 検索、workspace ファイル生成、shell 承認、キャンセル、ストリーミング tool event に対応するツール実行型チャット runtime
+- **Agent Skills** — ローカル `SKILL.md` フォルダをスキャンして有効化し、チャット内の `/skill` で選択。Agent が必要に応じて Skill 指示を読み込みます
+- **生成物プレビュー** — Agent が作成した Markdown、HTML、画像などの workspace ファイルを生成物として表示し、プレビューとフォルダをすばやく開く操作に対応
+- **Mermaid 図表レンダリング** — チャットとプレビューで Mermaid コードブロックを直接描画し、構文エラーはコンパクトなエラーカードで表示
 - **非同期レビューシステム** — LLM が人間の判断を要する項目を作成し、定義済みアクションと事前生成された検索クエリを付与
 - **Chrome Web Clipper** — Web ページをワンクリックで取り込み、知識ベースへ自動インジェスト
-- **ローカル HTTP API + AI Agent Skill** — `127.0.0.1:19828` の JSON API（Token 認証）でハイブリッド検索、ファイル読み取り、グラフ探索、ソース再スキャンを提供。専用の [agent skill](https://github.com/chunguangwei/llm_wiki_skill) はワンコマンドで Claude Code / Codex に追加可能（`npx skills add …`）
-- **チャットから Wiki を修正** — アシスタントにページの訂正・更新を頼むと、差分カードとして提案され、ワンクリックで適用できます（適用前に `.llm-wiki/page-history/` へ自動バックアップ、作成日は保持）。どのページを編集すべきか判断できない場合は、提案がレビューキューへ回されます
-- **長大ソースのチャンク分割インジェスト** — モデルのコンテキスト予算を超えるソースは、黙って切り捨てる代わりに、重複付きの意味的チャンクに分割して解析し、再開可能なチェックポイントを保持します。生成出力の上限もコンテキストウィンドウに応じて調整されます
+- **ローカル HTTP API + MCP Server + AI Agent Skill** — `127.0.0.1:19828` の JSON API と同梱 MCP Server でハイブリッド検索、ファイル読み取り、グラフ探索、ソース再スキャンを提供。専用の [agent skill](https://github.com/nashsu/llm_wiki_skill) はワンコマンドで Claude Code / Codex に追加可能（`npx skills add …`）
 
 ## これは何ですか？
 
 LLM Wiki は、手元の文書を整理された相互リンク付きの知識ベースへ自動変換するクロスプラットフォームのデスクトップアプリです。従来の RAG のように毎回ゼロから検索して回答するのではなく、LLM が資料から**永続的な Wiki を増分的に構築・維持**します。知識は一度コンパイルされた後は継続的に更新され、質問のたびに再推論する必要はありません。
 
-このプロジェクトは、LLM を使ってパーソナル知識ベースを構築する方法論である [Karpathy の LLM Wiki パターン](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) に基づいています。そのコアアイデアを実用的なデスクトップアプリとして実装し、大幅な拡張を加えました。
+このプロジェクトは、LLM を使ってパーソナル知識ベースを構築する方法論である [Karpathy の LLM Wiki パターン](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) に基づいています。llm_wiki は [nash_su](https://x.com/nash_su) によって作成・メンテナンスされ、コアアイデアを実用的なデスクトップアプリとして実装し、大幅な拡張を加えています。
 
 <p align="center">
   <img src="assets/llm_wiki_arch.jpg" width="100%" alt="LLM Wiki アーキテクチャ">
@@ -254,7 +249,17 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **再生成** — 最後の回答をワンクリックで再生成（直近の assistant + user メッセージ対を削除して再送信）
 - **Wiki に保存** — 価値のある回答を `wiki/queries/` に保管し、自動インジェストでエンティティ／概念を知識ネットワークに抽出
 
-### 9. 思考過程（Thinking / Reasoning）の表示
+### 9. Rust バックエンド Chat Agent と Skills
+
+元の設計にはありません。チャットはブラウザ内だけの TypeScript ループではなく、Rust バックエンドの Agent runtime で実行されます。
+
+- **ツール実行型 Agent** — Wiki 検索、Source 検索、Graph 検索、Web 検索、AnyTXT、workspace ファイルツール、承認済み shell コマンド、Skill ファイル読み取りを選択可能
+- **Skill 管理** — プロジェクト単位・ユーザー単位の Skill フォルダをスキャンし、有効／無効を切り替え、会話ごとに `/skill` 補完で Skill を選択
+- **生成 workspace 出力** — Agent ツールが作成したファイルは `agent-workspace/` 配下に保存され、生成物として表示・プレビュー・フォルダオープンできます
+- **ユーザー入力フォーム** — Skill は単一選択、複数選択、自由入力などの構造化入力を要求でき、Skill ごとの専用 UI をハードコードする必要はありません
+- **より安全な実行モデル** — プロジェクト workspace 内のコマンドはスムーズに継続し、外部 shell コマンドは引き続き明示的な承認を要求します
+
+### 10. 思考過程（Thinking / Reasoning）の表示
 
 元の設計にはありません。`<think>` ブロックを出力する LLM（DeepSeek、QwQ など）向けです。
 
@@ -262,16 +267,18 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **デフォルトで折りたたみ** — 完了後は思考ブロックを隠し、クリックで展開
 - **視覚的な分離** — 思考内容はメインの回答とは別のスタイルで表示
 
-### 10. KaTeX による数式レンダリング
+### 11. Markdown レンダリング: KaTeX 数式と Mermaid 図表
 
-元の設計にはありません。全画面で LaTeX 数式をサポートします。
+元の設計にはありません。チャットとプレビューでよりリッチな Markdown 表示をサポートします。
 
 - **KaTeX レンダリング** — インライン `$...$` とブロック `$$...$$` の数式を remark-math + rehype-katex で描画
 - **Milkdown 数式プラグイン** — プレビューエディタが @milkdown/plugin-math でネイティブに数式を描画
 - **自動検出** — むき出しの `\begin{aligned}` などの LaTeX 環境を自動的に `$$` で囲む
 - **Unicode フォールバック** — 数式ブロック外のシンプルなインライン表記用に 100 以上の記号マッピング（α, ∑, →, ≤ など）
+- **Mermaid コードブロック** — fenced `mermaid` ブロックをフローチャート、シーケンス図など Mermaid 対応の図表として直接描画
+- **コンパクトな Mermaid エラー** — 構文エラーは小さなエラーカード内に収め、チャット画面に生の parser 出力を広げません
 
-### 11. レビューシステム（非同期 Human-in-the-Loop）
+### 12. レビューシステム（非同期 Human-in-the-Loop）
 
 元の設計ではインジェスト中に人間が関与することが推奨されています。本プロジェクトでは**非同期レビューキュー**を追加しました。
 
@@ -280,7 +287,7 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **インジェスト時に検索クエリを生成** — LLM がレビュー項目ごとに最適化された Web 検索クエリを事前生成
 - ユーザーは好きなタイミングでレビュー可能。インジェスト処理を妨げない
 
-### 12. Deep Research
+### 13. Deep Research
 
 <p align="center">
   <img src="assets/1-deepresearch.jpg" width="100%" alt="Deep Research">
@@ -299,7 +306,7 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **タスクキュー** — 最大 3 件の同時実行
 - **リサーチパネル** — 高さが動的に変わる専用サイドバー。ストリーミング進捗をリアルタイム表示
 
-### 13. ブラウザ拡張（Web Clipper）
+### 14. ブラウザ拡張（Web Clipper）
 
 <p align="center">
   <img src="assets/4-chrome_extension_webclipper.jpg" width="100%" alt="Chrome 拡張 Web Clipper">
@@ -315,13 +322,13 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **クリップ監視** — 3 秒ごとに新しいクリップをポーリングして自動処理
 - **オフラインプレビュー** — アプリが起動していなくても抽出済みコンテンツを表示
 
-### 14. 複数フォーマットのドキュメントサポート
+### 15. 複数フォーマットのドキュメントサポート
 
 元の設計はテキスト／Markdown が中心です。本プロジェクトではドキュメントの意味構造を保持した構造化抽出に対応しています。
 
 | フォーマット | 抽出方法 |
 |--------------|----------|
-| PDF | pdf-extract（Rust）+ ファイルキャッシュ |
+| PDF | 内蔵 pdf-extract（Rust）+ ファイルキャッシュ。表、数式、複雑なレイアウト向けに MinerU クラウド解析を任意で利用可能 |
 | DOCX | docx-rs — 見出し、太字／斜体、リスト、テーブルを構造化 Markdown へ |
 | PPTX | ZIP + XML — スライド単位で抽出し、見出し／リスト構造を保持 |
 | XLSX/XLS/ODS | calamine — 正しいセル型、複数シート対応、Markdown テーブルに変換 |
@@ -329,7 +336,9 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 | 動画／音声 | 内蔵プレイヤー |
 | Web クリップ | Readability.js + Turndown.js → クリーンな Markdown |
 
-### 15. ファイル削除のカスケードクリーンアップ
+> MinerU は任意機能です。有効にすると PDF ファイルは解析のため MinerU クラウドへアップロードされます。機密文書には内蔵ローカル解析の利用を推奨します。MinerU 解析に失敗した場合、LLM Wiki は内蔵解析へフォールバックします。MinerU の利用はファイルサイズ、ページ数、クォータ制限の対象です。
+
+### 16. ファイル削除のカスケードクリーンアップ
 
 元の設計には削除機構がありません。本プロジェクトでは**インテリジェントなカスケード削除**を追加しました。
 
@@ -339,7 +348,7 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **index のクリーンアップ** — 削除されたページを index.md から除去
 - **wikilink のクリーンアップ** — 削除済みページを指す失効した `[[wikilinks]]` を、残りの Wiki ページから除去
 
-### 16. 設定可能なコンテキストウィンドウ
+### 17. 設定可能なコンテキストウィンドウ
 
 元の設計にはありません。LLM に渡すコンテキスト量をユーザーが設定できます。
 
@@ -347,7 +356,7 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **比例配分された予算** — ウィンドウが大きいほど Wiki コンテンツの取り分も増える
 - **60/20/5/15 の配分** — Wiki ページ／チャット履歴／index／システムプロンプト
 
-### 17. クロスプラットフォーム互換
+### 18. クロスプラットフォーム互換
 
 元の設計はプラットフォーム非依存の抽象パターンです。本プロジェクトでは実際のクロスプラットフォーム問題に対処しています。
 
@@ -358,7 +367,7 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **Tauri v2** — macOS、Windows、Linux のネイティブデスクトップ
 - **GitHub Actions による CI/CD** — macOS（ARM + Intel）、Windows（.msi）、Linux（.deb / .AppImage）の自動ビルド
 
-### 18. その他の追加機能
+### 19. その他の追加機能
 
 - **多言語対応** — 英語と中国語の UI（react-i18next）
 - **設定の永続化** — LLM プロバイダー、API キー、モデル、コンテキストサイズ、言語を Tauri Store で保存
@@ -367,83 +376,6 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **マルチプロバイダー LLM 対応** — OpenAI、Anthropic、Google、Ollama、カスタム。プロバイダーごとにストリーミングとヘッダーを調整
 - **15 分タイムアウト** — 長時間のインジェスト処理が早すぎる段階で失敗しないようにする
 - **dataVersion シグナル** — Wiki コンテンツの変更に合わせてグラフと UI を自動リフレッシュ
-
----
-
-> 以下のセクションは nashsu/llm_wiki に対する **LLMWiKi フォーク** の追加機能です。ユーザー向けの詳細は [`docs/features.md`](docs/features.md) を参照してください。
-
-### 19. `.llmwiki` ワンクリック インポート / エクスポート
-
-プロジェクト全体（`raw/` + `wiki/` + `.llm-wiki/` 共有メタデータ）を 1 つの `.llmwiki` zip にまとめ、デバイス間・チーム間で移行できます。
-
-- **エクスポート** — 設定 → インポート / エクスポート → *パッケージをエクスポート*。SHA256 マニフェスト、アプリバージョン、任意のエクスポート者名を含む
-- **インポート** — *既存ファイルをスキップ* または *すべて上書き* を選択。インポート前にパッケージを *確認* できる
-- **検証** — インポート時に各ファイルの SHA256 をマニフェストと照合
-- **意図的に除外** — チャット履歴（非公開）、API キー（プロジェクト外）、ベクトル DB（再構築）
-
-用途: マルチデバイス同期、チームへの初回配布、定期スナップショット。
-
-### 20. ページ単位のスケジュール Web リフレッシュ
-
-陳腐化しやすいページ（プロジェクト状況、技術動向、人物の役職）にリフレッシュポリシーを付与。バックグラウンドのスケジューラが LLM + Web 検索で陳腐化を検出し、提案をレビューキューに投入します。
-
-ページの frontmatter に追記：
-```yaml
-refresh-enabled: true
-refresh-interval-days: 7
-refresh-queries:                  # 任意。省略時は LLM が自動生成
-  - "mixture of experts 2026"
-```
-
-- **スケジューラ** — 設定 → スケジュール Web リフレッシュ（全体トグル + スキャン頻度）
-- **ランナー** — 対象ページ → マルチプロバイダー検索 → LLM 判定（STATUS=fresh|stale）→ 陳腐化ページはレビューに *提案* を投入
-- **ステータス** — `refresh-last-result: ok / no-change / pending-review / error` を frontmatter に自動書き戻し
-- **ページ単位の即時リフレッシュ** — エディタの frontmatter パネル上部にある *Web リフレッシュ* ボタン
-
-### 21. ローカル / 共有設定の分離（クラウド共有向け）
-
-元々 `.llm-wiki/` はプロジェクト共有メタデータと非公開チャットを混在させており、クラウド同期に不向きでした。現在は分離：
-
-- `.llm-wiki/` — **プロジェクト共有**: インジェストキャッシュ、レビューキュー、ページ履歴、project.json
-- `.llm-wiki-local/` — **ユーザー個別の非公開**: チャット会話、conversations.json
-
-既存ユーザーは初回起動時に自動移行。デプロイ手順は [`docs/cloud-sharing.md`](docs/cloud-sharing.md)（iCloud / OneDrive / Dropbox / Git での `.llm-wiki-local/` 除外ルール）。API キーは常に OS のアプリデータディレクトリにあり、プロジェクト内には保存されません。
-
-### 22. 中国語 i18n の完成 + ワンクリック言語切替
-
-- **完成**: フォークで追加した 3 つの UI セクション（`importExport`、`scheduledRefresh`、`editor.refresh`）は以前は英語の `defaultValue` にフォールバックしていました。現在 `app/src/i18n/{en,zh}.json` が完全に整合し、中国語ユーザーはすべて中国語で表示されます
-- **ワンクリック切替**: 上流は言語を選んで Save を押す必要がありました。本フォークでは *設定 → インターフェース → 中文 / English* をクリックすると **即座に `i18n.changeLanguage()` + 永続化** され、すべての `useTranslation()` コンポーネントが Save なしで即再描画されます
-- 言語の追加: `en.json` をコピー → 翻訳 → `i18n/index.ts` と `interface-section.tsx::UI_LANGUAGES` に登録。`i18n-parity` テストがキー整合を強制します
-
-### 23. スマート分割 + 総合スキーマ（34 種類、CJK ディレクトリ）
-
-上流はすべてのソースをエンティティ/コンセプトページに強制分割していました（旅行プランが 20 の観光地ページに、書籍が 50 の人物ページに分散）。本フォークはページ分類を **完全に `schema.md` 駆動** にし、日常文書をカバーする **総合テンプレート（34 種類、CJK 優先ディレクトリ）** を同梱します。LLM はソースごとに 2 つの挙動から自動選択します：
-
-- **単一ページ型** — 1 ソース → 1 ページ、分割なし: 旅行プラン、マニュアル、プロジェクト文書、チュートリアル、書籍、レシピ、ノート、レポート、記事、会議、意思決定、映画、音楽、ゲーム、メニュー、買い物リスト、契約、請求書、医療記録、コードスニペット、API ドキュメント、エラーログ……
-- **分割可能型** — ソースサマリー + コンセプト/ツール/人物のサブページ: 論文、コンセプト、ツール、データセット、人物、企業、規制
-
-新規プロジェクトは既定でこれを使用。既存プロジェクトは **設定 → スキーマアップグレード**（`schema.md` を `.bak` にバックアップ、UI 言語で総合スキーマを書き込み、34 ディレクトリを事前作成。旧ページはそのまま）。分類は出発点に過ぎず、`schema.md` を編集して型を追加・改名できます。詳細: [`docs/features.md §5`](docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型)、[`docs/user-rules.md`](docs/user-rules.md)。
-
-### 24. セルフホスト型インプレース自動更新
-
-更新エンドポイントは本フォーク自身の GitHub リリース（`chunguangwei/LLMWiKi`）を指し、**真のインプレース更新**（`tauri-plugin-updater` + `tauri-plugin-process`）に強化されています：バックグラウンドチェック → バナー / 設定 → バージョン情報 → *今すぐ更新* → 署名済み成果物をダウンロード → 内蔵 minisign 公開鍵で検証 → その場で置換 → *再起動して適用*。**設定と API キーには一切手を触れません**（アンインストール/再インストール不要）。リリースフロー + 署名鍵のバックアップは [`docs/release-and-update.md`](docs/release-and-update.md)。
-
-### 25. 暗号化された設定バックアップ / 移行（API キーを失わない）
-
-**設定 → 設定バックアップ。** 2 つのモード：
-
-- **エクスポート / インポート**（マシン間）: パスフレーズを設定 → 暗号化ファイル `.llmwiki-config` をエクスポート（Argon2id + AES-256-GCM）。新しいマシンで同じパスフレーズでインポート。パスフレーズが唯一の鍵で、バイナリ内には復号可能なものは存在しません。
-- **起動時自動バックアップ**（同一マシンの再インストール）: 起動ごとに設定を `~/Documents/LLMWiki/config-backup.enc` に暗号化（鍵は OS キーチェーン）。新規インストール時に自動復元、パスフレーズ不要。
-
-詳細: [`docs/features.md §6.4`](docs/features.md#64-加密配置备份防丢-key)。
-
-### 26. docx / Office ソースファイルのプレビュー
-
-生の Word/Office ソースファイル（`.docx` `.xlsx` `.pptx` `.odt` `.ods` `.odp`）が、「Preview not available for this file type」ではなく **抽出したテキスト** をプレビューパネルに表示するようになりました。フロントエンドで `office` として分類し、PDF と同様にパネルが読み込みます（バックエンドは `docx-rs` / `calamine` で抽出）。
-
-### 27. 編集可能なページタイプセレクタ
-
-左の知識ツリーはページの frontmatter `type:` スラッグでグループ化されます。このスラッグをプレビューパネルから直接編集できるようになりました：タイプチップが**ドロップダウン**（ローカライズされたラベル。`knowledgeTree.types.*` の文言を再利用）になり、カテゴリを選ぶとページの `type:` が書き換えられ、サイドバーで**即座に再グループ化**されます。YAML を手編集したり 34 個の英語スラッグを覚えたりする必要はありません。未知／レガシーの現在値も選択肢として保持され、暗黙に失われません。対象は `wiki/` 配下のページのみ（`index.md` / `log.md` / プロジェクト文書は除く）。実装：`lib/frontmatter.ts` の `setFrontmatterType()` が frontmatter ブロックのみを書き換え、`preview-panel.tsx` が書き込み後に `dataVersion` を更新してツリーを再読み込みします。
 
 ## 技術スタック
 
@@ -456,7 +388,7 @@ refresh-queries:                  # 任意。省略時は LLM が自動生成
 | グラフ | sigma.js + graphology + ForceAtlas2 |
 | 検索 | トークン化検索 + グラフ関連度 + 任意のベクトル検索（LanceDB） |
 | ベクトル DB | LanceDB（Rust、組み込み、オプション） |
-| PDF | pdf-extract |
+| PDF | pdf-extract + 任意の MinerU クラウド解析 |
 | Office | docx-rs + calamine |
 | 多言語対応 | react-i18next |
 | 状態管理 | Zustand |
@@ -465,24 +397,20 @@ refresh-queries:                  # 任意。省略時は LLM が自動生成
 
 ## インストール
 
-### ビルド済みバイナリ（本フォーク）
+### ビルド済みバイナリ
 
-**[chunguangwei/LLMWiKi releases](https://github.com/chunguangwei/LLMWiKi/releases/latest)** から最新版をダウンロードします。
+[Releases](https://github.com/nashsu/llm_wiki/releases) からダウンロードできます。
 
-| プラットフォーム | ファイル | 初回起動 |
-|---|---|---|
-| macOS（Apple Silicon） | `LLM.Wiki_<バージョン>_aarch64.dmg` | 「壊れている」と出たら `xattr -dr com.apple.quarantine "/Applications/LLM Wiki.app"` |
-| Windows（x64 のみ） | `LLM.Wiki_<バージョン>_x64-setup.exe`（推奨）/ `_x64_en-US.msi` | SmartScreen → **詳細情報 → 実行** |
-| Linux | `.deb` / `.AppImage` / `.rpm`（x64 + arm64） | ディストリに応じてインストール |
-
-> 配布物はプラットフォーム商用コード署名なし（OSS では一般的で、機能・安全性に影響なし。自動更新は独自の minisign 検証あり）。一度インストールすれば再ダウンロード不要——新バージョンはアプリ内でワンクリックのインプレース更新として案内されます。詳細は [`docs/release-and-update.md §1`](docs/release-and-update.md#1-下载最新版终端用户视角)。
+- **macOS**: `.dmg`（Apple Silicon + Intel）
+- **Windows**: `.msi`
+- **Linux**: `.deb` / `.AppImage`
 
 ### ソースからビルド
 
 ```bash
 # 前提条件: Node.js 20+, Rust 1.70+
-git clone https://github.com/chunguangwei/LLMWiKi.git
-cd LLMWiKi
+git clone https://github.com/nashsu/llm_wiki.git
+cd llm_wiki
 npm install
 npm run tauri dev      # 開発モード
 npm run tauri build    # 本番ビルド
@@ -507,7 +435,7 @@ npm run tauri build    # 本番ビルド
 8. **レビュー** で対応が必要な項目を確認
 9. **Lint** を定期的に実行し、Wiki の健全性を維持
 
-## ローカル HTTP API + AI Agent Skill
+## ローカル HTTP API + MCP Server + AI Agent Skill
 
 LLM Wiki は組み込みのローカル HTTP API（`http://127.0.0.1:19828` でリッスン、Token 認証、ローカルホストのみ）を提供します。**Claude Code** や **Codex** などの AI エージェント、または HTTP リクエストを発行できる任意のスクリプトから、直接知識ベースを問い合わせることができます。
 
@@ -515,22 +443,25 @@ LLM Wiki は組み込みのローカル HTTP API（`http://127.0.0.1:19828` で�
 - `GET /api/v1/projects` — プロジェクト一覧
 - `GET /api/v1/projects/{id}/files` / `files/content` — ファイルツリーと本文の取得
 - `POST /api/v1/projects/{id}/search` — **ハイブリッド検索**（キーワード + ベクトル）。`mode`、`tokenHits`、`vectorHits` を返し、各結果に `vectorScore` を付与
+- `POST /api/v1/projects/{id}/chat` — 非ストリーミングの Rust バックエンド Agent chat エンドポイント。assistant message、references、usage、tool events を返し、Wiki / Source / Web / AnyTXT 検索に対応します。`mode: "deep"` では証拠収集範囲を広げます
 - `GET /api/v1/projects/{id}/graph` — wikilinks の知識グラフ
 - `POST /api/v1/projects/{id}/sources/rescan` — バックエンドの再スキャンをトリガー
 
-**設定 → API サーバー** から API を有効化し、Token を発行してください。
+**設定 → API + MCP** から API を有効化し、Token を発行できます。必要に応じて、ローカルからの認証なしアクセスも切り替えられます。
+
+MCP 互換クライアント向けに、LLM Wiki には `mcp-server/` も同梱されています。`npm run mcp:build` でビルドしたあと、**設定 → API + MCP** に現在のマシンに合ったパス入りの MCP クライアント設定が表示され、そのままコピーできます。MCP ツールは同じ API を利用するため、エージェントはプロジェクト一覧、ファイル読み取り、ハイブリッド検索、グラフ参照、ソース再スキャン、同じ Rust バックエンド Agent chat エンドポイントの呼び出しをカスタム HTTP 実装なしで実行できます。
 
 ### ワンコマンドで AI エージェントを接続
 
 LLM Wiki 用の **agent skill** は別リポジトリで管理されています。Claude Code / Codex / skills 互換のランタイムにインストールできます。
 
 ```bash
-npx skills add https://github.com/chunguangwei/llm_wiki_skill.git --skill llm_wiki_skill
+npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm-wiki
 ```
 
 インストール後、エージェントは「自分の LLM Wiki に X について何が書かれている？」「自分の知識ベースで Y を検索して」「自分の Wiki グラフで Z の近傍を表示して」「ソースを再スキャンして」といった依頼に対し、ローカルで動いているアプリと直接通信して応答します。デフォルトは読み取り専用で、アプリ内で確認できるよう Wiki ページのパスを引用します。
 
-- **Skill リポジトリ**: <https://github.com/chunguangwei/llm_wiki_skill>
+- **Skill リポジトリ**: <https://github.com/nashsu/llm_wiki_skill>
 - **トリガー制約**: 「ノートを検索して」「Obsidian / Notion / Logseq を見て」のような汎用的な依頼には**意図的に反応しません**。LLM Wiki / `my wiki` / `知識庫` / `知識ベース` を明示した場合のみ起動します。
 
 ## プロジェクト構成
@@ -538,29 +469,31 @@ npx skills add https://github.com/chunguangwei/llm_wiki_skill.git --skill llm_wi
 ```
 my-wiki/
 ├── purpose.md              # 目標、主要な問い、調査範囲
-├── schema.md               # ページタイプと命名規則（総合テンプレート = 34 種類）
+├── schema.md               # Wiki 構造ルール、ページタイプ
 ├── raw/
 │   ├── sources/            # アップロードされた文書（不変）
 │   └── assets/             # ローカル画像
-├── wiki/                   # LLM が書いたページ。schema.md に沿って分類
+├── wiki/
 │   ├── index.md            # コンテンツ目録
 │   ├── log.md              # 操作履歴
 │   ├── overview.md         # 全体概要（自動更新）
-│   ├── travel-plans/ manuals/ books/ recipes/ contracts/ ...   # 単一ページ型
-│   └── papers/ concepts/ tools/ datasets/ people/ ...          # 分割可能: サマリー + サブページ
-│                           # （中国語 UI では CJK ディレクトリ名: 旅游方案/ 书籍/ 论文/ ...）
+│   ├── entities/           # 人物、組織、製品
+│   ├── concepts/           # 理論、手法、技術
+│   ├── sources/            # 資料サマリー
+│   ├── queries/            # 保存されたチャット回答 + リサーチ
+│   ├── synthesis/          # 資料横断の分析
+│   └── comparisons/        # 比較ページ
 ├── .obsidian/              # Obsidian vault 設定（自動生成）
-├── .llm-wiki/              # プロジェクト共有メタデータ（クラウド同期向け）
-└── .llm-wiki-local/        # ユーザー個別の非公開（チャット。クラウド同期から除外）
+└── .llm-wiki/              # アプリ設定、チャット履歴、レビュー項目
 ```
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=chunguangwei%2FLLMWiKi&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=nashsu%2Fllm_wiki&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=chunguangwei/LLMWiKi&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=chunguangwei/LLMWiKi&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=chunguangwei/LLMWiKi&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&legend=top-left" />
  </picture>
 </a>
 

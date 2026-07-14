@@ -648,6 +648,7 @@ function App() {
         useChatStore.getState().setUseWebSearch(savedChatPreferences.useWebSearch)
         useChatStore.getState().setUseAnyTxtSearch(savedChatPreferences.useAnyTxtSearch)
         useChatStore.getState().setAgentMode(savedChatPreferences.agentMode)
+        useChatStore.getState().setRetrievalMode(savedChatPreferences.retrievalMode)
         useChatStore.getState().setDisabledSkills(savedChatPreferences.disabledSkills)
       } catch {
         // ignore, start fresh

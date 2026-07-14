@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import type { ChatMessage, ContentBlock } from "@/lib/llm-client"
 import i18n from "@/i18n"
-import type { ChatAgentMode, ChatAgentStep, ChatUserInputRequest } from "@/lib/chat-agent-types"
+import type { ChatAgentFileChange, ChatAgentMode, ChatAgentStep, ChatRetrievalMode, ChatUserInputRequest } from "@/lib/chat-agent-types"
 
 /**
  * An image attached to a user message. Field names mirror the
@@ -21,6 +21,7 @@ export interface Conversation {
   createdAt: number
   updatedAt: number
   selectedSkills?: string[]
+  contextFiles?: string[]
 }
 
 export interface MessageReference {
@@ -30,6 +31,7 @@ export interface MessageReference {
   source?: string
   url?: string
   snippet?: string
+  graphRelations?: string[]
 }
 
 export interface DisplayMessage {
@@ -40,8 +42,10 @@ export interface DisplayMessage {
   conversationId: string
   references?: MessageReference[]  // pages cited in this response, saved at creation time
   agentSteps?: ChatAgentStep[]  // agent tool calls and routing decisions saved with assistant replies
+  agentFileChanges?: ChatAgentFileChange[]  // concrete project files changed by this Agent turn
   userInputRequest?: ChatUserInputRequest  // dynamic schema-driven form requested by backend Agent
   images?: MessageImage[]  // images attached to a user message (vision input)
+  contextFiles?: string[]  // absolute project files explicitly attached to this user turn
 }
 
 interface ChatState {
@@ -56,7 +60,9 @@ interface ChatState {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
   agentMode: ChatAgentMode
+  retrievalMode: ChatRetrievalMode
   selectedSkills: string[]
+  selectedContextFiles: string[]
   disabledSkills: string[]
 
   // Conversation management
@@ -67,13 +73,13 @@ interface ChatState {
 
   // Message management
   addMessage: (role: DisplayMessage["role"], content: string, images?: MessageImage[]) => void
-  addMessageToConversation: (conversationId: string, role: DisplayMessage["role"], content: string, images?: MessageImage[]) => void
+  addMessageToConversation: (conversationId: string, role: DisplayMessage["role"], content: string, images?: MessageImage[], contextFiles?: string[]) => void
   setMessages: (messages: DisplayMessage[]) => void
   setConversations: (conversations: Conversation[]) => void
   setStreaming: (streaming: boolean) => void
   appendStreamToken: (token: string) => void
-  finalizeStream: (content: string, references?: MessageReference[], agentSteps?: ChatAgentStep[], userInputRequest?: ChatUserInputRequest) => void
-  finalizeStreamForConversation: (conversationId: string, content: string, references?: MessageReference[], agentSteps?: ChatAgentStep[], userInputRequest?: ChatUserInputRequest) => void
+  finalizeStream: (content: string, references?: MessageReference[], agentSteps?: ChatAgentStep[], userInputRequest?: ChatUserInputRequest, agentFileChanges?: ChatAgentFileChange[]) => void
+  finalizeStreamForConversation: (conversationId: string, content: string, references?: MessageReference[], agentSteps?: ChatAgentStep[], userInputRequest?: ChatUserInputRequest, agentFileChanges?: ChatAgentFileChange[]) => void
   setMode: (mode: ChatState["mode"]) => void
   setIngestSource: (path: string | null) => void
   clearMessages: () => void
@@ -81,7 +87,9 @@ interface ChatState {
   setUseWebSearch: (enabled: boolean) => void
   setUseAnyTxtSearch: (enabled: boolean) => void
   setAgentMode: (mode: ChatAgentMode) => void
+  setRetrievalMode: (mode: ChatRetrievalMode) => void
   setSelectedSkills: (skills: string[]) => void
+  setSelectedContextFiles: (paths: string[]) => void
   setDisabledSkills: (skills: string[]) => void
   removeLastAssistantMessage: () => void  // for regenerate: remove last assistant reply
 
@@ -112,7 +120,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   useWebSearch: false,
   useAnyTxtSearch: false,
   agentMode: "standard",
+  retrievalMode: "standard",
   selectedSkills: [],
+  selectedContextFiles: [],
   disabledSkills: [],
 
   createConversation: () => {
@@ -124,6 +134,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       createdAt: now,
       updatedAt: now,
       selectedSkills: [],
+      contextFiles: [],
     }
     set((state) => ({
       conversations: [newConversation, ...state.conversations],
@@ -131,6 +142,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: false,
       streamingContent: "",
       selectedSkills: [],
+      selectedContextFiles: [],
     }))
     return id
   },
@@ -147,6 +159,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: state.messages.filter((m) => m.conversationId !== id),
         activeConversationId: newActiveId,
         selectedSkills: remaining.find((conversation) => conversation.id === newActiveId)?.selectedSkills ?? [],
+        selectedContextFiles: remaining.find((conversation) => conversation.id === newActiveId)?.contextFiles ?? [],
       }
     }),
 
@@ -155,6 +168,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeConversationId: id,
       streamingContent: "",
       selectedSkills: state.conversations.find((conversation) => conversation.id === id)?.selectedSkills ?? [],
+      selectedContextFiles: state.conversations.find((conversation) => conversation.id === id)?.contextFiles ?? [],
     })),
 
   renameConversation: (id, title) =>
@@ -170,7 +184,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().addMessageToConversation(activeConversationId, role, content, images)
   },
 
-  addMessageToConversation: (conversationId, role, content, images) =>
+  addMessageToConversation: (conversationId, role, content, images, contextFiles) =>
     set((state) => {
       const { conversations } = state
       if (!conversations.some((conversation) => conversation.id === conversationId)) return state
@@ -182,6 +196,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         timestamp: Date.now(),
         conversationId,
         ...(images && images.length > 0 ? { images } : {}),
+        ...(contextFiles && contextFiles.length > 0 ? { contextFiles } : {}),
       }
 
       // Auto-set title from first user message (first 50 chars)
@@ -220,6 +235,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       conversations,
       selectedSkills: conversations.find((conversation) => conversation.id === state.activeConversationId)?.selectedSkills ?? [],
+      selectedContextFiles: conversations.find((conversation) => conversation.id === state.activeConversationId)?.contextFiles ?? [],
     })),
 
   setStreaming: (isStreaming) => set((state) => ({
@@ -235,7 +251,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: state.streamingContent + token,
     })),
 
-  finalizeStream: (content, references, agentSteps, userInputRequest) => {
+  finalizeStream: (content, references, agentSteps, userInputRequest, agentFileChanges) => {
     const activeConversationId = get().activeConversationId
     if (!activeConversationId) {
       set({
@@ -250,10 +266,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       references,
       agentSteps,
       userInputRequest,
+      agentFileChanges,
     )
   },
 
-  finalizeStreamForConversation: (conversationId, content, references, agentSteps, userInputRequest) =>
+  finalizeStreamForConversation: (conversationId, content, references, agentSteps, userInputRequest, agentFileChanges) =>
     set((state) => {
       const { conversations } = state
       if (!conversations.some((conversation) => conversation.id === conversationId)) {
@@ -271,6 +288,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversationId,
         references,
         agentSteps,
+        ...(agentFileChanges && agentFileChanges.length > 0 ? { agentFileChanges } : {}),
         ...(userInputRequest ? { userInputRequest } : {}),
       }
 
@@ -305,6 +323,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setAgentMode: (agentMode) => set({ agentMode }),
 
+  setRetrievalMode: (retrievalMode) => set({ retrievalMode }),
+
   setSelectedSkills: (selectedSkills) =>
     set((state) => ({
       selectedSkills,
@@ -312,6 +332,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? state.conversations.map((conversation) =>
             conversation.id === state.activeConversationId
               ? { ...conversation, selectedSkills }
+              : conversation
+          )
+        : state.conversations,
+    })),
+
+  setSelectedContextFiles: (selectedContextFiles) =>
+    set((state) => ({
+      selectedContextFiles,
+      conversations: state.activeConversationId
+        ? state.conversations.map((conversation) =>
+            conversation.id === state.activeConversationId
+              ? { ...conversation, contextFiles: selectedContextFiles }
               : conversation
           )
         : state.conversations,

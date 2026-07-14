@@ -352,6 +352,57 @@ export async function embedPage(
   return true
 }
 
+export type EmbeddingReindexState =
+  | { kind: "idle" }
+  | { kind: "running"; projectPath: string; done: number; total: number }
+  | { kind: "done"; projectPath: string; count: number }
+  | { kind: "error"; projectPath: string; message: string }
+
+let embeddingReindexState: EmbeddingReindexState = { kind: "idle" }
+const embeddingReindexListeners = new Set<() => void>()
+
+export function getEmbeddingReindexState(): EmbeddingReindexState {
+  return embeddingReindexState
+}
+
+export function subscribeEmbeddingReindexState(listener: () => void): () => void {
+  embeddingReindexListeners.add(listener)
+  return () => embeddingReindexListeners.delete(listener)
+}
+
+function setEmbeddingReindexState(state: EmbeddingReindexState): void {
+  embeddingReindexState = state
+  for (const listener of embeddingReindexListeners) listener()
+}
+
+function throwEmbeddingReindexError(projectPath: string, message: string): never {
+  setEmbeddingReindexState({ kind: "error", projectPath, message })
+  throw new Error(message)
+}
+
+async function preparePageEmbeddingRowsWithRetry(
+  pageId: string,
+  title: string,
+  content: string,
+  cfg: EmbeddingConfig,
+  attempts = 3,
+): Promise<PageEmbeddingPreparation> {
+  let best = await preparePageEmbeddingRows(pageId, title, content, cfg)
+  for (let attempt = 1; attempt < attempts; attempt += 1) {
+    if (best.status === "empty") return best
+    if (best.status === "ready" && best.page.failedChunks === 0) return best
+    await new Promise((resolve) => setTimeout(resolve, attempt * 250))
+    const candidate = await preparePageEmbeddingRows(pageId, title, content, cfg)
+    if (
+      candidate.status === "ready"
+      && (best.status !== "ready" || candidate.page.failedChunks < best.page.failedChunks)
+    ) {
+      best = candidate
+    }
+  }
+  return best
+}
+
 /**
  * Embed every wiki content page that isn't already indexed (or re-embed
  * all when `force === true`). Driven from Settings → Embedding or on
@@ -368,14 +419,18 @@ export async function embedAllPages(
   lastEmbeddingError = null
 
   const pp = normalizePath(projectPath)
+  setEmbeddingReindexState({ kind: "running", projectPath: pp, done: 0, total: 0 })
 
   let tree: FileNode[]
   try {
     tree = await listDirectory(`${pp}/wiki`)
   } catch {
     if (options?.clearExisting) {
-      throw new Error("Could not read wiki tree; existing index was left unchanged.")
+      const message = "Could not read wiki tree; existing index was left unchanged."
+      setEmbeddingReindexState({ kind: "error", projectPath: pp, message })
+      throw new Error(message)
     }
+    setEmbeddingReindexState({ kind: "done", projectPath: pp, count: 0 })
     return 0
   }
 
@@ -398,12 +453,14 @@ export async function embedAllPages(
     if (mdFiles.length === 0) {
       const existingChunks = await vectorCountChunks(pp).catch(() => 0)
       if (existingChunks > 0) {
-        throw new Error(
+        throwEmbeddingReindexError(
+          pp,
           `Wiki tree returned no content pages, but ${existingChunks} chunks are currently indexed. Existing index was left unchanged.`,
         )
       }
       await clearChunkVectorTable(pp)
       await dropLegacyVectorTableBestEffort(pp)
+      setEmbeddingReindexState({ kind: "done", projectPath: pp, count: 0 })
       return 0
     }
 
@@ -414,7 +471,7 @@ export async function embedAllPages(
       try {
         const content = await readFile(file.path)
         const title = extractEmbeddingTitle(content, file.id)
-        const prepared = await preparePageEmbeddingRows(file.id, title, content, cfg)
+        const prepared = await preparePageEmbeddingRowsWithRetry(file.id, title, content, cfg)
         if (prepared.status === "ready") {
           if (prepared.page.failedChunks > 0) {
             const reason = getLastEmbeddingError()
@@ -431,19 +488,38 @@ export async function embedAllPages(
         failures.push(`${file.id}: ${err instanceof Error ? err.message : String(err)}`)
       }
       attempted++
+      setEmbeddingReindexState({
+        kind: "running",
+        projectPath: pp,
+        done: attempted,
+        total: mdFiles.length,
+      })
       if (onProgress) onProgress(attempted, mdFiles.length)
     }
 
     if (failures.length > 0) {
-      throw new Error(
-        `${failures.length} of ${mdFiles.length} pages could not be embedded (${failures[0]}). Existing index was left unchanged.`,
-      )
+      let updated = 0
+      for (const page of preparedPages) {
+        try {
+          await vectorUpsertChunks(pp, page.pageId, page.rows)
+          updated++
+        } catch (err) {
+          failures.push(
+            `${page.pageId}: ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+      }
+      if (updated > 0) await optimizeChunkVectorTableBestEffort(pp)
+      const error = `${failures.length} of ${mdFiles.length} pages could not be embedded (${failures[0]}). ${updated} successful page(s) were updated; failed pages kept their previous vectors and can be retried.`
+      setEmbeddingReindexState({ kind: "error", projectPath: pp, message: error })
+      throw new Error(error)
     }
 
     if (preparedPages.length === 0) {
       const existingChunks = await vectorCountChunks(pp).catch(() => 0)
       if (existingChunks > 0) {
-        throw new Error(
+        throwEmbeddingReindexError(
+          pp,
           `Wiki tree has only empty content pages, but ${existingChunks} chunks are currently indexed. Existing index was left unchanged.`,
         )
       }
@@ -457,7 +533,8 @@ export async function embedAllPages(
         await vectorUpsertChunks(pp, page.pageId, page.rows)
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
-        throw new Error(
+        throwEmbeddingReindexError(
+          pp,
           `Rebuild write failed after clearing existing chunks (${page.pageId}: ${reason}). The rebuilt index may be incomplete; run re-index again after fixing the error.`,
         )
       }
@@ -475,6 +552,7 @@ export async function embedAllPages(
     // written. Keep this outside the `written > 0` optimization guard.
     await dropLegacyVectorTableBestEffort(pp)
 
+    setEmbeddingReindexState({ kind: "done", projectPath: pp, count: written })
     return written
   }
 
@@ -491,6 +569,7 @@ export async function embedAllPages(
       // skip — individual file failure doesn't halt the batch
     }
     done++
+    setEmbeddingReindexState({ kind: "running", projectPath: pp, done, total: mdFiles.length })
     if (onProgress) onProgress(done, mdFiles.length)
   }
 
@@ -498,6 +577,7 @@ export async function embedAllPages(
     await optimizeChunkVectorTableBestEffort(pp)
   }
 
+  setEmbeddingReindexState({ kind: "done", projectPath: pp, count: indexed })
   return indexed
 }
 

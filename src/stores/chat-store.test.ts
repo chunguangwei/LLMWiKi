@@ -14,9 +14,17 @@ describe("chat-store conversation isolation", () => {
       useWebSearch: false,
       useAnyTxtSearch: false,
       agentMode: "standard",
+      retrievalMode: "standard",
       selectedSkills: [],
+      selectedContextFiles: [],
       disabledSkills: [],
     })
+  })
+
+  it("defaults to standard retrieval and allows smart retrieval opt-in", () => {
+    expect(useChatStore.getState().retrievalMode).toBe("standard")
+    useChatStore.getState().setRetrievalMode("smart")
+    expect(useChatStore.getState().retrievalMode).toBe("smart")
   })
 
   it("writes async assistant results back to the original conversation", () => {
@@ -125,5 +133,35 @@ describe("chat-store conversation isolation", () => {
     useChatStore.getState().setActiveConversation(second)
 
     expect(useChatStore.getState().selectedSkills).toEqual(["ppt"])
+  })
+
+  it("stores selected context files per conversation and starts new conversations empty", () => {
+    const first = useChatStore.getState().createConversation()
+    useChatStore.getState().setSelectedContextFiles(["wiki/overview.md"])
+
+    const second = useChatStore.getState().createConversation()
+    expect(useChatStore.getState().selectedContextFiles).toEqual([])
+
+    useChatStore.getState().setSelectedContextFiles(["raw/sources/source.txt"])
+    useChatStore.getState().setActiveConversation(first)
+    expect(useChatStore.getState().selectedContextFiles).toEqual(["wiki/overview.md"])
+
+    useChatStore.getState().setActiveConversation(second)
+    expect(useChatStore.getState().selectedContextFiles).toEqual(["raw/sources/source.txt"])
+  })
+
+  it("stores the context file snapshot on the user message", () => {
+    const conversationId = useChatStore.getState().createConversation()
+    useChatStore.getState().addMessageToConversation(
+      conversationId,
+      "user",
+      "summarize this",
+      [],
+      ["/project/wiki/overview.md"],
+    )
+
+    expect(useChatStore.getState().messages[0].contextFiles).toEqual([
+      "/project/wiki/overview.md",
+    ])
   })
 })

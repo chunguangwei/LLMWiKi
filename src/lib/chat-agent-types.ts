@@ -27,9 +27,11 @@ export interface ChatAgentEvent {
   message?: string
   count?: number
   status?: "running" | "success" | "error" | "skipped"
+  timestamp?: number
 }
 
 export type ChatAgentMode = "fast" | "standard" | "deep" | "local_first"
+export type ChatRetrievalMode = "standard" | "smart"
 
 export type ChatAgentToolName =
   | "project_files"
@@ -75,4 +77,20 @@ export interface ChatAgentStep {
   message?: string
   count?: number
   status?: "running" | "success" | "error" | "skipped"
+  timestamp?: number
+}
+
+export interface ChatAgentFileChange {
+  id: string
+  path: string
+  tool: string
+  operation: "created" | "modified"
+  additions: number
+  deletions: number
+  diff: string
+  timestamp: number
+  /** Runtime-only rollback snapshot. It is deliberately removed by persist.ts. */
+  beforeContent?: string | null
+  /** Runtime-only post-write snapshot used to reject stale or unsafe undo. */
+  afterContent?: string
 }

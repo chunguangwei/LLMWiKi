@@ -141,6 +141,58 @@ export async function getFileMd5(path: string): Promise<string> {
   return invoke<string>("get_file_md5", { path })
 }
 
+export interface FileHistoryEntry {
+  id: string
+  path: string
+  timestamp: number
+  author: string
+  tool: string
+  content: string
+}
+
+export async function listFileHistory(projectPath: string, filePath: string): Promise<FileHistoryEntry[]> {
+  return invoke<FileHistoryEntry[]>("list_file_history", { projectPath, filePath })
+}
+
+export async function restoreFileHistory(projectPath: string, filePath: string, entryId: string): Promise<string> {
+  return invoke<string>("restore_file_history", { projectPath, filePath, entryId })
+}
+
+export async function applyTextSelectionEdit(input: {
+  projectPath: string
+  filePath: string
+  prefix: string
+  selectedText: string
+  suffix: string
+  replacement: string
+}): Promise<string> {
+  return invoke<string>("apply_text_selection_edit", input)
+}
+
+export interface PageLinkEntry {
+  title: string
+  path?: string
+  snippet?: string
+}
+
+export interface PageLinksResponse {
+  outgoing: PageLinkEntry[]
+  backlinks: PageLinkEntry[]
+  missing: PageLinkEntry[]
+}
+
+export async function getPageLinks(projectPath: string, filePath: string): Promise<PageLinksResponse> {
+  return invoke<PageLinksResponse>("get_page_links", { projectPath, filePath })
+}
+
+export async function createMissingWikiPage(
+  projectPath: string,
+  title: string,
+  content?: string,
+): Promise<string> {
+  return invoke<string>("create_missing_wiki_page", { projectPath, title, content })
+}
+
 function assertAbsoluteFsPath(operation: string, path: string): void {
   if (!isAbsolutePath(path)) {
     throw new Error(`${operation} requires an absolute path: ${path}`)

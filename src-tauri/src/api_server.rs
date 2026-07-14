@@ -1665,9 +1665,10 @@ fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
             "ok": true,
             "projectId": project.id,
             "mode": search.mode,
-            "note": "Search uses the shared backend retrieval service. When embeddingConfig is enabled, the API automatically includes LanceDB vector results; clients may also pass queryEmbedding explicitly.",
+            "note": "Search uses the shared backend hybrid retrieval service, combining keyword, vector, and one-hop knowledge-graph candidates. When embeddingConfig is enabled, the API automatically includes LanceDB vector results; clients may also pass queryEmbedding explicitly.",
             "tokenHits": search.token_hits,
             "vectorHits": search.vector_hits,
+            "graphHits": search.graph_hits,
             "results": search.results,
         })),
         Err(e) => err(500, e),
@@ -1736,7 +1737,7 @@ fn handle_chat(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
     app.state::<agent::cancel::AgentCancellationRegistry>()
         .finish(&project.id, &session_id, &run_id);
     match result {
-        Ok(response) => {
+        Ok(mut response) => {
             if persist_session {
                 app.state::<agent::session::AgentSessionStore>()
                     .append_turn(
@@ -1746,6 +1747,9 @@ fn handle_chat(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
                         &user_message_for_session,
                         &response.message,
                     );
+            }
+            for event in &mut response.events {
+                event.redact_for_external_api();
             }
             ok(json!({
                 "ok": true,

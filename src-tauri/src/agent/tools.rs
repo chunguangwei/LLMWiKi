@@ -1,5 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::fs::OpenOptions;
 use std::future::Future;
@@ -21,7 +21,7 @@ use walkdir::WalkDir;
 use crate::commands::external_search::file_url_for_path;
 use crate::commands::search::{self, SearchEmbeddingConfig};
 
-use super::types::AgentReference;
+use super::types::{AgentKnowledgeContext, AgentReference, AgentVersionSummary};
 use super::workspace::{agent_workspace_path, AGENT_WORKSPACE_DIR};
 
 // Tool I/O limits are backend security boundaries. Do not relax them only in
@@ -30,9 +30,14 @@ use super::workspace::{agent_workspace_path, AGENT_WORKSPACE_DIR};
 const MAX_READ_PAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_WRITE_PAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_WORKSPACE_WRITE_BYTES: usize = 2 * 1024 * 1024;
+// Rollback snapshots are sent to the trusted desktop UI only for the current
+// process lifetime. Bound them independently from write size so a large Agent
+// artifact cannot multiply IPC and in-memory chat costs merely to enable Undo.
+const MAX_WORKSPACE_ROLLBACK_BYTES: u64 = 512 * 1024;
 const MAX_SOURCE_SEARCH_FILES: usize = 10_000;
 const MAX_SOURCE_SNIPPET_CHARS: usize = 500;
 const MAX_GRAPH_SEARCH_FILES: usize = 10_000;
+const MAX_KNOWLEDGE_CONTEXT_ITEMS: usize = 20;
 const WEB_SEARCH_TIMEOUT_SECS: u64 = 30;
 const SHELL_EXEC_TIMEOUT_SECS: u64 = 30;
 const MAX_SHELL_COMMAND_CHARS: usize = 4_000;
@@ -120,7 +125,7 @@ impl ToolRegistry for BuiltinToolRegistry {
                         .or_else(|| input.get("allow_overwrite"))
                         .and_then(Value::as_bool)
                         .unwrap_or(false);
-                    serde_json::to_value(write_wiki_page_with_options(
+                    serde_json::to_value(write_wiki_page_with_activity(
                         context.project_path,
                         path,
                         content,
@@ -154,9 +159,19 @@ impl ToolRegistry for BuiltinToolRegistry {
                         .map(str::trim)
                         .filter(|path| !path.is_empty())
                         .ok_or_else(|| "wiki.read_page requires path".to_string())?;
+                    let content = read_wiki_page(context.project_path, path)?;
+                    let normalized_path = normalize_rel_path(path);
+                    let mut knowledge_context = build_knowledge_context_index(context.project_path)
+                        .remove(&normalized_path);
+                    attach_latest_version(
+                        context.project_path,
+                        &normalized_path,
+                        &mut knowledge_context,
+                    );
                     serde_json::to_value(json!({
                         "path": path,
-                        "content": read_wiki_page(context.project_path, path)?,
+                        "content": content,
+                        "knowledgeContext": knowledge_context,
                     }))
                     .map_err(|err| format!("Failed to serialize wiki.read_page result: {err}"))
                 }
@@ -274,6 +289,7 @@ pub struct WikiSearchToolOutput {
     pub mode: String,
     pub token_hits: usize,
     pub vector_hits: usize,
+    pub graph_hits: usize,
     pub references: Vec<AgentReference>,
 }
 
@@ -294,6 +310,21 @@ pub struct ShellExecToolOutput {
 pub struct WorkspaceWriteOutput {
     pub path: String,
     pub bytes: usize,
+    #[serde(default)]
+    pub existed_before: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiWriteOutput {
+    #[serde(flatten)]
+    pub reference: AgentReference,
+    #[serde(default)]
+    pub existed_before: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -442,7 +473,8 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "graph.search".to_string(),
-            description: "Search wiki graph nodes and relationship-heavy pages.".to_string(),
+            description: "Retrieve graph relationships, neighbors, backlinks, dependencies, and connections between project entities. Use concise entity or concept names rather than a full question."
+                .to_string(),
             effects: vec![ToolEffect::Read],
             parameters: Some(serde_json::json!({
                 "type": "object",
@@ -618,6 +650,15 @@ pub fn write_wiki_page_with_options(
     content: &str,
     allow_overwrite: bool,
 ) -> Result<AgentReference, String> {
+    Ok(write_wiki_page_with_activity(project_path, rel_path, content, allow_overwrite)?.reference)
+}
+
+fn write_wiki_page_with_activity(
+    project_path: &str,
+    rel_path: &str,
+    content: &str,
+    allow_overwrite: bool,
+) -> Result<WikiWriteOutput, String> {
     if content.len() > MAX_WRITE_PAGE_BYTES {
         return Err("wiki.write_page content is too large".to_string());
     }
@@ -640,20 +681,29 @@ pub fn write_wiki_page_with_options(
                 .to_string(),
         );
     }
+    let existed_before = path.is_file();
+    let previous_content = workspace_rollback_snapshot(&path);
+    crate::commands::file_history::record_file_version(&path, "baseline", "before.wiki.write_page");
     fs::write(&path, content).map_err(|err| format!("Failed to write wiki page: {err}"))?;
-    Ok(AgentReference {
-        title: extract_markdown_title(content).unwrap_or_else(|| {
-            Path::new(&rel)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Wiki page")
-                .replace('-', " ")
-        }),
-        path: rel,
-        kind: "wiki".to_string(),
-        snippet: Some(trim_text(&collapse_markdown_preview(content), 500))
-            .filter(|value| !value.trim().is_empty()),
-        score: None,
+    crate::commands::file_history::record_file_version(&path, "agent", "wiki.write_page");
+    Ok(WikiWriteOutput {
+        reference: AgentReference {
+            title: extract_markdown_title(content).unwrap_or_else(|| {
+                Path::new(&rel)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Wiki page")
+                    .replace('-', " ")
+            }),
+            path: rel.clone(),
+            kind: "wiki".to_string(),
+            snippet: Some(trim_text(&collapse_markdown_preview(content), 500))
+                .filter(|value| !value.trim().is_empty()),
+            score: None,
+            knowledge_context: None,
+        },
+        existed_before,
+        previous_content,
     })
 }
 
@@ -674,10 +724,20 @@ fn write_workspace_file(
     {
         return Err("workspace.write_file refuses to overwrite a symlink".to_string());
     }
+    let existed_before = path.is_file();
+    let previous_content = workspace_rollback_snapshot(&path);
+    crate::commands::file_history::record_file_version(
+        &path,
+        "baseline",
+        "before.workspace.write_file",
+    );
     fs::write(&path, content).map_err(|err| format!("workspace.write_file failed: {err}"))?;
+    crate::commands::file_history::record_file_version(&path, "agent", "workspace.write_file");
     Ok(WorkspaceWriteOutput {
         path: format!("{AGENT_WORKSPACE_DIR}/{rel}"),
         bytes: content.len(),
+        existed_before,
+        previous_content,
     })
 }
 
@@ -698,6 +758,13 @@ fn append_workspace_file(
     {
         return Err("workspace.append_file refuses to overwrite a symlink".to_string());
     }
+    let existed_before = path.is_file();
+    let previous_content = workspace_rollback_snapshot(&path);
+    crate::commands::file_history::record_file_version(
+        &path,
+        "baseline",
+        "before.workspace.append_file",
+    );
     OpenOptions::new()
         .create(true)
         .append(true)
@@ -707,13 +774,24 @@ fn append_workspace_file(
             file.write_all(content.as_bytes())
         })
         .map_err(|err| format!("workspace.append_file failed: {err}"))?;
+    crate::commands::file_history::record_file_version(&path, "agent", "workspace.append_file");
     let bytes = fs::metadata(&path)
         .map(|metadata| metadata.len() as usize)
         .unwrap_or(content.len());
     Ok(WorkspaceWriteOutput {
         path: format!("{AGENT_WORKSPACE_DIR}/{rel}"),
         bytes,
+        existed_before,
+        previous_content,
     })
+}
+
+fn workspace_rollback_snapshot(path: &Path) -> Option<String> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_WORKSPACE_ROLLBACK_BYTES {
+        return None;
+    }
+    fs::read_to_string(path).ok()
 }
 
 fn resolve_workspace_write_target(
@@ -750,28 +828,50 @@ pub async fn run_wiki_search(
 ) -> Result<WikiSearchToolOutput, String> {
     let query_embedding = search::resolve_query_embedding(query, None, embedding_config).await?;
     let search = search::search_project_inner(
-        project_path,
+        project_path.clone(),
         query.to_string(),
         top_k,
         include_content,
         query_embedding,
     )
     .await?;
+    let project_for_context = project_path.clone();
+    let context_index =
+        tokio::task::spawn_blocking(move || build_knowledge_context_index(&project_for_context))
+            .await
+            .map_err(|err| format!("wiki.search graph context worker failed: {err}"));
+    // Retrieval must remain useful if optional graph enrichment fails. The
+    // search result is the source of truth; context is a bounded enhancement.
+    let mut context_index = context_index.unwrap_or_default();
     let references = search
         .results
         .iter()
-        .map(|result| AgentReference {
-            title: result.title.clone(),
-            path: result.path.clone(),
-            kind: "wiki".to_string(),
-            snippet: Some(result.snippet.clone()).filter(|s| !s.trim().is_empty()),
-            score: Some(result.score),
+        .map(|result| {
+            let normalized_path = normalize_rel_path(&result.path);
+            let mut knowledge_context = context_index.remove(&normalized_path);
+            if let Some(context) = knowledge_context.as_mut() {
+                context.related_to = result.graph_related_to.clone();
+            }
+            attach_latest_version(&project_path, &normalized_path, &mut knowledge_context);
+            AgentReference {
+                title: result.title.clone(),
+                path: result.path.clone(),
+                kind: if result.graph_related_to.is_empty() {
+                    "wiki".to_string()
+                } else {
+                    "graph".to_string()
+                },
+                snippet: Some(result.snippet.clone()).filter(|s| !s.trim().is_empty()),
+                score: Some(result.score),
+                knowledge_context,
+            }
         })
         .collect();
     Ok(WikiSearchToolOutput {
         mode: search.mode,
         token_hits: search.token_hits,
         vector_hits: search.vector_hits,
+        graph_hits: search.graph_hits,
         references,
     })
 }
@@ -851,13 +951,23 @@ async fn run_shell_exec(
         }
         stderr.push_str(&message);
     }
+    let generated_files = changed_workspace_files(&workspace, before_files);
+    for output in &generated_files {
+        if let Some(relative) = output.path.strip_prefix(&format!("{AGENT_WORKSPACE_DIR}/")) {
+            crate::commands::file_history::record_file_version(
+                &workspace.join(relative),
+                "agent",
+                "shell.exec",
+            );
+        }
+    }
     Ok(ShellExecToolOutput {
         command: command.to_string(),
         exit_code,
         stdout,
         stderr,
         timed_out,
-        generated_files: changed_workspace_files(&workspace, before_files),
+        generated_files,
     })
 }
 
@@ -938,6 +1048,8 @@ fn changed_workspace_files(
             Some(WorkspaceWriteOutput {
                 path: format!("{AGENT_WORKSPACE_DIR}/{rel}"),
                 bytes: snapshot.len as usize,
+                existed_before: before.contains_key(&rel),
+                previous_content: None,
             })
         })
         .take(MAX_SHELL_GENERATED_FILES)
@@ -1188,6 +1300,7 @@ pub async fn run_anytxt_search(
             ))
             .filter(|s| !s.trim().is_empty()),
             score: None,
+            knowledge_context: None,
         });
     }
     Ok(references)
@@ -1758,6 +1871,7 @@ fn web_items_to_references(raw: Vec<WebSearchItem>, max_results: usize) -> Vec<A
             kind: "web".to_string(),
             snippet: Some(item.snippet).filter(|s| !s.trim().is_empty()),
             score: None,
+            knowledge_context: None,
         })
         .collect()
 }
@@ -1860,6 +1974,246 @@ fn friendly_firecrawl_error(error: &str) -> String {
     }
 }
 
+#[derive(Debug)]
+struct KnowledgePage {
+    path: String,
+    title: String,
+    stem: String,
+    tags: Vec<String>,
+    links: Vec<String>,
+    matches_query: bool,
+    neighbors: Vec<String>,
+}
+
+/// Build one bounded graph/provenance index for a complete retrieval tool
+/// invocation. Never call this once per result: large projects would otherwise
+/// turn top-k retrieval into top-k full filesystem scans.
+fn build_knowledge_context_index(project_path: &str) -> BTreeMap<String, AgentKnowledgeContext> {
+    build_knowledge_graph_snapshot(project_path, None).1
+}
+
+fn build_knowledge_graph_snapshot(
+    project_path: &str,
+    query: Option<&str>,
+) -> (Vec<KnowledgePage>, BTreeMap<String, AgentKnowledgeContext>) {
+    let wiki_root = Path::new(project_path).join("wiki");
+    if !wiki_root.is_dir() {
+        return (Vec::new(), BTreeMap::new());
+    }
+
+    let mut pages = Vec::new();
+    for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
+        if pages.len() >= MAX_GRAPH_SEARCH_FILES
+            || !entry.file_type().is_file()
+            || entry.path().extension().and_then(|value| value.to_str()) != Some("md")
+        {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let path = relative_to_project(project_path, entry.path());
+        if is_hidden_rel(&path) {
+            continue;
+        }
+        let title = search::extract_title(&content, entry.file_name().to_string_lossy().as_ref());
+        let matches_query = query.is_some_and(|query| {
+            let haystack = format!("{title} {path} {content}").to_lowercase();
+            haystack.contains(query)
+                || graph_query_terms(query)
+                    .iter()
+                    .any(|term| haystack.contains(term))
+        });
+        pages.push(KnowledgePage {
+            path,
+            title,
+            stem: entry
+                .path()
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_string(),
+            tags: extract_frontmatter_list(&content, "tags"),
+            links: extract_wikilinks(&content),
+            matches_query,
+            neighbors: Vec::new(),
+        });
+    }
+
+    let mut aliases: BTreeMap<String, String> = BTreeMap::new();
+    for page in &pages {
+        let wiki_relative_path = page.path.strip_prefix("wiki/").unwrap_or(&page.path);
+        for alias in [&page.stem, &page.title, &page.path, wiki_relative_path] {
+            aliases.insert(normalize_wiki_link(alias), page.path.clone());
+        }
+    }
+
+    let mut backlinks: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut neighbors: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for page in &pages {
+        for link in &page.links {
+            if let Some(target) = aliases.get(&normalize_wiki_link(link)) {
+                if target != &page.path {
+                    backlinks
+                        .entry(target.clone())
+                        .or_default()
+                        .insert(page.path.clone());
+                    neighbors
+                        .entry(page.path.clone())
+                        .or_default()
+                        .insert(target.clone());
+                    neighbors
+                        .entry(target.clone())
+                        .or_default()
+                        .insert(page.path.clone());
+                }
+            }
+        }
+    }
+
+    for page in &mut pages {
+        page.neighbors = neighbors
+            .remove(&page.path)
+            .unwrap_or_default()
+            .into_iter()
+            .take(MAX_KNOWLEDGE_CONTEXT_ITEMS)
+            .collect();
+    }
+
+    let contexts = pages
+        .iter()
+        .map(|page| {
+            let mut outgoing_links = page.links.clone();
+            outgoing_links.sort();
+            outgoing_links.dedup();
+            let total_outgoing = outgoing_links.len();
+            outgoing_links.truncate(MAX_KNOWLEDGE_CONTEXT_ITEMS);
+            let mut page_backlinks: Vec<String> = backlinks
+                .remove(&page.path)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            let total_backlinks = page_backlinks.len();
+            page_backlinks.truncate(MAX_KNOWLEDGE_CONTEXT_ITEMS);
+            let link_count = total_outgoing + total_backlinks;
+            (
+                page.path.clone(),
+                AgentKnowledgeContext {
+                    related_to: Vec::new(),
+                    tags: page
+                        .tags
+                        .iter()
+                        .cloned()
+                        .take(MAX_KNOWLEDGE_CONTEXT_ITEMS)
+                        .collect(),
+                    outgoing_links,
+                    backlinks: page_backlinks,
+                    link_count,
+                    latest_version: None,
+                },
+            )
+        })
+        .collect();
+    (pages, contexts)
+}
+
+fn attach_latest_version(
+    project_path: &str,
+    relative_path: &str,
+    context: &mut Option<AgentKnowledgeContext>,
+) {
+    let Some(context) = context else {
+        return;
+    };
+    context.latest_version = crate::commands::file_history::latest_file_version(
+        &Path::new(project_path).join(relative_path),
+    )
+    .map(|(timestamp, author, tool)| AgentVersionSummary {
+        timestamp,
+        author,
+        tool,
+    });
+}
+
+fn normalize_wiki_link(value: &str) -> String {
+    value
+        .split('#')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches(".md")
+        .replace('\\', "/")
+        .to_lowercase()
+        .replace(' ', "-")
+}
+
+fn graph_query_terms(query: &str) -> Vec<String> {
+    query
+        .split(|character: char| {
+            character.is_whitespace()
+                || matches!(character, ',' | '，' | ';' | '；' | ':' | '：' | '/' | '|')
+        })
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn extract_wikilinks(content: &str) -> Vec<String> {
+    let mut links = Vec::new();
+    let mut rest = content;
+    while let Some(start) = rest.find("[[") {
+        rest = &rest[start + 2..];
+        let Some(end) = rest.find("]]") else {
+            break;
+        };
+        let target = rest[..end].split('|').next().unwrap_or_default().trim();
+        if !target.is_empty() {
+            links.push(target.to_string());
+        }
+        rest = &rest[end + 2..];
+    }
+    links
+}
+
+fn extract_frontmatter_list(content: &str, key: &str) -> Vec<String> {
+    let normalized = content.replace("\r\n", "\n");
+    let Some(rest) = normalized.strip_prefix("---\n") else {
+        return Vec::new();
+    };
+    let Some(end) = rest.find("\n---") else {
+        return Vec::new();
+    };
+    let prefix = format!("{key}:");
+    let lines: Vec<&str> = rest[..end].lines().collect();
+    for (index, line) in lines.iter().enumerate() {
+        let Some(value) = line.trim().strip_prefix(&prefix) else {
+            continue;
+        };
+        let inline = value.trim();
+        if inline.starts_with('[') && inline.ends_with(']') {
+            return inline[1..inline.len() - 1]
+                .split(',')
+                .map(|item| item.trim().trim_matches(['\'', '"']).to_string())
+                .filter(|item| !item.is_empty())
+                .collect();
+        }
+        let mut values = Vec::new();
+        for next in lines.iter().skip(index + 1) {
+            let trimmed = next.trim();
+            let Some(item) = trimmed.strip_prefix('-') else {
+                break;
+            };
+            let item = item.trim().trim_matches(['\'', '"']);
+            if !item.is_empty() {
+                values.push(item.to_string());
+            }
+        }
+        return values;
+    }
+    Vec::new()
+}
+
 pub fn read_wiki_page(project_path: &str, rel_path: &str) -> Result<String, String> {
     let rel = normalize_rel_path(rel_path);
     if !is_public_read_rel(&rel) || !rel.to_ascii_lowercase().starts_with("wiki/") {
@@ -1885,60 +2239,60 @@ pub fn search_graph(
     if query.is_empty() {
         return Ok(Vec::new());
     }
-    let wiki_root = Path::new(project_path).join("wiki");
-    if !wiki_root.exists() {
+    let (pages, mut context_index) = build_knowledge_graph_snapshot(project_path, Some(&query));
+    let seed_paths: BTreeSet<String> = pages
+        .iter()
+        .filter(|page| page.matches_query)
+        .map(|page| page.path.clone())
+        .collect();
+    if seed_paths.is_empty() {
         return Ok(Vec::new());
     }
     let mut refs = Vec::new();
-    let mut seen_files = 0usize;
-    for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
-        if !entry.file_type().is_file()
-            || entry.path().extension().and_then(|s| s.to_str()) != Some("md")
-        {
-            continue;
-        }
-        seen_files += 1;
-        if seen_files > MAX_GRAPH_SEARCH_FILES {
-            eprintln!(
-                "[Agent] graph.search stopped after {MAX_GRAPH_SEARCH_FILES} markdown files in {project_path}"
-            );
-            break;
-        }
-        let Ok(content) = fs::read_to_string(entry.path()) else {
+    for page in pages {
+        let Some(page_context) = context_index.get(&page.path) else {
             continue;
         };
-        let rel = relative_to_project(project_path, entry.path());
-        if is_hidden_rel(&rel) {
+        let link_count = page_context.link_count;
+        let connected_to_seed = page
+            .neighbors
+            .iter()
+            .any(|neighbor| seed_paths.contains(neighbor));
+        if !page.matches_query && !connected_to_seed {
             continue;
         }
-        let title = search::extract_title(
-            &content,
-            entry
-                .path()
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or(&rel),
-        );
-        let link_count = count_wikilinks(&content);
-        let haystack = format!("{} {} {}", title, rel, content).to_lowercase();
-        if !haystack.contains(&query) && link_count == 0 {
-            continue;
-        }
+        let rel = page.path;
+        let relation = if page.matches_query {
+            "matched entity"
+        } else {
+            "direct neighbor"
+        };
         refs.push(AgentReference {
-            title,
-            path: rel,
+            title: page.title,
+            path: rel.clone(),
             kind: "graph".to_string(),
-            snippet: Some(format!("{link_count} wikilink(s)")),
-            score: Some(link_count as f64),
+            snippet: Some(format!("{relation}; {link_count} related link(s)")),
+            score: Some(
+                if page.matches_query {
+                    10_000.0
+                } else {
+                    5_000.0
+                } + link_count as f64,
+            ),
+            knowledge_context: {
+                let mut context = context_index.remove(&rel);
+                attach_latest_version(project_path, &rel, &mut context);
+                context
+            },
         });
-        refs.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.path.cmp(&b.path))
-        });
-        refs.truncate(top_k.clamp(1, 10));
     }
+    refs.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    refs.truncate(top_k.clamp(1, 10));
     Ok(refs)
 }
 
@@ -2013,6 +2367,7 @@ pub fn search_sources(
                 MAX_SOURCE_SNIPPET_CHARS,
             )),
             score: None,
+            knowledge_context: None,
         });
         if refs.len() >= top_k.clamp(1, 10) {
             break;
@@ -2041,10 +2396,6 @@ fn source_query_terms(query: &str) -> Vec<String> {
         })
         .map(ToString::to_string)
         .collect()
-}
-
-fn count_wikilinks(content: &str) -> usize {
-    content.match_indices("[[").count()
 }
 
 fn safe_project_join(project_path: &str, rel: &str) -> Result<PathBuf, String> {
@@ -2339,6 +2690,49 @@ mod tests {
         assert!(err.contains("wiki.read_page"));
     }
 
+    #[test]
+    fn knowledge_context_indexes_tags_links_backlinks_and_latest_version() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-context-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join(".llm-wiki")).unwrap();
+        fs::create_dir_all(root.join("wiki/entities")).unwrap();
+        let alpha = root.join("wiki/entities/alpha.md");
+        let beta = root.join("wiki/entities/beta.md");
+        fs::write(
+            &alpha,
+            "---\r\ntitle: Alpha\r\ntags: [core, test]\r\n---\r\n# Alpha\r\n\r\n[[Beta]]",
+        )
+        .unwrap();
+        fs::write(
+            &beta,
+            "---\ntitle: Beta\ntags:\n  - linked\n---\n# Beta\n\n[[entities/alpha]]",
+        )
+        .unwrap();
+        crate::commands::file_history::record_file_version(&alpha, "agent", "test.write");
+
+        let mut contexts = build_knowledge_context_index(root.to_str().unwrap());
+        let mut alpha_context = contexts.remove("wiki/entities/alpha.md");
+        attach_latest_version(
+            root.to_str().unwrap(),
+            "wiki/entities/alpha.md",
+            &mut alpha_context,
+        );
+        let alpha_context = alpha_context.as_ref().unwrap();
+        let beta_context = contexts.get("wiki/entities/beta.md").unwrap();
+
+        assert_eq!(alpha_context.tags, vec!["core", "test"]);
+        assert_eq!(alpha_context.outgoing_links, vec!["Beta"]);
+        assert_eq!(alpha_context.backlinks, vec!["wiki/entities/beta.md"]);
+        assert_eq!(alpha_context.link_count, 2);
+        assert_eq!(
+            alpha_context.latest_version.as_ref().unwrap().tool,
+            "test.write"
+        );
+        assert_eq!(beta_context.tags, vec!["linked"]);
+        assert_eq!(beta_context.backlinks, vec!["wiki/entities/alpha.md"]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn registry_executes_declared_read_page_and_deep_tools() {
         let root = std::env::temp_dir().join(format!("llm-wiki-tool-registry-{}", Uuid::new_v4()));
@@ -2556,6 +2950,8 @@ mod tests {
             write_workspace_file(root.to_str().unwrap(), "cover-image/cover.svg", "<svg/>")
                 .unwrap();
         assert_eq!(written.path, "agent-workspace/cover-image/cover.svg");
+        assert!(!written.existed_before);
+        assert_eq!(written.previous_content, None);
         assert_eq!(
             fs::read_to_string(root.join("agent-workspace/cover-image/cover.svg")).unwrap(),
             "<svg/>"
@@ -2587,6 +2983,8 @@ mod tests {
 
         assert_eq!(appended.path, "agent-workspace/ppt/index.html");
         assert_eq!(appended.bytes, "<html></html>".len());
+        assert!(appended.existed_before);
+        assert_eq!(appended.previous_content.as_deref(), Some("<html>"));
         assert_eq!(
             fs::read_to_string(root.join("agent-workspace/ppt/index.html")).unwrap(),
             "<html></html>"
@@ -2749,6 +3147,35 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn wiki_write_activity_captures_create_and_overwrite_state() {
+        let root =
+            std::env::temp_dir().join(format!("llm-wiki-agent-write-activity-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("wiki")).unwrap();
+
+        let created = write_wiki_page_with_activity(
+            root.to_str().unwrap(),
+            "wiki/page.md",
+            "# Original",
+            false,
+        )
+        .unwrap();
+        assert!(!created.existed_before);
+        assert_eq!(created.previous_content, None);
+
+        let modified = write_wiki_page_with_activity(
+            root.to_str().unwrap(),
+            "wiki/page.md",
+            "# Updated",
+            true,
+        )
+        .unwrap();
+        assert!(modified.existed_before);
+        assert_eq!(modified.previous_content.as_deref(), Some("# Original"));
+        assert_eq!(modified.reference.path, "wiki/page.md");
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn write_wiki_page_rejects_symlink_parent_escape_for_new_files() {
@@ -2832,11 +3259,48 @@ mod tests {
             "---\ntitle: Agent Graph\n---\n# Agent Graph\n\nLinks to [[Tool Registry]] and [[Context Builder]].",
         )
         .unwrap();
+        fs::write(
+            wiki_dir.join("tool-registry.md"),
+            "---\ntitle: Tool Registry\n---\n# Tool Registry\n\nTool definitions.",
+        )
+        .unwrap();
+        fs::write(
+            wiki_dir.join("context-builder.md"),
+            "---\ntitle: Context Builder\n---\n# Context Builder\n\nContext assembly.",
+        )
+        .unwrap();
+        fs::write(
+            wiki_dir.join("unrelated.md"),
+            "---\ntitle: Unrelated Hub\n---\n# Unrelated Hub\n\n[[Missing A]] [[Missing B]] [[Missing C]].",
+        )
+        .unwrap();
 
-        let refs = search_graph(root.to_str().unwrap(), "agent", 5).unwrap();
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].kind, "graph");
-        assert_eq!(refs[0].score, Some(2.0));
+        let refs = search_graph(root.to_str().unwrap(), "Agent Graph", 5).unwrap();
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0].title, "Agent Graph");
+        assert!(refs[0]
+            .snippet
+            .as_deref()
+            .unwrap()
+            .contains("matched entity"));
+        assert!(refs
+            .iter()
+            .skip(1)
+            .all(|reference| reference.kind == "graph"
+                && reference
+                    .snippet
+                    .as_deref()
+                    .unwrap()
+                    .contains("direct neighbor")));
+        assert!(refs
+            .iter()
+            .any(|reference| reference.title == "Tool Registry"));
+        assert!(refs
+            .iter()
+            .any(|reference| reference.title == "Context Builder"));
+        assert!(!refs
+            .iter()
+            .any(|reference| reference.title == "Unrelated Hub"));
         let _ = fs::remove_dir_all(root);
     }
 

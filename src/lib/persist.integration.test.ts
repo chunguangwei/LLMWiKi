@@ -268,6 +268,45 @@ describe("chat persistence — round-trip (new format)", () => {
     expect(loaded.messages[0].images).toBeUndefined()
   })
 
+  it("does not persist Agent rollback snapshots", async () => {
+    const convs = [makeConv("c1", "Agent activity")]
+    const msg: DisplayMessage = {
+      ...makeMsg("m1", "c1", "done"),
+      agentFileChanges: [{
+        id: "run:file",
+        path: `${tmp.path}/agent-workspace/file.md`,
+        tool: "workspace.write_file",
+        operation: "modified",
+        additions: 1,
+        deletions: 1,
+        diff: "-before\n+after",
+        timestamp: 1,
+        beforeContent: "before",
+        afterContent: "after",
+      }],
+    }
+
+    await saveChatHistory(tmp.path, convs, [msg])
+    const raw = await readFileRaw(`${tmp.path}/.llm-wiki-local/chats/c1.json`)
+    expect(raw).not.toContain("beforeContent")
+    expect(raw).not.toContain("afterContent")
+    expect(raw).toContain("-before\\n+after")
+  })
+
+  it("persists user-message context file attachments", async () => {
+    const convs = [makeConv("c1", "Context files")]
+    const msg: DisplayMessage = {
+      ...makeMsg("m1", "c1", "summarize this"),
+      contextFiles: [`${tmp.path}/wiki/overview.md`],
+    }
+
+    await saveChatHistory(tmp.path, convs, [msg])
+    const loaded = await loadChatHistory(tmp.path)
+    expect(loaded.messages[0].contextFiles).toEqual([
+      `${tmp.path}/wiki/overview.md`,
+    ])
+  })
+
   it("caps each conversation's persisted messages at 100 (oldest dropped)", async () => {
     const convs = [makeConv("c1")]
     const msgs = Array.from({ length: 150 }, (_, i) =>
@@ -291,6 +330,7 @@ describe("chat persistence — round-trip (new format)", () => {
       useWebSearch: true,
       useAnyTxtSearch: false,
       agentMode: "deep",
+      retrievalMode: "smart",
       selectedSkills: ["reviewer", "illustrator"],
       disabledSkills: ["legacy"],
     })
@@ -298,12 +338,14 @@ describe("chat persistence — round-trip (new format)", () => {
       useWebSearch: true,
       useAnyTxtSearch: false,
       agentMode: "deep",
+      retrievalMode: "smart",
       selectedSkills: ["reviewer", "illustrator"],
       disabledSkills: ["legacy"],
     })
 
     const raw = await readFileRaw(`${tmp.path}/.llm-wiki-local/chat-preferences.json`)
     expect(raw).toContain('"useWebSearch": true')
+    expect(raw).toContain('"retrievalMode": "smart"')
   })
 
   it("defaults chat search preferences to off when no file exists", async () => {
@@ -311,6 +353,7 @@ describe("chat persistence — round-trip (new format)", () => {
       useWebSearch: false,
       useAnyTxtSearch: false,
       agentMode: "standard",
+      retrievalMode: "standard",
       selectedSkills: [],
       disabledSkills: [],
     })
@@ -430,7 +473,7 @@ describe("chat persistence — legacy format fallback", () => {
       `${tmp.path}/.llm-wiki/conversations.json`,
       JSON.stringify([makeConv("new")]),
     )
-    await writeFileRaw(`${tmp.path}/.llm-wiki/chats/new.json`, "[]")
+    await writeFileRaw(`${tmp.path}/.llm-wiki-local/chats/new.json`, "[]")
 
     const loaded = await loadChatHistory(tmp.path)
     expect(loaded.conversations[0].id).toBe("new")

@@ -17,6 +17,7 @@ import { getFileName, getFileStem, getRelativePath, normalizePath } from "@/lib/
 import {
   sourceIdentityForPath,
   sourceReferenceIdentity,
+  sourceSummarySlugFromIdentity,
 } from "@/lib/source-identity"
 import {
   parseFrontmatterArray,
@@ -24,7 +25,7 @@ import {
   writeFrontmatterArray,
   writeSources,
 } from "@/lib/sources-merge"
-import { removeFromIngestCache } from "@/lib/ingest-cache"
+import { moveIngestCacheEntry, removeFromIngestCache } from "@/lib/ingest-cache"
 import { removePageEmbedding } from "@/lib/embedding"
 import {
   buildDeletedKeys,
@@ -108,6 +109,104 @@ export interface DeleteSourcesResult {
   deletedWikiPaths: string[]
   rewrittenSourcePages: number
   skippedPages: number
+}
+
+/**
+ * Preserve source ownership when a watcher proves that a delete/create pair
+ * is an unchanged file move. The caller must establish content identity from
+ * watcher hashes; this function intentionally does not infer moves by name.
+ */
+export async function migrateSourcePath(
+  projectPath: string,
+  oldSourcePath: string,
+  newSourcePath: string,
+): Promise<number> {
+  const pp = normalizePath(projectPath)
+  const oldIdentity = sourceIdentityForPath(pp, oldSourcePath)
+  const newIdentity = sourceIdentityForPath(pp, newSourcePath)
+  // Cache keys preserve spelling, so case-only renames still require a
+  // migration even on case-insensitive filesystems.
+  if (oldIdentity === newIdentity) return 0
+
+  const allMd = flattenMd(await listDirectory(`${pp}/wiki`))
+  const oldBaseName = getFileName(oldIdentity).toLowerCase()
+  const rawSourceFiles = flattenFiles(await listDirectory(`${pp}/raw/sources`, true))
+  const matchingBasenames = rawSourceFiles.filter(
+    (file) => getFileName(file.path).toLowerCase() === oldBaseName,
+  )
+  // Legacy pages sometimes stored only `config.yaml` for a nested source.
+  // Rewrite that shorthand only when the live source basename is unique.
+  const canMigrateLegacyBasename = oldIdentity.includes("/") && matchingBasenames.length === 1
+  const writes: Array<{ path: string; original: string; migrated: string }> = []
+  for (const file of allMd) {
+    const content = await readFile(file.path)
+    if (!content) continue
+    const sources = parseSources(content)
+    let changed = false
+    const migrated = sources.map((source) => {
+      const normalizedSource = sourceReferenceIdentity(source)
+      const matchesIdentity = normalizedSource.toLowerCase() === oldIdentity.toLowerCase()
+      const matchesUniqueLegacyBasename = canMigrateLegacyBasename &&
+        !normalizedSource.includes("/") &&
+        normalizedSource.toLowerCase() === oldBaseName
+      if (!matchesIdentity && !matchesUniqueLegacyBasename) {
+        return source
+      }
+      changed = true
+      return newIdentity
+    })
+    if (!changed) continue
+    writes.push({
+      path: file.path,
+      original: content,
+      migrated: writeSources(content, Array.from(new Set(migrated))),
+    })
+  }
+
+  const oldSummaryRel = `wiki/sources/${sourceSummarySlugFromIdentity(oldIdentity)}.md`
+  const newSummaryRel = `wiki/sources/${sourceSummarySlugFromIdentity(newIdentity)}.md`
+  const oldSummaryPath = `${pp}/${oldSummaryRel}`
+  const newSummaryPath = `${pp}/${newSummaryRel}`
+  const summaryMoves = new Map<string, string>()
+  const shouldMoveSummary = oldSummaryRel !== newSummaryRel && await fileExists(oldSummaryPath)
+  if (shouldMoveSummary && await fileExists(newSummaryPath)) {
+    throw new Error(`Cannot migrate source summary because destination exists: ${newSummaryRel}`)
+  }
+
+  const completedWrites: typeof writes = []
+  let newSummaryCreated = false
+  try {
+    for (const write of writes) {
+      await writeFile(write.path, write.migrated)
+      completedWrites.push(write)
+    }
+    if (shouldMoveSummary) {
+      const migratedSummary = writes.find((write) => write.path === oldSummaryPath)?.migrated
+        ?? await readFile(oldSummaryPath)
+      await writeFile(newSummaryPath, migratedSummary)
+      newSummaryCreated = true
+      await deleteFile(oldSummaryPath)
+      summaryMoves.set(oldSummaryRel, newSummaryRel)
+    }
+    await moveIngestCacheEntry(pp, oldIdentity, newIdentity, summaryMoves)
+    return writes.length
+  } catch (err) {
+    if (newSummaryCreated) {
+      try {
+        await deleteFile(newSummaryPath)
+      } catch {
+        // Best-effort rollback; preserve the original error.
+      }
+    }
+    for (const write of completedWrites.reverse()) {
+      try {
+        await writeFile(write.path, write.original)
+      } catch {
+        // Best-effort rollback; preserve the original error.
+      }
+    }
+    throw err
+  }
 }
 
 export function isIngestableSourcePath(path: string): boolean {

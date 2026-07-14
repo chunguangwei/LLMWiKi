@@ -1631,7 +1631,7 @@ describe("embedAllPages", () => {
     warn.mockRestore()
   })
 
-  it("does not clear existing chunks when forced rebuild cannot embed every page", async () => {
+  it("updates successful pages without clearing existing chunks when some pages fail", async () => {
     listDirectoryMock.mockResolvedValueOnce([
       { name: "a.md", path: "/proj/wiki/a.md", is_dir: false },
       { name: "b.md", path: "/proj/wiki/b.md", is_dir: false },
@@ -1653,10 +1653,11 @@ describe("embedAllPages", () => {
       message = err instanceof Error ? err.message : String(err)
     }
     expect(message).toContain("1 of 2 pages could not be embedded")
+    expect(message).toContain("1 successful page(s) were updated")
     expect(message).not.toContain("Re-index failed: Re-index failed")
 
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_clear_chunks")
-    expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_upsert_chunks")
+    expect(mockInvoke.mock.calls.map((call) => call[0])).toContain("vector_upsert_chunks")
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_drop_legacy")
   })
 

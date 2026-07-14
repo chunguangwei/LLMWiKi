@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  English | <a href="README_CN.md">中文</a> | <a href="README_JA.md">日本語</a>
+  English | <a href="README_CN.md">中文</a> | <a href="README_JA.md">日本語</a> | <a href="README_KO.md">한국어</a>
 </p>
 
 ---
@@ -28,23 +28,11 @@
   <img src="assets/overview.jpg" width="100%" alt="Overview">
 </p>
 
-> 📦 **This is the LLMWiKi fork** — additions on top of nashsu/llm_wiki:
-> **`.llmwiki` one-click import/export**, **per-page scheduled web refresh**,
-> **cloud-share-friendly local state split**, **complete Chinese i18n with
-> one-click language switching**, **34-type comprehensive schema + smart
-> splitting**, **self-hosted in-place auto-update**, **encrypted config
-> backup**, **docx/Office source preview**, and an **editable page-type
-> selector**.
-> See the outer [`UPSTREAM.md`](UPSTREAM.md) and [`docs/features.md`](docs/features.md);
-> for day-to-day usage check [`docs/user-manual.md`](docs/user-manual.md),
-> for custom categories/rules see [`docs/user-rules.md`](docs/user-rules.md).
-> Most of this README comes from upstream; the fork additions are in sections 19–27 below.
-
 ## Features
 
 - **Two-Step Chain-of-Thought Ingest** — LLM analyzes first, then generates wiki pages with source traceability and incremental cache
 - **Multimodal Image Ingestion** — extract embedded images from PDFs, generate factual captions with a vision LLM, surface them in image-aware search results with lightbox preview and jump-to-source
-- **Image Upload → Wiki (v0.4.22)** — paste a screenshot, drag an image file, or pick one from the sources toolbar; vision LLM extracts content as markdown (description + verbatim OCR + structure) → smart-split + 34-type ingest → wiki page. IPC-safe in-webview downsize so 4K screenshots don't blow up Tauri's IPC channel
+- **Optional MinerU PDF Parsing** — use MinerU cloud parsing for complex PDFs with tables, formulas, and dense layouts; the built-in local parser remains the default
 - **4-Signal Knowledge Graph** — relevance model with direct links, source overlap, Adamic-Adar, and type affinity
 - **Louvain Community Detection** — automatic knowledge cluster discovery with cohesion scoring
 - **Graph Insights** — surprising connections and knowledge gaps with one-click Deep Research
@@ -53,17 +41,19 @@
 - **Folder Import** — recursive folder import preserving directory structure, folder context as LLM classification hint
 - **Source Folder Auto-Watch** — detects external changes in `raw/sources/` and keeps ingest/delete cleanup in sync
 - **Deep Research** — LLM-optimized search topics, multi-query web search via Tavily, SerpApi, or SearXNG, auto-ingest results into wiki
+- **Rust Backend Chat Agent** — tool-using chat runtime with wiki/source/graph/web retrieval, workspace file generation, shell approval, cancellation, and streaming tool events
+- **Agent Skills** — scan and enable local `SKILL.md` folders, select skills with `/skill`, and let the Agent read skill instructions on demand
+- **Generated Outputs Preview** — Agent-created Markdown, HTML, images, and other workspace files appear as outputs with preview and quick folder access
+- **Mermaid Diagram Rendering** — render Mermaid code blocks directly in chat and preview, with compact syntax-error cards instead of raw parser output
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
-- **Local HTTP API + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API (token-protected) for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/chunguangwei/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
-- **Patch the wiki from chat** — ask the assistant to correct/update a page and it proposes the change as a diff card you Apply in one click (auto-backup to `.llm-wiki/page-history/` first, created date preserved); when it can't tell which page to edit, the suggestion routes to the Review queue
-- **Chunked long-source ingest** — sources exceeding the model's context budget are analyzed in overlapping semantic chunks with a resumable checkpoint instead of being silently truncated; generation output limits scale with the context window
+- **Local HTTP API + MCP Server + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API and bundled MCP server for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/nashsu/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
 
 ## What is this?
 
 LLM Wiki is a cross-platform desktop application that turns your documents into an organized, interlinked knowledge base — automatically. Instead of traditional RAG (retrieve-and-answer from scratch every time), the LLM **incrementally builds and maintains a persistent wiki** from your sources. Knowledge is compiled once and kept current, not re-derived on every query.
 
-This project is based on [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — a methodology for building personal knowledge bases using LLMs. We implemented the core ideas as a full desktop application with significant enhancements.
+This project is based on [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — a methodology for building personal knowledge bases using LLMs. llm_wiki is created and maintained by [nash_su](https://x.com/nash_su), who implemented the core ideas as a full desktop application with significant enhancements.
 
 <p align="center">
   <img src="assets/llm_wiki_arch.jpg" width="100%" alt="LLM Wiki Architecture">
@@ -251,7 +241,17 @@ The original has a single query interface. We built **full multi-conversation su
 - **Regenerate** — re-generate the last response with one click (removes last assistant + user message pair, re-sends)
 - **Save to Wiki** — archive valuable answers to `wiki/queries/`, then auto-ingest to extract entities/concepts into the knowledge network
 
-### 9. Thinking / Reasoning Display
+### 9. Rust Backend Chat Agent & Skills
+
+Not in the original. Chat now runs through a Rust backend Agent runtime rather than a browser-only TypeScript loop:
+
+- **Tool-using Agent** — can choose wiki search, source search, graph search, web search, AnyTXT, workspace file tools, approved shell commands, and skill file reads
+- **Skill management** — scan project and user skill folders, enable or disable skills, and pick a skill per conversation with `/skill` completion
+- **Generated workspace outputs** — files produced by Agent tools are kept under `agent-workspace/`, shown as generated outputs, and can be previewed or opened from the chat
+- **User interaction forms** — skills can ask for structured user input such as single choice, multiple choice, or free text without hardcoding skill-specific UI
+- **Safer execution model** — project workspace commands can continue smoothly, while external shell commands still require explicit approval
+
+### 10. Thinking / Reasoning Display
 
 Not in the original. For LLMs that emit `<think>` blocks (DeepSeek, QwQ, etc.):
 
@@ -259,16 +259,18 @@ Not in the original. For LLMs that emit `<think>` blocks (DeepSeek, QwQ, etc.):
 - **Collapsed by default** — thinking blocks hidden after completion, click to expand
 - **Visual separation** — thinking content shown in distinct style, separate from the main response
 
-### 10. KaTeX Math Rendering
+### 11. Markdown Rendering: KaTeX Math & Mermaid Diagrams
 
-Not in the original. Full LaTeX math support across all views:
+Not in the original. Rich Markdown rendering across chat and preview:
 
 - **KaTeX rendering** — inline `$...$` and block `$$...$$` formulas rendered via remark-math + rehype-katex
 - **Milkdown math plugin** — preview editor renders math natively via @milkdown/plugin-math
 - **Auto-detection** — bare `\begin{aligned}` and other LaTeX environments automatically wrapped with `$$` delimiters
 - **Unicode fallback** — 100+ symbol mappings (α, ∑, →, ≤, etc.) for simple inline notation outside math blocks
+- **Mermaid code blocks** — fenced `mermaid` diagrams render directly as flowcharts, sequence diagrams, and other Mermaid-supported visuals
+- **Compact Mermaid errors** — syntax failures are captured inside a small error card instead of spilling raw parser output into the chat
 
-### 11. Review System (Async Human-in-the-Loop)
+### 12. Review System (Async Human-in-the-Loop)
 
 The original suggests staying involved during ingest. We added an **asynchronous review queue**:
 
@@ -277,7 +279,7 @@ The original suggests staying involved during ingest. We added an **asynchronous
 - **Search queries generated at ingest time** — LLM pre-generates optimized web search queries for each review item
 - User handles reviews at their convenience — doesn't block ingest
 
-### 12. Deep Research
+### 13. Deep Research
 
 <p align="center">
   <img src="assets/1-deepresearch.jpg" width="100%" alt="Deep Research">
@@ -296,7 +298,7 @@ Not in the original. When the LLM identifies knowledge gaps:
 - **Task queue** with 3 concurrent tasks
 - **Research Panel** — dedicated sidebar panel with dynamic height, real-time streaming progress
 
-### 13. Browser Extension (Web Clipper)
+### 14. Browser Extension (Web Clipper)
 
 <p align="center">
   <img src="assets/4-chrome_extension_webclipper.jpg" width="100%" alt="Chrome Extension Web Clipper">
@@ -312,13 +314,13 @@ The original mentions Obsidian Web Clipper. We built a **dedicated Chrome Extens
 - **Clip watcher** — polls every 3 seconds for new clips, processes automatically
 - **Offline preview** — shows extracted content even when app is not running
 
-### 14. Multi-format Document Support
+### 15. Multi-format Document Support
 
 The original focuses on text/markdown. We support structured extraction preserving document semantics:
 
 | Format | Method |
 |--------|--------|
-| PDF | pdf-extract (Rust) with file caching |
+| PDF | Built-in pdf-extract (Rust) with file caching; optional MinerU cloud parsing for tables, formulas, and complex layouts |
 | DOCX | docx-rs — headings, bold/italic, lists, tables → structured Markdown |
 | PPTX | ZIP + XML — slide-by-slide extraction with heading/list structure |
 | XLSX/XLS/ODS | calamine — proper cell types, multi-sheet support, Markdown tables |
@@ -326,7 +328,9 @@ The original focuses on text/markdown. We support structured extraction preservi
 | Video/Audio | Built-in player |
 | Web clips | Readability.js + Turndown.js → clean Markdown |
 
-### 15. File Deletion with Cascade Cleanup
+> MinerU is optional. When enabled, PDF files are uploaded to MinerU cloud for parsing; keep the built-in parser for sensitive documents. If MinerU fails, LLM Wiki falls back to the built-in parser. MinerU usage is subject to its file size, page count, and quota limits.
+
+### 16. File Deletion with Cascade Cleanup
 
 The original has no deletion mechanism. We added **intelligent cascade deletion**:
 
@@ -336,7 +340,7 @@ The original has no deletion mechanism. We added **intelligent cascade deletion*
 - **Index cleanup** — removed pages are purged from index.md
 - **Wikilink cleanup** — dead `[[wikilinks]]` to deleted pages are removed from remaining wiki pages
 
-### 16. Configurable Context Window
+### 17. Configurable Context Window
 
 Not in the original. Users can configure how much context the LLM receives:
 
@@ -344,7 +348,7 @@ Not in the original. Users can configure how much context the LLM receives:
 - **Proportional budget allocation** — larger windows get proportionally more wiki content
 - **60/20/5/15 split** — wiki pages / chat history / index / system prompt
 
-### 17. Cross-Platform Compatibility
+### 18. Cross-Platform Compatibility
 
 The original is platform-agnostic (abstract pattern). We handle concrete cross-platform concerns:
 
@@ -355,7 +359,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 - **Tauri v2** — native desktop on macOS, Windows, Linux
 - **GitHub Actions CI/CD** — automated builds for macOS (ARM + Intel), Windows (.msi), Linux (.deb / .AppImage)
 
-### 18. Other Additions
+### 19. Other Additions
 
 - **i18n** — English + Chinese interface (react-i18next)
 - **Settings persistence** — LLM provider, API key, model, context size, language saved via Tauri Store
@@ -364,122 +368,6 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 - **Multi-provider LLM support** — OpenAI, Anthropic, Google, Ollama, Custom — each with provider-specific streaming and headers
 - **15-minute timeout** — long ingest operations won't fail prematurely
 - **dataVersion signaling** — graph and UI automatically refresh when wiki content changes
-
----
-
-> The sections below are **LLMWiKi fork** additions on top of nashsu/llm_wiki. Full user docs in [`docs/features.md`](docs/features.md).
-
-### 19. `.llmwiki` One-Click Import / Export
-
-Bundle an entire project (`raw/` + `wiki/` + `.llm-wiki/` shared metadata) into a single `.llmwiki` zip for cross-device or team transfer:
-
-- **Export** — Settings → Import / Export → *Export package*; includes SHA256 manifest, app version, optional exporter name
-- **Import** — choose *Skip existing files* or *Overwrite everything*; *Inspect* a package before importing
-- **Verification** — every file's SHA256 is checked against the manifest at import time
-- **Excluded by design** — chat history (private), API keys (not in project dir), vector DB (rebuilt)
-
-Use cases: multi-device sync, team-wide first-time distribution, periodic snapshots.
-
-### 20. Per-Page Scheduled Web Refresh
-
-Mark wiki pages that drift (project status, tech progress, people roles) with a refresh policy. A background scheduler uses LLM + web search to detect staleness; suggestions land in the Review queue:
-
-Add to a page's frontmatter:
-```yaml
-refresh-enabled: true
-refresh-interval-days: 7
-refresh-queries:                  # optional; LLM auto-generates if omitted
-  - "mixture of experts 2026"
-```
-
-- **Scheduler** — Settings → Scheduled Web Refresh (global toggle + scan frequency)
-- **Runner** — due page → multi-provider search → LLM verdict (STATUS=fresh|stale) → stale pages enqueue a *Suggestion* in Review
-- **Status** — `refresh-last-result: ok / no-change / pending-review / error` auto-written back to frontmatter
-- **One-click per-page refresh** — *Web refresh* button above the frontmatter panel in the editor
-
-### 21. Local vs Shared Config Split (cloud-share friendly)
-
-Originally `.llm-wiki/` mixed project-shared metadata with private chats — bad for cloud sync. Now split:
-
-- `.llm-wiki/` — **project-shared**: ingest cache, review queue, page history, project.json
-- `.llm-wiki-local/` — **per-user private**: chat conversations, conversations.json
-
-Existing users auto-migrate on first launch. Deployment guide in [`docs/cloud-sharing.md`](docs/cloud-sharing.md) (covers iCloud / OneDrive / Dropbox / Git rules for excluding `.llm-wiki-local/`).
-
-API keys have always lived in the OS app-data dir, never inside the project dir.
-
-### 22. Chinese i18n Completion + One-Click Language Switch
-
-- **Completion**: the three new UI sections (`importExport`, `scheduledRefresh`, `editor.refresh`) previously fell back to English `defaultValue`s. Now `app/src/i18n/{en,zh}.json` are fully aligned and Chinese users see Chinese strings everywhere.
-- **One-click switch**: upstream's flow required selecting a language then clicking Save. In this fork, clicking *Settings → Interface → 中文 / English* **immediately calls `i18n.changeLanguage()` + persists** — every `useTranslation()` component re-renders instantly without a Save step.
-- Adding a language: copy `en.json` → translate → register in `i18n/index.ts` and `interface-section.tsx::UI_LANGUAGES`; the `i18n-parity` test enforces key alignment.
-
-### 23. Comprehensive Schema (34 types) + Smart Splitting
-
-Upstream hard-coded every source into entity/concept pages — a travel plan exploded into 20 attraction pages, a book into 50 character pages. This fork makes page categorization **fully `schema.md`-driven** and ships a **Comprehensive template (34 types, CJK-first directories)** covering everyday documents. The LLM picks one of two behaviors per source:
-
-- **Single-page** — one source → one page, no splitting: travel plans, manuals, project docs, tutorials, books, recipes, notes, reports, articles, meetings, decisions, films, music, games, menus, shopping lists, contracts, invoices, medical records, code snippets, API docs, error logs …
-- **Splittable** — source summary + concept/tool/person subpages: papers, concepts, tools, datasets, people, companies, regulations
-
-New projects default to it. Existing projects upgrade via **Settings → Schema Upgrade** (backs up `schema.md` → `.bak`, writes the comprehensive schema in the UI language, pre-creates the 34 dirs; old pages stay put). Categories are just a starting point — edit `schema.md` to add/rename types. Full docs: [`docs/features.md §5`](docs/features.md#5-智能拆分--splitting-rules综合-schema--单页类型) and [`docs/user-rules.md`](docs/user-rules.md). A full ready-to-copy example `schema.md` (Chinese) is in [`README_CN.md`](README_CN.md#示例一份完整的-schemamd可参考--复制).
-
-### 24. Self-Hosted In-Place Auto-Update
-
-The updater endpoint points at this fork's own GitHub releases (`chunguangwei/LLMWiKi`), upgraded to a **true in-place update** (`tauri-plugin-updater` + `tauri-plugin-process`): background check → banner / Settings → About → *Update now* → download signed artifact → verify with the built-in minisign pubkey → swap in place → *Restart to apply*. **Config and API keys are never touched** (no uninstall/reinstall). Release flow + signing-key backup in [`docs/release-and-update.md`](docs/release-and-update.md).
-
-### 25. Encrypted Config Backup / Migration (never lose your API keys)
-
-**Settings → Config Backup.** Two modes:
-
-- **Export / Import** (cross-machine): set a passphrase → export an encrypted `.llmwiki-config` (Argon2id + AES-256-GCM); import with the same passphrase on the new machine. The passphrase is the only key — nothing decryptable lives in the binary.
-- **Startup auto-backup** (same-machine reinstall): each launch encrypts config to `~/Documents/LLMWiki/config-backup.enc` (key in the OS keychain); a fresh install auto-restores, no passphrase needed.
-
-Details: [`docs/features.md §6.4`](docs/features.md#64-加密配置备份防丢-key).
-
-### 26. docx / Office Source Preview
-
-Raw Word/Office source files (`.docx` `.xlsx` `.pptx` `.odt` `.ods` `.odp`) now render their **extracted text** in the preview panel instead of "Preview not available for this file type". They're categorized as `office` on the frontend so the panel reads them like PDFs (backend extraction via `docx-rs` / `calamine`).
-
-### 27. Editable Page-Type Selector
-
-The left knowledge tree groups pages by their frontmatter `type:` slug. That slug is now editable straight from the preview panel: the type chip is a **dropdown** (localized labels, reusing the `knowledgeTree.types.*` strings). Pick a category and the page's `type:` is rewritten and it **instantly regroups** in the sidebar — no more hand-editing YAML or memorizing the 34 English slugs. An unknown/legacy current slug is kept selectable so it's never silently dropped; enabled for `wiki/` pages only (not `index.md` / `log.md` / project docs). Implementation: `setFrontmatterType()` in `lib/frontmatter.ts` rewrites only the frontmatter block; `preview-panel.tsx` writes + bumps `dataVersion` so the tree reloads.
-
-### 28. Image Upload → Vision-LLM → Wiki (v0.4.22)
-
-Paste, drag, or pick standalone images into chat or sources — the vision LLM extracts the image's content as wiki-ready markdown (description + verbatim OCR + structure) which then runs through the normal smart-split + 34-type ingest into the wiki.
-
-Three entry points, one pipeline:
-
-| Entry point | Where | What happens |
-|---|---|---|
-| **Clipboard paste** | Chat input (Cmd+V / Ctrl+V) | Image bytes → in-memory base64 → green 🖼️ chip in input bar |
-| **Drag-drop** | Anywhere in the app window | Tauri's `onDragDropEvent` splits image extensions to `stagedImages`, everything else keeps going through file ingest |
-| **Sources Picker** | Sources view toolbar → 🖼️ Image button | Native file picker scoped to image extensions, ingests immediately (no chat round-trip) |
-
-What `addImagesToRawWithContext` does on send / ingest:
-
-1. **Downsize first, IPC last.** Tauri's IPC custom-protocol on macOS collapses on 2 MB+ payloads (the dreaded `Error: The resource id <n> is invalid.`) and silently falls back to `postMessage` which can't carry the request body either. The image is downsized **inside the webview** (Canvas, zero IPC) to 1280 px on the long side @ JPEG quality 0.85 — a 1.5 MB PNG screenshot shrinks to ~200 KB JPEG. The shrunk bytes are what gets written to disk AND sent to the vision LLM, so no large payload ever crosses IPC. Drag-drop uses `convertFileSrc` so the original bytes don't cross IPC either.
-2. **Vision call** via `extractImageAsMarkdown()` (`vision-caption.ts`). Uses `multimodalConfig` from `wiki-store` (dedicated multimodal endpoint when configured, falls back to main LLM otherwise). Output is full markdown — description + verbatim OCR + structural markdown — not a 2-4 sentence alt-text caption.
-3. **Refusal heuristic.** When the configured model can't actually see the image (text-only LLM, or Anthropic-compat proxy that strips image blocks), `looksLikeNoImageRefusal()` matches the typical "no image visible" / "看不到" / "cannot see" replies and swaps the LLM's confused output for an actionable placeholder pointing the user at **Settings → Multimodal**. The chat assistant reply and the sources alert also surface a count of refusals so users see the bad-config signal up front.
-4. **Companion `.md`** is written next to the image with frontmatter (`source_image`, `media_type`, `captured_at`), the chat-context block, the image reference, and the extracted markdown. Image reference uses the **absolute filesystem path** so the wiki's `markdown-image-resolver` (which treats relative paths as wiki-root-relative) doesn't 404 on `raw/sources/images/` paths.
-5. **Ingest queue.** The `.md` (not the image) enqueues for normal smart-split + 34-type processing.
-
-Cross-platform: works on macOS, Windows, and Linux. The Canvas downsize is webview-native (no platform-specific code). The new `write_binary_file` Rust command (base64 → bytes → file) handles clipboard images on all three. The drag-drop event surface is Tauri's cross-platform API.
-
-Settings → **Vision / Image OCR** (renamed from "Image Captioning") controls both this new flow AND the existing PDF/DOCX caption flow. Master toggle uses emerald green for an unambiguous ON state.
-
-### 29. Agentic Ingest — experimental (v0.4.23)
-
-A second ingestion pipeline that runs as a multi-turn agent loop instead of the classic single-shot analyse + generate. Gated behind **Settings → Labs → "Agent ingest (experimental)"** (default OFF); enabling adds a 🤖 button next to each source file.
-
-What it does differently:
-
-- **The LLM is the active agent**, not a passive transformer. The runner exposes 11 tools (`read_outline`, `read_chunk`, `search_source`, `list_wiki_pages`, `read_wiki_page`, `mark_section_covered`, `surface_gap`, `write_wiki_page`, `update_wiki_page`, `link_pages`, `done`). The model picks which to call in what order to ingest the source.
-- **Long-source friendly**: the source is pre-chunked with `chunkMarkdown`, indexed for BM25 keyword search (CJK-aware), and the agent reads only chunks it actually needs — no Lost-in-the-Middle effect from stuffing a 100K-token source into one context.
-- **Checkpoint per turn**: state lands in `.llm-wiki/agent-checkpoints/<sourceHash>.json` after every turn. A crash, network failure, or cancelled run leaves a clean resume point; the next attempt picks up where the loop stopped. Source-hash invalidation handles "I edited the source between runs" correctly.
-- **Independent verify pass**: after the loop ends, a separate LLM call cross-checks the source outline against the wiki pages produced. Uncovered topics surface in the **Review** tab as `missing-page` items with Create Page / Skip options.
-
-Status: works end-to-end (333 unit tests against the pipeline), but real-long-source prompt tuning is ongoing. Users who flip the Labs toggle are explicitly opting into Phase F validation — the tool surface and prompts may change without a major-version bump while we tune. See `docs/agent-ingest-design.md` for the full architecture, the 11-tool protocol, and the rationale behind the design.
 
 ## Tech Stack
 
@@ -492,7 +380,7 @@ Status: works end-to-end (333 unit tests against the pipeline), but real-long-so
 | Graph | sigma.js + graphology + ForceAtlas2 |
 | Search | Tokenized search + graph relevance + optional vector (LanceDB) |
 | Vector DB | LanceDB (Rust, embedded, optional) |
-| PDF | pdf-extract |
+| PDF | pdf-extract + optional MinerU cloud parser |
 | Office | docx-rs + calamine |
 | i18n | react-i18next |
 | State | Zustand |
@@ -501,24 +389,19 @@ Status: works end-to-end (333 unit tests against the pipeline), but real-long-so
 
 ## Installation
 
-### Pre-built Binaries (this fork)
+### Pre-built Binaries
 
-Download the latest from **[chunguangwei/LLMWiKi releases](https://github.com/chunguangwei/LLMWiKi/releases/latest)**:
-
-| Platform | File | First launch |
-|---|---|---|
-| macOS (Apple Silicon) | `LLM.Wiki_<version>_aarch64.dmg` | If "damaged": `xattr -dr com.apple.quarantine "/Applications/LLM Wiki.app"` |
-| Windows (x64 only) | `LLM.Wiki_<version>_x64-setup.exe` (recommended) / `_x64_en-US.msi` | SmartScreen → **More info → Run anyway** |
-| Linux | `.deb` / `.AppImage` / `.rpm` (x64 + arm64) | Install per distro |
-
-> Artifacts aren't commercially code-signed (OSS norm; doesn't affect function/security — auto-update has its own minisign verification). After installing once, you don't need to download again: new versions are offered in-app as a one-click in-place update. Full download/install notes: [`docs/release-and-update.md §1`](docs/release-and-update.md#1-下载最新版终端用户视角).
+Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
+- **macOS**: `.dmg` (Apple Silicon + Intel)
+- **Windows**: `.msi`
+- **Linux**: `.deb` / `.AppImage`
 
 ### Build from Source
 
 ```bash
 # Prerequisites: Node.js 20+, Rust 1.70+
-git clone https://github.com/chunguangwei/LLMWiKi.git
-cd LLMWiKi
+git clone https://github.com/nashsu/llm_wiki.git
+cd llm_wiki
 npm install
 npm run tauri dev      # Development
 npm run tauri build    # Production build
@@ -543,30 +426,36 @@ npm run tauri build    # Production build
 8. Check **Review** for items needing your attention
 9. Run **Lint** periodically to maintain wiki health
 
-## Local HTTP API + AI Agent Skill
+## Local HTTP API + MCP Server + AI Agent Skill
 
 LLM Wiki ships a built-in local HTTP API at `http://127.0.0.1:19828` (token-protected, `127.0.0.1`-only) so external tools — including AI agents like **Claude Code**, **Codex**, or any HTTP-capable script — can query your wiki:
 
 - `GET /api/v1/health` — server status (no auth)
 - `GET /api/v1/projects` — list projects
 - `GET /api/v1/projects/{id}/files` / `files/content` — read files and content
+- `GET /api/v1/projects/{id}/reviews?status=unresolved` — export Review tab items for wiki maintenance (`status`: `unresolved`, `resolved`, or `all`; optional `type` and `limit`)
+- `PATCH /api/v1/projects/{id}/reviews/{reviewId}` — update one Review item (JSON body `{ "resolved": true, "action": "label" }`; `resolved` defaults to true, pass false to reopen)
+- `POST /api/v1/projects/{id}/reviews/resolve` — bulk-resolve Review items (JSON body `{ "ids": [...], "action": "label" }`), returns `{ resolved, notFound, count }`; the Review tab's Refresh button re-reads the result from disk
 - `POST /api/v1/projects/{id}/search` — **hybrid** retrieval (keyword + vector) returning `mode`, `tokenHits`, `vectorHits`, per-result `vectorScore`
+- `POST /api/v1/projects/{id}/chat` — non-streaming backend Agent chat endpoint returning an assistant message, references, usage, and tool events for wiki/source/web/AnyTXT retrieval; `mode: "deep"` broadens evidence collection, while the full Deep Research workspace remains available in the desktop UI
 - `GET /api/v1/projects/{id}/graph` — wikilinks graph
 - `POST /api/v1/projects/{id}/sources/rescan` — trigger a backend rescan
 
-Enable + generate a token in **Settings → API Server**.
+Enable the API, generate a token, and choose whether local unauthenticated access is allowed in **Settings → API + MCP**.
+
+For MCP-compatible clients, LLM Wiki also includes a local MCP server in `mcp-server/`. After building it with `npm run mcp:build`, **Settings → API + MCP** shows a copyable MCP client configuration with the correct local path for your machine. The MCP tools call the same API surface, so agent clients can list projects, read files, export unresolved Review items, run hybrid search, inspect the graph, trigger source rescans, and call the same Rust backend Agent chat endpoint without custom HTTP glue code.
 
 ### Plug your AI agent in with one command
 
 A ready-made **agent skill** for LLM Wiki lives in its own repo. Install it into Claude Code / Codex / any skills-compatible runtime:
 
 ```bash
-npx skills add https://github.com/chunguangwei/llm_wiki_skill.git --skill llm_wiki_skill
+npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm-wiki
 ```
 
 After install, the agent can answer prompts like "what does my LLM Wiki say about X", "search my 知识库 for Y", "show the neighborhood of node Z in my wiki graph", and "rescan my wiki sources" by talking to your locally-running app — read-only by default, citing wiki page paths so you can verify in-app.
 
-- **Skill repo**: <https://github.com/chunguangwei/llm_wiki_skill>
+- **Skill repo**: <https://github.com/nashsu/llm_wiki_skill>
 - **Trigger discipline**: it intentionally does **not** trigger on generic "search my notes" / "check my Obsidian / Notion / Logseq" — only when you explicitly name LLM Wiki / `my wiki` / `知识库`.
 
 ## Project Structure
@@ -574,29 +463,31 @@ After install, the agent can answer prompts like "what does my LLM Wiki say abou
 ```
 my-wiki/
 ├── purpose.md              # Goals, key questions, research scope
-├── schema.md               # Page types & naming (Comprehensive template = 34 types)
+├── schema.md               # Wiki structure rules, page types
 ├── raw/
 │   ├── sources/            # Uploaded documents (immutable)
 │   └── assets/             # Local images
-├── wiki/                   # LLM-written pages, grouped per schema.md
+├── wiki/
 │   ├── index.md            # Content catalog
 │   ├── log.md              # Operation history
 │   ├── overview.md         # Global summary (auto-updated)
-│   ├── travel-plans/ manuals/ books/ recipes/ contracts/ ...   # single-page types
-│   └── papers/ concepts/ tools/ datasets/ people/ ...          # splittable: summary + subpages
-│                           # (Chinese UI creates CJK dir names: 旅游方案/ 书籍/ 论文/ ...)
+│   ├── entities/           # People, organizations, products
+│   ├── concepts/           # Theories, methods, techniques
+│   ├── sources/            # Source summaries
+│   ├── queries/            # Saved chat answers + research
+│   ├── synthesis/          # Cross-source analysis
+│   └── comparisons/        # Side-by-side comparisons
 ├── .obsidian/              # Obsidian vault config (auto-generated)
-├── .llm-wiki/              # Project-shared metadata (cloud-sync friendly)
-└── .llm-wiki-local/        # Per-user private (chats; exclude from cloud sync)
+└── .llm-wiki/              # App config, chat history, review items
 ```
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=chunguangwei%2FLLMWiKi&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=nashsu%2Fllm_wiki&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=chunguangwei/LLMWiKi&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=chunguangwei/LLMWiKi&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=chunguangwei/LLMWiKi&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&legend=top-left" />
  </picture>
 </a>
 

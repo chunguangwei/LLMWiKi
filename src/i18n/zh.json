@@ -85,6 +85,58 @@
     "knowledge": "知识库",
     "files": "文件"
   },
+  "editor": {
+    "edit": "编辑",
+    "done": "完成",
+    "editRaw": "编辑原始 Markdown",
+    "doneEditing": "完成编辑",
+    "selection": {
+      "askAgent": "让 Agent 处理选中内容",
+      "placeholder": "解释、改写、缩短……",
+      "send": "发送",
+      "ask": "询问",
+      "edit": "修改",
+      "generating": "正在生成……",
+      "stop": "停止",
+      "askAgain": "继续询问",
+      "askOnlyHint": "该渲染选区无法唯一映射到 Markdown 源码位置。你仍可询问，但为防止误改，当前不能直接写回修改。",
+      "wordDiff": "词级修改",
+      "regenerate": "重新生成",
+      "closeReference": "关闭",
+      "requestFailed": "选区助手未能完成本次请求。",
+      "applyFailed": "无法更新选中的文本。",
+      "sourceChanged": "选中文本后文件已经发生变化。请重新选择文本，再应用修改。",
+      "referenceFailed": "无法打开引用页面。",
+      "emptyResponse": "模型没有返回回答，请重试。"
+    },
+    "pageLinks": {
+      "button": "链接",
+      "title": "页面链接",
+      "outgoing": "出站链接",
+      "backlinks": "反向链接",
+      "missing": "缺失链接",
+      "noOutgoing": "当前页面没有出站 Wiki 链接。",
+      "noBacklinks": "暂无其他页面链接到这里。",
+      "noMissing": "所有 Wiki 链接都能解析到现有页面。",
+      "create": "创建",
+      "draft": "Agent 草稿",
+      "loadFailed": "无法加载页面链接。",
+      "createFailed": "无法创建缺失页面。",
+      "emptyDraftError": "模型返回了空白草稿。"
+    },
+    "rawMarkdownEditor": "Markdown 源码编辑器",
+    "refresh": {
+      "title": "联网刷新",
+      "intervalLabel": "每 {{n}} 天",
+      "never": "从未刷新",
+      "result": {
+        "ok": "完成 — 页面已更新",
+        "no-change": "未检测到变化",
+        "pending-review": "已入审核队列",
+        "error": "刷新失败"
+      }
+    }
+  },
   "research": {
     "title": "深度研究",
     "notConfigured": "深度研究信息来源尚未配置。请到设置 → 外部信息源中配置网页搜索或 AnyTXT。",
@@ -195,6 +247,33 @@
     "sourceCount_plural": "{{count}} 个资料"
   },
   "chat": {
+    "selectionEdit": {
+      "title": "选中内容修改建议",
+      "reviewHint": "写入前请确认",
+      "original": "原文",
+      "replacement": "替换内容",
+      "accept": "接受",
+      "reject": "拒绝",
+      "applying": "正在应用……"
+    },
+    "agentChanges": {
+      "title": "Agent 文件修改",
+      "taskTitle": "Agent 活动",
+      "fileCount": "{{count}} 个文件",
+      "fileCount_other": "{{count}} 个文件",
+      "editCount": "{{count}} 次修改",
+      "editCount_other": "{{count}} 次修改",
+      "editNumber": "第 {{number}} 次修改",
+      "expandDiff": "展开文件差异",
+      "collapseDiff": "收起文件差异",
+      "undo": "撤销本次 Agent 修改",
+      "undoUnavailable": "应用重启后无法撤销",
+      "diffUnavailable": "原文件过大，未保存安全快照，无法显示差异。",
+      "shellSnapshotUnavailable": "该文件由 Shell 命令修改，无法获取安全的写入前快照。",
+      "undoConflict": "文件在 Agent 写入后又发生了变化，已停止撤销。"
+    },
+    "contextFileHint": "将项目文件加入当前会话上下文",
+    "removeContextFile": "从上下文中移除 {{name}}",
     "placeholder": "向你的 Wiki 提问...",
     "ingestPlaceholder": "讨论资料内容或继续追问...",
     "saveToWiki": "保存到 Wiki",
@@ -234,6 +313,12 @@
       "agents": "Agents"
     },
     "agentMode": "Agent 模式",
+    "retrievalMode": "检索模式",
+    "retrievalModeHint": "传统检索保持现有行为；智能检索会在严格预算内根据证据缺口迭代检索。",
+    "retrievalModes": {
+      "standard": "传统检索",
+      "smart": "智能检索"
+    },
     "agentModes": {
       "fast": "快速",
       "standard": "标准",
@@ -1029,7 +1114,21 @@
   },
   "preview": {
     "selectFile": "选择文件以预览",
-    "notAvailable": "该文件类型暂不支持预览"
+    "notAvailable": "该文件类型暂不支持预览",
+    "viewAsText": "作为文本查看",
+    "loadingText": "正在读取文本...",
+    "openWithSystem": "使用系统应用打开",
+    "showSource": "查看源码",
+    "showRendered": "查看渲染结果",
+    "reload": "重新加载预览",
+    "history": "文件历史",
+    "historyLoading": "正在加载...",
+    "historyEmpty": "暂无已记录的版本。",
+    "historySelect": "选择一个版本进行比较。",
+    "historyRestore": "恢复此版本",
+    "pdfText": "文本",
+    "pdfDocument": "PDF",
+    "pdfPage": "页码"
   },
   "find": {
     "placeholder": "在本页查找",
@@ -1137,18 +1236,5 @@
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
     "daysAgo": "{{count}} 天前"
-  },
-  "editor": {
-    "refresh": {
-      "title": "联网刷新",
-      "intervalLabel": "每 {{n}} 天",
-      "never": "从未刷新",
-      "result": {
-        "ok": "完成 — 页面已更新",
-        "no-change": "未检测到变化",
-        "pending-review": "已入审核队列",
-        "error": "刷新失败"
-      }
-    }
   }
 }
