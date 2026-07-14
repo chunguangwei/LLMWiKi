@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-06-30（Round 5，上游 v0.5.3 → v0.6.0，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-07-14（Round 6，上游 v0.6.0 → v0.6.3，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.0`（Round 5 追平：per-project skills 选择 / 全套上游 store 重写 / ingest 管线重写 / lint 链接修复建议 / Firecrawl provider）|
-| **本 fork 版本** | `0.6.1`（Round 5 上游同步 v0.5.3→v0.6.0）|
+| Upstream 版本号 | `0.6.3`（Round 6 追平：smart retrieval / in-page selection assistant / page links / persistent file history / agent content interactions / ingest lifecycle fixes）|
+| **本 fork 版本** | `0.6.4`（Round 6 上游同步 v0.6.0→v0.6.3）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -31,6 +31,22 @@
 > - **合并副产物修复**：`graph-view.tsx` 布局辅助函数重复定义（保留 3 参 `graphDataKey`）、`App.tsx` 重复 `applyDocumentZoom`、`settings-view.tsx` 重复 `newMineruConfig`、`settings-types.ts` 重复 `autostart`/`closeBehavior`、`persist.integration.test.ts` 交错重复测试块（统一到 fork 的 `.llm-wiki-local/` 路径 + 上游 skills 字段）、`knowledge-tree.tsx` 未用变量、`file-preview.tsx` 失效的 `"office"` FileCategory、`Cargo.toml` 残留 `<<<<<<< HEAD` 标记、`lib.rs` `start_clip_server(app)` 新签名、`fs.rs` 重复测试函数（采用上游更全面版本）。
 > - **保留的惰性 fork 库代码**：`lib/agent-ingest/`、`lib/agent-lint-fix/` 编译通过但已无调用方（Labs UI 已删），暂作 dead code 保留，未扩大删除范围。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2232 ✅（157 文件）/ i18n parity ✅（1026 ↔ 1026 全键对齐）/ cargo check ✅ / cargo test 327 ✅。版本号 `0.6.1` > 上游 `0.6.0`，自动更新降级判定保持有效。
+>
+> **Round 6 同步（2026-07-14，v0.6.0 → v0.6.3）**：`git merge upstream/main`（HEAD `9b71ade`）。上游本轮 19 个提交，聚焦 agent 检索增强、页内编辑、文件历史与 ingest 修复。
+> - **整体采用上游**：新增 `file_history` 模块（`list_file_history`/`restore_file_history`）、`apply_text_selection_edit`/`create_missing_wiki_page` fs 命令、`previewReturnView` + `closePreview` 导航模式、`ChatRetrievalMode` 类型、smart retrieval mode、in-page selection assistant、page links panel、agent file activity、document/media preview expansion。
+> - **冲突解决**：15 个冲突文件。
+>   - `lib.rs`：合并 fork 的 single-instance guard + 上游的 `apply_linux_webkit_compat_env`；invoke_handler 保留 fork 的 `write_binary_file` + 上游新增 4 个命令。
+>   - `fs.rs`：保留 fork 的 `write_binary_file` + 采用上游的 `apply_text_selection_edit`/`create_missing_wiki_page`。
+>   - `wiki-store.ts`：合并 fork 的 `previousView`/`searchFocusRequest` + 上游的 `previewReturnView`/`closePreview`。
+>   - `persist.ts`：合并 fork 的 `ActivityItem` 导入 + 上游的 `ChatRetrievalMode`。
+>   - `changelog.ts`：保留 fork 全部历史，顶部新增 0.6.4 条目（包含上游 v0.6.1 的 highlights）。
+>   - `i18n/en.json`/`zh.json`：合并重复的 `editor.refresh` 块到主 `editor` 对象内。
+>   - `file-preview.tsx`：合并 fork 的 `useTranslation`/`defaultValue` + 上游的 `useState`；删除重复导入。
+>   - `embedding-section.tsx`：移除 fork 的 `setReindex` 调用（上游已内置到 `embedAllPages`）。
+>   - README/README_CN/README_JA：采用上游版本。
+>   - package-lock.json/Cargo.lock：采用上游版本后重新生成。
+>   - `persist.integration.test.ts`：修正路径 `.llm-wiki/chats` → `.llm-wiki-local/chats`。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2274 ✅（160 文件）/ cargo check ✅。版本号 `0.6.4` > 上游 `0.6.3`，自动更新降级判定保持有效。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局
