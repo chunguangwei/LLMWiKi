@@ -1,6 +1,6 @@
 # LLMWiki User Manual
 
-Version: 0.4.13 (LLMWiKi fork)
+Version: 0.6.4 (LLMWiKi fork)
 
 This manual is for **people already using LLMWiki**. For install / build-from-source instructions, see [`getting-started.md`](getting-started.md).
 
@@ -269,7 +269,7 @@ Updates now come from your own GitHub (`chunguangwei/LLMWiKi`) and install **in 
 
 **Releasing a new version** (so all your devices can update):
 1. Bump `version` in both `app/package.json` and `app/src-tauri/tauri.conf.json` (keep them equal).
-2. `git push origin main`, then tag: `git tag v0.4.13 && git push origin v0.4.13`.
+2. `git push origin main`, then tag: `git tag v0.6.4 && git push origin v0.6.4`.
 3. GitHub Actions builds + signs + publishes the release. Devices update on next launch.
 > Full release steps + required GitHub Secrets: [`features.md §6.3`](features.md#63-发版流程你怎么发布新版本让所有端更新).
 > ⚠️ Back up `~/.tauri/llmwiki_updater.key` and `.password` — losing the private key means you can never sign new releases again.

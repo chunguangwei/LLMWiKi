@@ -312,12 +312,12 @@ schema 语言在项目创建时确定，之后改 UI 语言不会影响目录命
 
 ### 6.3 发版流程（你怎么发布新版本让所有端更新）
 
-1. 本地改完代码，`cd app`，提升版本号：改 `package.json` 的 `version` 和 `src-tauri/tauri.conf.json` 的 `version`（两处保持一致，如 `0.4.13`）。
+1. 本地改完代码，`cd app`，提升版本号：改 `package.json` 的 `version` 和 `src-tauri/tauri.conf.json` 的 `version`（两处保持一致，如 `0.6.4`）。
 2. 提交并推送：`git push origin main`。
 3. 打 tag 触发 CI：
    ```bash
-   git tag v0.4.13
-   git push origin v0.4.13
+   git tag v0.6.4
+   git push origin v0.6.4
    ```
 4. GitHub Actions（`.github/workflows/build.yml`）自动：跨平台构建 → 用签名密钥签 updater 产物 → 生成 `latest.json` → 创建 GitHub Release 并上传 dmg/exe/AppImage + `latest.json` + `.sig`。
 5. 各台已安装的 app 在下次启动（或手动「检查更新」）时发现新版，一键就地更新。

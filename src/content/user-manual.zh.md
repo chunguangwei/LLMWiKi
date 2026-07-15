@@ -1,6 +1,6 @@
 # LLMWiki 用户使用手册
 
-适用版本：0.4.13（LLMWiKi fork）
+适用版本：0.6.4（LLMWiKi fork）
 
 本手册面向**正在使用 LLMWiki 的人**。需要安装步骤的从源码构建说明请看 [`getting-started.md`](getting-started.md)。
 
@@ -269,7 +269,7 @@ git config --global core.quotepath false  # 让 Windows git status 正常显示�
 
 **怎么发布新版本**（你自己改完代码后，让所有设备能更新）：
 1. 改 `app/package.json` 和 `app/src-tauri/tauri.conf.json` 的 `version`（两处一致）。
-2. `git push origin main`，然后打 tag：`git tag v0.4.13 && git push origin v0.4.13`。
+2. `git push origin main`，然后打 tag：`git tag v0.6.4 && git push origin v0.6.4`。
 3. GitHub Actions 自动构建 + 签名 + 出 release。各设备下次启动即可更新。
 > 详细发版步骤 + 必备 GitHub Secret 见 [`features.md §6.3`](features.md#63-发版流程你怎么发布新版本让所有端更新)。
 > ⚠️ 务必备份 `~/.tauri/llmwiki_updater.key` 和 `.password`——私钥丢了就再也签不了新版本。

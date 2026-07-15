@@ -39,12 +39,12 @@
 ```bash
 cd app
 
-# 1. 提升版本号 —— 四处必须完全一致（下面以 0.4.15 为例，发版时替换成你的新版本号）
-#    package.json:              "version": "0.4.15"
-#    src-tauri/tauri.conf.json: "version": "0.4.15"
-#    src-tauri/Cargo.toml:      version = "0.4.15"   ← [package] 段顶部那一行
+# 1. 提升版本号 —— 四处必须完全一致（下面以 0.6.4 为例，发版时替换成你的新版本号）
+#    package.json:              "version": "0.6.4"
+#    src-tauri/tauri.conf.json: "version": "0.6.4"
+#    src-tauri/Cargo.toml:      version = "0.6.4"   ← [package] 段顶部那一行
 #    src-tauri/Cargo.lock:      llm-wiki 包的 version —— 别手改，跑下面这条命令同步：
-(cd src-tauri && cargo update -p llm-wiki --precise 0.4.15)
+(cd src-tauri && cargo update -p llm-wiki --precise 0.6.4)
 #    校验四处一致：
 grep -h '"version"' package.json src-tauri/tauri.conf.json | head -2
 grep '^version' src-tauri/Cargo.toml | head -1
@@ -55,12 +55,12 @@ grep -A1 'name = "llm-wiki"' src-tauri/Cargo.lock | head -2
 npm run typecheck   # changelog.ts 是 TS，顺手确认没写崩
 
 # 3. 提交并推送（一次提交带上全部 5 个文件：上面 4 个版本文件 + changelog.ts）
-git commit -am "release v0.4.15"
+git commit -am "release v0.6.4"
 git push origin main
 
 # 4. 打 tag 触发 CI（tag 名必须是 v<版本>）
-git tag v0.4.15
-git push origin v0.4.15
+git tag v0.6.4
+git push origin v0.6.4
 ```
 
 > ⚠️ **版本号没同步 = 自动更新失效**：`latest.json` 取的是 `tauri.conf.json` 的 version；只要它没比已安装版本高，客户端就检测不到更新（见 §3.1）。`Cargo.lock` 不同步则会在 CI 构建时被改动、留下脏 diff。所以四处务必一致、且严格大于上一版。
@@ -79,11 +79,11 @@ GitHub Actions（`.github/workflows/build.yml`）随后自动：
 
 ```bash
 # 删掉不完整的 release + tag
-gh release delete v0.4.14 --repo chunguangwei/LLMWiKi --yes --cleanup-tag
-git tag -d v0.4.14
-git push origin :refs/tags/v0.4.14   # 确保远程 tag 也删掉
+gh release delete v0.6.3 --repo chunguangwei/LLMWiKi --yes --cleanup-tag
+git tag -d v0.6.3
+git push origin :refs/tags/v0.6.3   # 确保远程 tag 也删掉
 # 修完代码后重新打 tag
-git tag v0.4.14 && git push origin v0.4.14
+git tag v0.6.3 && git push origin v0.6.3
 ```
 
 ### 2.3 已知约束

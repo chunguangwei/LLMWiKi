@@ -1,6 +1,6 @@
 # LLMWiki 用户使用手册
 
-适用版本：0.4.17（LLMWiKi fork）
+适用版本：0.6.4（LLMWiKi fork）
 
 本手册面向**正在使用 LLMWiki 的人**。需要安装步骤的从源码构建说明请看 [`getting-started.md`](getting-started.md)。
 
@@ -269,7 +269,7 @@ git config --global core.quotepath false  # 让 Windows git status 正常显示�
 
 **怎么发布新版本**（你自己改完代码后，让所有设备能更新）：
 1. 改 `app/package.json` 和 `app/src-tauri/tauri.conf.json` 的 `version`（两处一致）。
-2. `git push origin main`，然后打 tag：`git tag v0.4.13 && git push origin v0.4.13`。
+2. `git push origin main`，然后打 tag：`git tag v0.6.4 && git push origin v0.6.4`。
 3. GitHub Actions 自动构建 + 签名 + 出 release。各设备下次启动即可更新。
 > 详细发版步骤 + 必备 GitHub Secret 见 [`features.md §6.3`](features.md#63-发版流程你怎么发布新版本让所有端更新)。
 > ⚠️ 务必备份 `~/.tauri/llmwiki_updater.key` 和 `.password`——私钥丢了就再也签不了新版本。
@@ -334,6 +334,49 @@ git config --global core.quotepath false  # 让 Windows git status 正常显示�
 - 只对 `wiki/` 下的 `.md` 页生效;助手只能改**已存在**的页路径,不会凭空捏造路径。
 - 普通提问(没要求改)不会冒出卡片。
 - 误改了也不怕:旧版本在 `.llm-wiki/page-history/` 里,按时间戳找回即可。
+
+### 5.9 智能检索模式（0.6.4）
+
+**入口：聊天面板 → 自动生效**
+
+Agent 现在会自适应融合三种检索方式：关键词搜索、向量语义搜索和知识图谱召回。不再固定用单一检索，而是根据问题类型自动选择最佳组合。
+
+- 聊天引用中会显示图谱引用和一个可交互的局部知识图谱预览
+- 支持 graph-aware references，让答案的知识来源更透明
+- 可在聊天设置中选择不同的检索模式（Fast / Standard / Deep / Local-first 仍然有效）
+
+### 5.10 页内选择助手（0.6.4）
+
+**入口：编辑器 → 选中一段文本 → 弹出工具栏**
+
+在 wiki 页面阅读或编辑时，选中一段文本后会出现一个小工具栏：
+
+- **Ask Agent**：让 Agent 解释、改写、缩短选中的文本（不修改原文）
+- **Edit**：让 Agent 生成替换内容，确认后直接写回（带 diff 预览）
+  - 写回前会校验文件未被中途改动，避免覆盖你的其他编辑
+  - 生成内容不会覆盖选中文本以外的内容
+- **Page Links**：点编辑器顶部的「链接」按钮可查看当前页面的出站链接、反向链接和缺失链接，缺失链接可一键创建概念页
+
+### 5.11 文件历史与恢复（0.6.4）
+
+**入口：预览面板 → 文件历史按钮**
+
+所有通过 Agent 或手动编辑产生的文件修改现在会被记录版本历史：
+
+- 点击文件历史按钮可查看某个文件的所有历史版本
+- 支持比较不同版本的差异
+- 可一键恢复到任意历史版本
+- 历史记录有上限控制，不会无限增长
+
+### 5.12 Agent 文件修改记录（0.6.4）
+
+**入口：对话面板 → 改动卡片**
+
+当 Agent 在对话过程中修改了 wiki 文件，对话中会显示改动卡片：
+
+- 每个文件的修改摘要、行级 diff 和改动原因
+- 如果文件在 Agent 修改后未被再次编辑，可安全撤销
+- 支持集中浏览所有生成物，自动预览文档、图片和网页格式
 
 ---
 

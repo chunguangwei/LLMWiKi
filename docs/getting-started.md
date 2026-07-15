@@ -11,7 +11,7 @@
 本仓库已生成好一份 dmg：
 
 ```
-app/src-tauri/target/release/bundle/dmg/LLM Wiki_0.4.13_aarch64.dmg
+app/src-tauri/target/release/bundle/dmg/LLM Wiki_0.6.4_aarch64.dmg
 ```
 
 1. 双击 dmg，把 `LLM Wiki.app` 拖入 Applications
@@ -203,7 +203,7 @@ my-wiki-project/                 # 用户自取名，可放云盘
 **本机已构建的产物**（如已 `npm run tauri build`）：
 
 ```
-app/src-tauri/target/release/bundle/dmg/LLM Wiki_0.4.13_aarch64.dmg     # 26 MB
+app/src-tauri/target/release/bundle/dmg/LLM Wiki_0.6.4_aarch64.dmg     # 26 MB
 app/src-tauri/target/release/bundle/macos/LLM Wiki.app
 ```
 
@@ -228,13 +228,13 @@ rm -rf node_modules dist         # 前端依赖与产物
 ```bash
 cd app
 # 1. 提升版本号（两处保持一致）
-#    package.json: "version": "0.4.13"
-#    src-tauri/tauri.conf.json: "version": "0.4.13"
-git commit -am "release v0.4.13"
+#    package.json: "version": "0.6.4"
+#    src-tauri/tauri.conf.json: "version": "0.6.4"
+git commit -am "release v0.6.4"
 git push origin main
 # 2. 打 tag 触发 CI
-git tag v0.4.13
-git push origin v0.4.13
+git tag v0.6.4
+git push origin v0.6.4
 ```
 
 CI 自动：跨平台构建 → 用 updater 私钥签名 → 生成 `latest.json` → 创建 GitHub Release，附 dmg / msi / exe / deb / AppImage + `latest.json` + `.sig`。各台已安装的 app 下次启动即可一键就地更新（详见 [features.md §6](features.md#6-自己-github-自动更新就地更新--加密配置备份)）。

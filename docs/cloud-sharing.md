@@ -8,7 +8,7 @@ LLMWiki 默认是「单机应用」。要让一个项目在多台 Mac/Win 之间
 
 每位团队成员先在自己机器上安装应用本体（应用本体并不需要同步，需要同步的是「项目目录」）：
 
-- **macOS（Apple Silicon）**：用本仓库已生成的 dmg，路径 `app/src-tauri/target/release/bundle/dmg/LLM Wiki_0.4.10_aarch64.dmg`，或从源码 `npm run tauri build`
+- **macOS（Apple Silicon）**：用本仓库已生成的 dmg，路径 `app/src-tauri/target/release/bundle/dmg/LLM Wiki_0.6.4_aarch64.dmg`，或从源码 `npm run tauri build`
 - **macOS（Intel）/ Windows / Linux**：通过 GitHub Actions（upstream 已带 `.github/workflows/release.yml`）；或在对应平台从源码构建
 
 首次启动 macOS 拦截参见 [getting-started.md §1](getting-started.md#1-安装)。
