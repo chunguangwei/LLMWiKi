@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.5",
+    date: "2026-07-15",
+    highlights: {
+      en: [
+        "Fixed the sidebar logo regression — the fork's custom logo is now used instead of the upstream default.",
+      ],
+      zh: [
+        "修复侧栏 logo 回退问题——恢复使用 fork 自定义 logo 而非上游默认 logo。",
+      ],
+    },
+  },
+  {
     version: "0.6.4",
     date: "2026-07-14",
     highlights: {
