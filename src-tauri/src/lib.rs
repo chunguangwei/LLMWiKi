@@ -622,11 +622,6 @@ pub fn run() {
         // from Rust, never the webview.
         .plugin(tauri_plugin_http::init())
         .setup(|app| {
-            // Start the web-clip server here (not before the builder) so a
-            // secondary instance — which the single-instance plugin exits
-            // before reaching this setup hook — never tries to bind the
-            // clip port out from under the primary.
-            clip_server::start_clip_server(app.handle().clone());
             // Config safety net — runs BEFORE anything reads
             // app-state.json (proxy config below, and the frontend's
             // first store load). On a fresh/empty install, restore the

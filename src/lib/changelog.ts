@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.6",
+    date: "2026-07-15",
+    highlights: {
+      en: [
+        "Fixed port 19827 conflict caused by duplicate clip server startup during initialization.",
+      ],
+      zh: [
+        "修复初始化时 clip server 重复启动导致端口 19827 冲突的问题。",
+      ],
+    },
+  },
+  {
     version: "0.6.5",
     date: "2026-07-15",
     highlights: {
