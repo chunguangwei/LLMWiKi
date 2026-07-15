@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.8",
+    date: "2026-07-15",
+    highlights: {
+      en: [
+        "Fixed Azure OpenAI v1 endpoint 404 in Rust backend chat agent — the agent now correctly routes /openai/v1 endpoints to the OpenAI-compatible path instead of the legacy deployment-name path.",
+      ],
+      zh: [
+        "修复 Rust 后端 chat agent 中 Azure OpenAI v1 端点 404 问题——/openai/v1 端点现在正确走 OpenAI 兼容路径，而非旧的 deployment-name 路径。",
+      ],
+    },
+  },
+  {
     version: "0.6.7",
     date: "2026-07-15",
     highlights: {

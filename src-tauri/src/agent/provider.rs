@@ -819,6 +819,12 @@ fn build_ollama_url(base: &str) -> String {
 
 fn build_custom_openai_url(config: &LlmConfig) -> String {
     let base = config.custom_endpoint.trim().trim_end_matches('/');
+    if is_azure_v1_endpoint(base) {
+        if base.to_ascii_lowercase().ends_with("/chat/completions") {
+            return base.to_string();
+        }
+        return format!("{base}/chat/completions");
+    }
     if is_azure_endpoint(base) {
         return build_azure_url(config).unwrap_or_else(|_| base.to_string());
     }
@@ -866,6 +872,14 @@ fn build_anthropic_url(base: &str) -> String {
 fn is_azure_endpoint(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
     lower.contains(".openai.azure.com") || lower.contains("/openai/deployments/")
+}
+
+fn is_azure_v1_endpoint(url: &str) -> bool {
+    if !is_azure_endpoint(url) {
+        return false;
+    }
+    let trimmed = url.trim().trim_end_matches('/').to_ascii_lowercase();
+    trimmed.ends_with("/openai/v1") || trimmed.ends_with("/openai/v1/chat/completions")
 }
 
 fn requires_bearer_auth(url: &str) -> bool {
