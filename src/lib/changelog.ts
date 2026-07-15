@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.7",
+    date: "2026-07-15",
+    highlights: {
+      en: [
+        "Fixed auto-update ACL permission — updater and process plugins are now registered in the capability allowlist so in-app updates work correctly.",
+      ],
+      zh: [
+        "修复自动更新 ACL 权限——updater 和 process 插件已注册到 capability 允许列表，应用内更新恢复正常。",
+      ],
+    },
+  },
+  {
     version: "0.6.6",
     date: "2026-07-15",
     highlights: {
