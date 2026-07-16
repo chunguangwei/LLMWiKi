@@ -169,7 +169,8 @@ impl LlmClient {
             }
             "custom" => {
                 let url = build_custom_openai_url(&self.config);
-                self.generate_openai_like(&url, system, user, images, !is_azure_endpoint(&url))
+                let include_model = !is_azure_endpoint(&url) || is_azure_v1_endpoint(&url);
+                self.generate_openai_like(&url, system, user, images, include_model)
                     .await
             }
             "anthropic" => {
@@ -240,12 +241,13 @@ impl LlmClient {
             }
             "custom" => {
                 let url = build_custom_openai_url(&self.config);
+                let include_model = !is_azure_endpoint(&url) || is_azure_v1_endpoint(&url);
                 self.stream_openai_like(
                     &url,
                     system,
                     user,
                     images,
-                    !is_azure_endpoint(&url),
+                    include_model,
                     on_delta,
                 )
                 .await

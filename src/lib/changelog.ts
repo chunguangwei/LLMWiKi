@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.9",
+    date: "2026-07-15",
+    highlights: {
+      en: [
+        "Fixed Azure OpenAI v1 endpoint \"Missed model deployment\" error — the model field is now included in the request body for Azure v1 endpoints.",
+      ],
+      zh: [
+        "修复 Azure OpenAI v1 端点 \"Missed model deployment\" 错误——Azure v1 端点的请求体现在会正确包含 model 字段。",
+      ],
+    },
+  },
+  {
     version: "0.6.8",
     date: "2026-07-15",
     highlights: {
