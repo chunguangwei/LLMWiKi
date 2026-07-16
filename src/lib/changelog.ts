@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.10",
+    date: "2026-07-15",
+    highlights: {
+      en: [
+        "Fixed Azure OpenAI v1 endpoint rejecting max_tokens — now uses max_completion_tokens for Azure v1 endpoints.",
+      ],
+      zh: [
+        "修复 Azure OpenAI v1 端点拒绝 max_tokens 问题——Azure v1 端点现在使用 max_completion_tokens。",
+      ],
+    },
+  },
+  {
     version: "0.6.9",
     date: "2026-07-15",
     highlights: {

@@ -287,15 +287,17 @@ impl LlmClient {
         images: &[AgentImage],
         include_model: bool,
         stream: bool,
+        use_completion_tokens: bool,
     ) -> Value {
         let user_content = openai_user_content(user, images);
+        let max_tokens_key = if use_completion_tokens { "max_completion_tokens" } else { "max_tokens" };
         let mut body = json!({
             "messages": [
                 { "role": "system", "content": system },
                 { "role": "user", "content": user_content }
             ],
             "stream": stream,
-            "max_tokens": self.max_output_tokens()
+            max_tokens_key: self.max_output_tokens()
         });
         if include_model {
             body["model"] = Value::String(self.config.model.clone());
@@ -312,7 +314,7 @@ impl LlmClient {
         images: &[AgentImage],
         include_model: bool,
     ) -> Result<String, String> {
-        let body = self.openai_like_body(system, user, images, include_model, false);
+        let body = self.openai_like_body(system, user, images, include_model, false, is_azure_v1_endpoint(url));
 
         let response = self
             .client
@@ -360,7 +362,7 @@ impl LlmClient {
     where
         F: FnMut(&str) + Send,
     {
-        let body = self.openai_like_body(system, user, images, include_model, true);
+        let body = self.openai_like_body(system, user, images, include_model, true, is_azure_v1_endpoint(url));
         let response = self
             .client
             .post(url)
@@ -1090,7 +1092,7 @@ mod tests {
             budget_tokens: None,
         });
         let client = LlmClient::new(cfg).unwrap().structured_task_config(16_384);
-        let body = client.openai_like_body("system", "user", &[], true, false);
+        let body = client.openai_like_body("system", "user", &[], true, false, false);
 
         assert_eq!(body.get("max_tokens").and_then(Value::as_u64), Some(16_384));
         assert!(body.get("reasoning_effort").is_none());
