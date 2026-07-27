@@ -32,7 +32,10 @@
 
 - **Two-Step Chain-of-Thought Ingest** — LLM analyzes first, then generates wiki pages with source traceability and incremental cache
 - **Multimodal Image Ingestion** — extract embedded images from PDFs, generate factual captions with a vision LLM, surface them in image-aware search results with lightbox preview and jump-to-source
-- **Optional MinerU PDF Parsing** — use MinerU cloud parsing for complex PDFs with tables, formulas, and dense layouts; the built-in local parser remains the default
+- **Multi-format Document Parsing** — ingest PDF, Office documents, EPUB/MOBI, Org mode, images, media, web clips, and batches of URLs, with built-in, cloud, or local MinerU PDF processing
+- **Flexible Model Configuration** — configure models per project, route Chat and Ingest independently, and manage custom providers, headers, and streaming output
+- **Source-grounded Retrieval** — use Read Sources Only mode to answer exclusively from original imported material
+- **Project Management & Migration** — export and import complete project archives across devices, and rebuild the Wiki index from existing pages
 - **4-Signal Knowledge Graph** — relevance model with direct links, source overlap, Adamic-Adar, and type affinity
 - **Louvain Community Detection** — automatic knowledge cluster discovery with cohesion scoring
 - **Graph Insights** — surprising connections and knowledge gaps with one-click Deep Research
@@ -320,15 +323,16 @@ The original focuses on text/markdown. We support structured extraction preservi
 
 | Format | Method |
 |--------|--------|
-| PDF | Built-in pdf-extract (Rust) with file caching; optional MinerU cloud parsing for tables, formulas, and complex layouts |
+| PDF | Built-in pdf-extract (Rust) with file caching; optional MinerU Cloud, Local API, or Pipeline parsing for complex layouts |
 | DOCX | docx-rs — headings, bold/italic, lists, tables → structured Markdown |
 | PPTX | ZIP + XML — slide-by-slide extraction with heading/list structure |
 | XLSX/XLS/ODS | calamine — proper cell types, multi-sheet support, Markdown tables |
+| EPUB/MOBI | Electronic book metadata, chapters, and body text → ingest-ready content |
 | Images | Native preview (png, jpg, gif, webp, svg, etc.) |
 | Video/Audio | Built-in player |
 | Web clips | Readability.js + Turndown.js → clean Markdown |
 
-> MinerU is optional. When enabled, PDF files are uploaded to MinerU cloud for parsing; keep the built-in parser for sensitive documents. If MinerU fails, LLM Wiki falls back to the built-in parser. MinerU usage is subject to its file size, page count, and quota limits.
+> MinerU is optional. Use MinerU Cloud, an official Local API endpoint, or Local Pipeline mode for complex PDFs. Local modes keep processing on your machine, and extracted images are stored in the project-managed `wiki/media` directory. If MinerU fails, LLM Wiki falls back to the built-in parser.
 
 ### 16. File Deletion with Cascade Cleanup
 
@@ -366,7 +370,10 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 - **Obsidian config** — auto-generated `.obsidian/` directory with recommended settings
 - **Markdown rendering** — GFM tables with borders, proper code blocks, wikilink processing in chat and preview
 - **Multi-provider LLM support** — OpenAI, Anthropic, Google, Ollama, Custom — each with provider-specific streaming and headers
-- **15-minute timeout** — long ingest operations won't fail prematurely
+- **Configurable LLM timeout** — adjust request timeouts for slow local models and long-running operations
+- **Configurable Firecrawl** — optional API key and custom Base URL for hosted or self-hosted services
+- **Collapsible file sidebar** — collapse Knowledge/Files navigation while preserving its state
+- **Project maintenance** — ZIP export/import for migration and deterministic `wiki/index.md` rebuilding
 - **dataVersion signaling** — graph and UI automatically refresh when wiki content changes
 
 ## Tech Stack
@@ -380,8 +387,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 | Graph | sigma.js + graphology + ForceAtlas2 |
 | Search | Tokenized search + graph relevance + optional vector (LanceDB) |
 | Vector DB | LanceDB (Rust, embedded, optional) |
-| PDF | pdf-extract + optional MinerU cloud parser |
-| Office | docx-rs + calamine |
+| Documents | pdf-extract + MinerU Cloud/Local + docx-rs + calamine + EPUB/MOBI extraction |
 | i18n | react-i18next |
 | State | Zustand |
 | LLM | Streaming fetch (OpenAI, Anthropic, Google, Ollama, Custom) |
@@ -413,6 +419,7 @@ npm run tauri build    # Production build
 2. Enable "Developer mode"
 3. Click "Load unpacked"
 4. Select the `extension/` directory
+5. Clip the current page with `Alt+Shift+L` (`Command+Shift+L` on macOS). Customize it at `chrome://extensions/shortcuts`.
 
 ## Quick Start
 

@@ -20,7 +20,8 @@ const MEDIA_EXTS: &[&str] = &[
     "mp4", "webm", "mov", "avi", "mkv", "flv", "wmv", "m4v", "mp3", "wav", "ogg", "flac", "aac",
     "m4a", "wma",
 ];
-const LEGACY_DOC_EXTS: &[&str] = &["doc", "xls", "ppt", "pages", "numbers", "key"];
+const EBOOK_EXTS: &[&str] = &["epub", "mobi"];
+const LEGACY_DOC_EXTS: &[&str] = &["ppt", "pages", "numbers", "key"];
 
 /// Security/integrity guard for the write-side fs commands. A relative path
 /// would be resolved against the process's current working directory — which
@@ -86,8 +87,9 @@ pub async fn read_file(path: String, extract_images: Option<bool>) -> Result<Str
 
             match ext.as_str() {
                 "pdf" => extract_pdf_text(&path, include_images),
-                "epub" => extract_epub_text(&path),
+                "org" => extract_org_text(&path),
                 e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e),
+                e if EBOOK_EXTS.contains(&e) => crate::commands::ebook::extract_ebook_text(&path, e),
                 e if IMAGE_EXTS.contains(&e) => {
                     let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                     Ok(format!("[Image: {} ({:.1} KB)]", p.file_name().unwrap_or_default().to_string_lossy(), size as f64 / 1024.0))
@@ -138,8 +140,11 @@ pub async fn preprocess_file(path: String) -> Result<String, String> {
 
             let text = match ext.as_str() {
                 "pdf" => extract_pdf_text(&path, false)?,
-                "epub" => extract_epub_text(&path)?,
+                "org" => extract_org_text(&path)?,
                 e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e)?,
+                e if EBOOK_EXTS.contains(&e) => {
+                    crate::commands::ebook::extract_ebook_text(&path, e)?
+                }
                 _ => return Ok("no preprocessing needed".to_string()),
             };
 
@@ -169,6 +174,16 @@ fn read_cache(original: &Path) -> Option<String> {
     }
 }
 
+/// Return a fresh preprocessing cache for Agent source retrieval.
+///
+/// Binary imports remain the referenced source of record; this helper only
+/// exposes their text extraction and never causes parsing or cache writes from
+/// a search request. Keeping freshness checks here also prevents the Agent
+/// from quoting a cache after the original file changed externally.
+pub(crate) fn read_preprocessed_cache(original: &Path) -> Option<String> {
+    read_cache(original)
+}
+
 fn write_cache(original: &Path, text: &str) -> Result<(), String> {
     let cache_path = cache_path_for(original);
     if let Some(parent) = cache_path.parent() {
@@ -176,6 +191,135 @@ fn write_cache(original: &Path, text: &str) -> Result<(), String> {
     }
     crate::commands::file_sync::mark_app_write_path(&cache_path);
     fs::write(&cache_path, text).map_err(|e| format!("Failed to write cache: {}", e))
+}
+
+/// Convert common Org syntax into Markdown-shaped text for ingestion and
+/// preview. The original `.org` file remains untouched in `raw/sources`.
+/// Source blocks are copied verbatim inside fences and are never executed.
+fn extract_org_text(path: &str) -> Result<String, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read Org file '{}': {}", path, e))?;
+    Ok(org_to_markdown(&content))
+}
+
+fn org_to_markdown(content: &str) -> String {
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let mut output = Vec::new();
+    let mut block_end: Option<&'static str> = None;
+
+    for line in normalized.lines() {
+        let trimmed = line.trim();
+        let upper = trimmed.to_ascii_uppercase();
+        if let Some(end) = block_end {
+            if upper == end {
+                output.push("```".to_string());
+                block_end = None;
+            } else {
+                output.push(line.to_string());
+            }
+            continue;
+        }
+
+        if upper.starts_with("#+BEGIN_SRC") {
+            let language = trimmed[11..].trim().split_whitespace().next().unwrap_or("");
+            output.push(format!("```{language}"));
+            block_end = Some("#+END_SRC");
+            continue;
+        }
+        if upper == "#+BEGIN_EXAMPLE" {
+            output.push("```text".to_string());
+            block_end = Some("#+END_EXAMPLE");
+            continue;
+        }
+        if upper == "#+BEGIN_QUOTE" {
+            output.push("```text".to_string());
+            block_end = Some("#+END_QUOTE");
+            continue;
+        }
+
+        if let Some((key, value)) = parse_org_keyword(trimmed) {
+            if key == "TITLE" {
+                output.push(format!("# {value}"));
+            } else if !matches!(key.as_str(), "OPTIONS" | "PROPERTY" | "SETUPFILE") {
+                output.push(format!("**{}:** {}", title_case_ascii(&key), value));
+            }
+            continue;
+        }
+
+        if let Some((level, heading)) = parse_org_heading(line) {
+            output.push(format!(
+                "{} {}",
+                "#".repeat(level.min(6)),
+                convert_org_links(heading)
+            ));
+            continue;
+        }
+
+        if trimmed.starts_with('|')
+            && trimmed.ends_with('|')
+            && trimmed.contains('+')
+            && trimmed
+                .chars()
+                .all(|c| matches!(c, '|' | '+' | '-' | ':' | ' '))
+        {
+            output.push(trimmed.replace('+', "|"));
+            continue;
+        }
+
+        output.push(convert_org_links(line));
+    }
+    if block_end.is_some() {
+        output.push("```".to_string());
+    }
+    output.join("\n")
+}
+
+fn parse_org_keyword(line: &str) -> Option<(String, &str)> {
+    let rest = line.strip_prefix("#+")?;
+    let (key, value) = rest.split_once(':')?;
+    if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some((key.to_ascii_uppercase(), value.trim()))
+}
+
+fn parse_org_heading(line: &str) -> Option<(usize, &str)> {
+    let stars = line.chars().take_while(|c| *c == '*').count();
+    if stars == 0 || line.as_bytes().get(stars) != Some(&b' ') {
+        return None;
+    }
+    Some((stars, line[stars + 1..].trim()))
+}
+
+fn title_case_ascii(value: &str) -> String {
+    let lower = value.replace('_', " ").to_ascii_lowercase();
+    let mut chars = lower.chars();
+    chars
+        .next()
+        .map(|c| c.to_ascii_uppercase().to_string() + chars.as_str())
+        .unwrap_or_default()
+}
+
+fn convert_org_links(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(start) = rest.find("[[") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("]]") else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let inner = &after[..end];
+        if let Some((target, description)) = inner.split_once("][") {
+            out.push_str(&format!("[{}]({})", description, target));
+        } else {
+            out.push_str(&format!("<{}>", inner));
+        }
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Global PDFium instance — the library prefers a single binding shared
@@ -852,235 +996,6 @@ fn extract_pptx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
     } else {
         Ok(result)
     }
-}
-
-/// Extract EPUB content as plain text in reading order.
-///
-/// The `epub` crate gives us the OPF spine walker; we read each XHTML
-/// chapter and run a tiny tag-stripper to turn it into something the
-/// ingest LLM can consume. We don't try to preserve fancy markdown
-/// (headings, emphasis) — the wiki-generation prompt cares about the
-/// words, not the formatting, and ebook authors use wildly inconsistent
-/// CSS / class soup that would just produce noise.
-fn extract_epub_text(path: &str) -> Result<String, String> {
-    use std::path::PathBuf;
-    let mut doc = epub::doc::EpubDoc::new(PathBuf::from(path))
-        .map_err(|e| format!("Failed to open EPUB '{}': {}", path, e))?;
-
-    let mut result = String::new();
-
-    if let Some(title) = doc.mdata("title") {
-        let title = title.value.trim();
-        if !title.is_empty() {
-            result.push_str("# ");
-            result.push_str(title);
-            result.push_str("\n\n");
-        }
-    }
-    if let Some(creator) = doc.mdata("creator") {
-        let creator = creator.value.trim();
-        if !creator.is_empty() {
-            result.push_str("_by ");
-            result.push_str(creator);
-            result.push_str("_\n\n");
-        }
-    }
-
-    loop {
-        if let Some((content, _mime)) = doc.get_current_str() {
-            let text = xhtml_to_plain_text(&content);
-            let trimmed = text.trim();
-            if !trimmed.is_empty() {
-                result.push_str(trimmed);
-                result.push_str("\n\n");
-            }
-        }
-        if !doc.go_next() {
-            break;
-        }
-    }
-
-    let trimmed = result.trim();
-    if trimmed.is_empty() {
-        return Err(format!(
-            "EPUB '{}' produced no extractable text (DRM-protected, or empty spine)",
-            path
-        ));
-    }
-    Ok(result)
-}
-
-/// Strip XHTML tags and decode common entities. Inserts a single newline
-/// when crossing a block-level element so paragraphs don't run together,
-/// collapses whitespace, and drops `<script>` / `<style>` blocks entirely.
-fn xhtml_to_plain_text(html: &str) -> String {
-    // Phase 1: strip <script>...</script> and <style>...</style>
-    let cleaned = strip_html_blocks(html, &["script", "style"]);
-
-    // Phase 2: walk byte-by-byte, emitting text + newlines on block tags
-    const BLOCK_TAGS: &[&str] = &[
-        "p",
-        "br",
-        "div",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "li",
-        "ul",
-        "ol",
-        "tr",
-        "td",
-        "th",
-        "blockquote",
-        "hr",
-        "section",
-        "article",
-        "header",
-        "footer",
-        "nav",
-        "figure",
-        "figcaption",
-        "pre",
-    ];
-    // Iterate by char (NOT by byte): a byte-indexed `bytes[i] as char`
-    // walk casts the continuation bytes of any multi-byte UTF-8 char
-    // (CJK, Cyrillic, accented Latin, …) into Latin-1 mojibake, which for
-    // a Chinese ebook turns the whole text into garbage AND roughly
-    // triples its length. char iteration keeps Unicode intact.
-    let mut out = String::with_capacity(cleaned.len());
-    let mut last_was_space = false;
-    let mut chars = cleaned.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '<' {
-            // Consume up to the matching '>', collecting the tag's inner text.
-            let mut inner = String::new();
-            let mut closed = false;
-            for tc in chars.by_ref() {
-                if tc == '>' {
-                    closed = true;
-                    break;
-                }
-                inner.push(tc);
-            }
-            if !closed {
-                break; // unterminated tag — drop the trailing junk
-            }
-            // Tag name: drop a leading "/", lowercase, stop at space or "/".
-            let raw = inner.trim_start();
-            let raw = raw.strip_prefix('/').unwrap_or(raw);
-            let name_end = raw
-                .find(|ch: char| ch.is_whitespace() || ch == '/')
-                .unwrap_or(raw.len());
-            let name_lower = raw[..name_end].to_ascii_lowercase();
-            if BLOCK_TAGS.contains(&name_lower.as_str()) && !out.ends_with('\n') && !out.is_empty()
-            {
-                out.push('\n');
-                last_was_space = true;
-            }
-            continue;
-        }
-        if c.is_whitespace() {
-            if !last_was_space && !out.is_empty() && !out.ends_with('\n') {
-                out.push(' ');
-                last_was_space = true;
-            }
-        } else {
-            out.push(c);
-            last_was_space = false;
-        }
-    }
-
-    decode_html_entities(&out)
-}
-
-/// Drop `<tag>...</tag>` regions entirely (case-insensitive on tag name).
-fn strip_html_blocks(html: &str, tags: &[&str]) -> String {
-    let mut out = html.to_string();
-    for tag in tags {
-        let open = format!("<{}", tag);
-        let close = format!("</{}", tag);
-        let mut result = String::with_capacity(out.len());
-        let lower = out.to_ascii_lowercase();
-        let mut cursor = 0;
-        while cursor < out.len() {
-            let remaining_lower = &lower[cursor..];
-            if let Some(start_rel) = remaining_lower.find(&open) {
-                let start = cursor + start_rel;
-                result.push_str(&out[cursor..start]);
-                // Find end of close tag
-                let after_open = &lower[start..];
-                if let Some(close_rel) = after_open.find(&close) {
-                    if let Some(gt_rel) = after_open[close_rel..].find('>') {
-                        cursor = start + close_rel + gt_rel + 1;
-                        continue;
-                    }
-                }
-                // Unclosed — drop rest as junk
-                break;
-            } else {
-                result.push_str(&out[cursor..]);
-                break;
-            }
-        }
-        out = result;
-    }
-    out
-}
-
-/// Decode the named + numeric HTML entities that show up in ebooks.
-/// Not exhaustive — covers everything the ingest LLM actually cares about.
-fn decode_html_entities(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    // Slice-walk on '&'/';' (both ASCII, so byte offsets from `find` are
-    // always char boundaries) rather than `bytes[i] as char`, which would
-    // mangle every multi-byte UTF-8 char between entities.
-    let mut rest = s;
-    while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
-        let after = &rest[amp..]; // starts with '&'
-        if let Some(end) = after.find(';') {
-            let entity = &after[1..end];
-            let decoded = match entity {
-                "amp" => Some("&".to_string()),
-                "lt" => Some("<".to_string()),
-                "gt" => Some(">".to_string()),
-                "quot" => Some("\"".to_string()),
-                "apos" => Some("'".to_string()),
-                "nbsp" => Some(" ".to_string()),
-                "mdash" => Some("—".to_string()),
-                "ndash" => Some("–".to_string()),
-                "hellip" => Some("…".to_string()),
-                "lsquo" => Some("‘".to_string()),
-                "rsquo" => Some("’".to_string()),
-                "ldquo" => Some("“".to_string()),
-                "rdquo" => Some("”".to_string()),
-                e if e.starts_with("#x") || e.starts_with("#X") => u32::from_str_radix(&e[2..], 16)
-                    .ok()
-                    .and_then(char::from_u32)
-                    .map(|c| c.to_string()),
-                e if e.starts_with('#') => e[1..]
-                    .parse::<u32>()
-                    .ok()
-                    .and_then(char::from_u32)
-                    .map(|c| c.to_string()),
-                _ => None,
-            };
-            if let Some(text) = decoded {
-                out.push_str(&text);
-                rest = &after[end + 1..];
-                continue;
-            }
-        }
-        // Bare '&' or an unrecognized entity: emit the '&' and resume scanning
-        // right after it (the entity text, if any, is copied on the next pass).
-        out.push('&');
-        rest = &after[1..];
-    }
-    out.push_str(rest);
-    out
 }
 
 /// Extract spreadsheet to Markdown using calamine (supports xlsx, xls, ods).
@@ -1973,6 +1888,7 @@ pub async fn read_file_as_base64(path: String) -> Result<FileBase64, String> {
                 "bmp" => "image/bmp",
                 "tiff" | "tif" => "image/tiff",
                 "svg" => "image/svg+xml",
+                "pdf" => "application/pdf",
                 _ => "application/octet-stream",
             }
             .to_string();
@@ -2068,47 +1984,27 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    // Regression: epub text extraction must preserve multi-byte UTF-8.
-    // The old byte-indexed `bytes[i] as char` walk turned CJK/accented
-    // text into Latin-1 mojibake (and ~tripled its length), which is why
-    // a Chinese ebook "couldn't be parsed into content".
     #[test]
-    fn xhtml_to_plain_text_preserves_cjk() {
-        let html = "<p>资治通鉴</p><p>司马光 著</p>";
-        let out = xhtml_to_plain_text(html);
-        assert!(out.contains("资治通鉴"), "CJK mangled: {out:?}");
-        assert!(out.contains("司马光 著"), "CJK mangled: {out:?}");
-        // No stray Latin-1 control/letters from mis-decoded lead bytes.
-        assert!(!out.contains('\u{00e8}') && !out.contains('\u{00bd}'), "mojibake present: {out:?}");
+    fn org_to_markdown_preserves_common_elements_without_executing_source_blocks() {
+        let input = "#+TITLE: Research Notes\r\n#+AUTHOR: Ada\r\n* TODO Topic :rust:notes:\r\nParagraph with [[https://example.com][reference]] and [[file:local.pdf]].\r\n- [ ] Verify\r\n| Name | Value |\r\n|------+-------|\r\n| A    | 1     |\r\n#+BEGIN_SRC sh\r\necho never-run\r\n#+END_SRC\r\n";
+        let output = org_to_markdown(input);
+        assert!(output.contains("# Research Notes"));
+        assert!(output.contains("**Author:** Ada"));
+        assert!(output.contains("# TODO Topic :rust:notes:"));
+        assert!(output.contains("[reference](https://example.com)"));
+        assert!(output.contains("<file:local.pdf>"));
+        assert!(output.contains("|------|-------|"));
+        assert!(output.contains("```sh\necho never-run\n```"));
     }
 
     #[test]
-    fn xhtml_block_tags_insert_newlines_without_corruption() {
-        // Block tags become newlines; inline tags vanish; text intact.
-        let out = xhtml_to_plain_text("<h1>第一章</h1><div>内容<b>很重要</b>。</div>");
-        assert!(out.contains("第一章"));
-        assert!(out.contains("内容很重要。"));
-        assert!(out.contains('\n'));
-    }
-
-    #[test]
-    fn decode_html_entities_keeps_cjk_and_decodes_named() {
-        // Entities decode; surrounding CJK survives untouched.
-        let out = decode_html_entities("张三&amp;李四 说&ldquo;你好&rdquo;");
-        assert_eq!(out, "张三&李四 说“你好”");
-    }
-
-    #[test]
-    fn decode_html_entities_handles_bare_ampersand() {
-        let out = decode_html_entities("A & 中文 & B");
-        assert_eq!(out, "A & 中文 & B");
-    }
-
-    #[test]
-    fn decode_numeric_entities() {
-        // Decimal + hex numeric refs (a CJK codepoint and an em dash).
-        assert_eq!(decode_html_entities("&#36164;&#x6CBB;"), "资治");
-        assert_eq!(decode_html_entities("a&#8212;b"), "a—b");
+    fn org_to_markdown_closes_unterminated_source_block_and_keeps_unknown_lines() {
+        let output = org_to_markdown(
+            "#+OPTIONS: toc:nil\n#+CUSTOM: kept\n* Heading\n#+BEGIN_SRC python\nprint('text only')",
+        );
+        assert!(!output.contains("OPTIONS"));
+        assert!(output.contains("**Custom:** kept"));
+        assert!(output.ends_with("```"));
     }
 
     /// Write `bytes` to a fresh tmp path with `.pdf` suffix and return

@@ -3,10 +3,14 @@
   "name": "LLM Wiki Clipper",
   "version": "0.1.0",
   "description": "Clip web pages to your LLM Wiki knowledge base",
-  "permissions": ["activeTab", "scripting"],
+  "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
     "http://127.0.0.1:19827/*",
     "http://localhost:19827/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -14,6 +18,18 @@
       "16": "icon16.png",
       "48": "icon48.png",
       "128": "icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "clip-current-page": {
+      "suggested_key": {
+        "default": "Alt+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Clip the current page to LLM Wiki"
     }
   },
   "icons": {

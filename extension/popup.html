@@ -60,6 +60,22 @@
       box-shadow: 0 0 0 2px rgba(99,102,241,0.1);
     }
     .field select { cursor: pointer; }
+    .connection-settings {
+      margin-bottom: 10px;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      background: white;
+    }
+    .connection-settings summary {
+      padding: 7px 10px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      color: #4b5563;
+    }
+    .connection-settings-body { padding: 0 10px 9px; }
+    .btn-secondary { margin-top: 2px; padding: 7px; background: #e5e7eb; color: #374151; }
+    .btn-secondary:hover { background: #d1d5db; }
     .url-preview {
       padding: 4px 8px;
       background: #f3f4f6;
@@ -119,6 +135,21 @@
   <div class="content">
     <div id="statusBar" class="status disconnected">Checking connection...</div>
 
+    <details class="connection-settings" id="connectionSettings">
+      <summary>Connection settings</summary>
+      <div class="connection-settings-body">
+        <div class="field">
+          <label for="serverUrlInput">Server address</label>
+          <input type="text" id="serverUrlInput" placeholder="http://192.168.1.50:19827">
+        </div>
+        <div class="field">
+          <label for="accessTokenInput">Access token</label>
+          <input type="password" id="accessTokenInput" placeholder="Required for LAN access">
+        </div>
+        <button class="btn btn-secondary" id="saveConnectionBtn" type="button">Save and reconnect</button>
+      </div>
+    </details>
+
     <div class="field">
       <label>Save to Project</label>
       <select id="projectSelect">
@@ -147,9 +178,11 @@
   </div>
 
   <div class="footer">
-    Content will be saved and auto-ingested into your wiki
+    <div>Content will be saved and auto-ingested into your wiki</div>
+    <div id="shortcutHint" style="margin-top: 2px; color: #6b7280;">Loading shortcut...</div>
   </div>
 
+  <script src="clipper-core.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

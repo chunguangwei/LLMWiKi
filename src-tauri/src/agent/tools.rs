@@ -351,6 +351,8 @@ pub struct WebSearchProviderOverride {
     #[serde(default)]
     pub api_key: Option<String>,
     #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
     pub ollama_url: Option<String>,
     #[serde(default)]
     pub sear_xng_url: Option<String>,
@@ -1183,7 +1185,7 @@ pub async fn run_web_search(
         .build()
         .map_err(|err| format!("Failed to build web search client: {err}"))?;
     let raw = match provider.as_str() {
-        "firecrawl" => firecrawl_search(&client, query, max_results).await?,
+        "firecrawl" => firecrawl_search(&client, query, &config, max_results).await?,
         "searxng" => searxng_search(&client, query, &config, max_results).await?,
         "tavily" => tavily_search(&client, query, &config, max_results).await?,
         "ollama" => ollama_search(&client, query, &config, max_results).await?,
@@ -1595,11 +1597,28 @@ struct WebSearchItem {
 async fn firecrawl_search(
     client: &reqwest::Client,
     query: &str,
+    config: &WebSearchConfig,
     max_results: usize,
 ) -> Result<Vec<WebSearchItem>, String> {
-    let response = client
-        .post("https://api.firecrawl.dev/v2/search")
-        .header("Accept", "application/json")
+    let override_cfg = config
+        .provider_configs
+        .as_ref()
+        .and_then(|values| values.get("firecrawl"));
+    let base = override_cfg
+        .and_then(|value| value.base_url.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("https://api.firecrawl.dev")
+        .trim_end_matches('/');
+    let mut request = client
+        .post(format!("{base}/v2/search"))
+        .header("Accept", "application/json");
+    if let Some(key) = override_cfg
+        .and_then(|value| value.api_key.as_deref())
+        .filter(|value| !value.trim().is_empty())
+    {
+        request = request.bearer_auth(key.trim());
+    }
+    let response = request
         .json(&json!({ "query": query, "limit": max_results }))
         .send()
         .await
@@ -1968,7 +1987,7 @@ fn friendly_firecrawl_error(error: &str) -> String {
         .to_ascii_lowercase()
         .contains("ip address looks suspicious")
     {
-        "Firecrawl Search rejected this IP for key-free access. Add a Firecrawl API key when that backend supports authenticated search, or choose another Web Search provider.".to_string()
+        "Firecrawl Search rejected this IP for key-free access. Add a Firecrawl API key in Settings or choose another Web Search provider.".to_string()
     } else {
         format!("Firecrawl search failed: {error}")
     }
@@ -2317,6 +2336,10 @@ pub fn search_sources(
         if !entry.file_type().is_file() {
             continue;
         }
+        let rel = relative_to_project(project_path, entry.path());
+        if is_hidden_rel(&rel) {
+            continue;
+        }
         seen_files += 1;
         if seen_files > MAX_SOURCE_SEARCH_FILES {
             eprintln!(
@@ -2332,13 +2355,42 @@ pub fn search_sources(
         else {
             continue;
         };
-        if !matches!(
+        let content = if matches!(
             ext.as_str(),
-            "md" | "markdown" | "txt" | "json" | "csv" | "tsv" | "yaml" | "yml" | "xml" | "html"
+            "md" | "markdown"
+                | "org"
+                | "txt"
+                | "json"
+                | "csv"
+                | "tsv"
+                | "yaml"
+                | "yml"
+                | "xml"
+                | "html"
         ) {
-            continue;
-        }
-        let Ok(content) = fs::read_to_string(entry.path()) else {
+            let Ok(content) = fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            content
+        } else if matches!(
+            ext.as_str(),
+            "pdf"
+                | "doc"
+                | "docx"
+                | "pptx"
+                | "xls"
+                | "xlsx"
+                | "odt"
+                | "ods"
+                | "odp"
+                | "epub"
+                | "mobi"
+        ) {
+            let Some(content) = crate::commands::fs::read_preprocessed_cache(entry.path()) else {
+                continue;
+            };
+            content
+        } else {
             continue;
         };
         let lower = content.to_lowercase();
@@ -2348,10 +2400,6 @@ pub fn search_sources(
         let Some((byte_idx, _matched_len)) = matched else {
             continue;
         };
-        let rel = relative_to_project(project_path, entry.path());
-        if is_hidden_rel(&rel) {
-            continue;
-        }
         refs.push(AgentReference {
             title: entry
                 .path()
@@ -3212,6 +3260,38 @@ mod tests {
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].kind, "source");
         assert!(refs[0].snippet.as_deref().unwrap().contains("safety"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_sources_reads_org_and_fresh_binary_extraction_cache() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-source-cache-{}", Uuid::new_v4()));
+        let source_dir = root.join("raw").join("sources");
+        fs::create_dir_all(source_dir.join(".cache")).unwrap();
+        fs::write(source_dir.join("notes.org"), "* Policy\nExact org wording").unwrap();
+        let pdf = source_dir.join("regulation.pdf");
+        fs::write(&pdf, b"%PDF placeholder").unwrap();
+        fs::write(
+            source_dir.join(".cache").join("regulation.pdf.txt"),
+            "Exact cached regulation wording",
+        )
+        .unwrap();
+
+        let org_refs = search_sources(root.to_str().unwrap(), "org wording", 5).unwrap();
+        let pdf_refs = search_sources(root.to_str().unwrap(), "cached regulation", 5).unwrap();
+
+        assert!(org_refs
+            .iter()
+            .any(|reference| reference.path == "raw/sources/notes.org"));
+        let pdf_ref = pdf_refs
+            .iter()
+            .find(|reference| reference.path == "raw/sources/regulation.pdf")
+            .unwrap();
+        assert!(pdf_ref
+            .snippet
+            .as_deref()
+            .unwrap()
+            .contains("cached regulation"));
         let _ = fs::remove_dir_all(root);
     }
 

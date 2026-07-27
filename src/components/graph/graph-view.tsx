@@ -1118,7 +1118,7 @@ export function GraphView() {
               size="sm"
               onClick={resetFilters}
               className="text-xs gap-1 h-7"
-              title="Reset graph filters"
+              title={t("graph.resetFilters")}
             >
               <RotateCcw className="h-3 w-3" />
               {t("graph.reset")}
@@ -1303,7 +1303,7 @@ export function GraphView() {
                           minLinks: raw === "" || !Number.isFinite(value) ? undefined : Math.max(0, value),
                         }))
                       }}
-                      placeholder="Any"
+                      placeholder={t("graph.any")}
                     />
                     <span className="text-muted-foreground">{t("graph.minLinksHint")}</span>
                   </div>
@@ -1325,7 +1325,7 @@ export function GraphView() {
                           maxLinks: raw === "" || !Number.isFinite(value) ? undefined : Math.max(0, value),
                         }))
                       }}
-                      placeholder="Any"
+                      placeholder={t("graph.any")}
                     />
                     <span className="text-muted-foreground">{t("graph.maxLinksHint")}</span>
                   </div>
@@ -1468,7 +1468,7 @@ export function GraphView() {
                     size="sm"
                     className="h-6 text-[10px] px-1"
                     onClick={() => setFilters((prev) => ({ ...prev, hiddenTypes: new Set() }))}
-                    title="Show all types"
+                    title={t("graph.showAllTypes")}
                   >
                     {t("graph.showAll")}
                   </Button>
@@ -1478,7 +1478,7 @@ export function GraphView() {
                   size="sm"
                   className="h-6 w-6 p-0"
                   onClick={() => setLegendCollapsed(!legendCollapsed)}
-                  title={legendCollapsed ? "Expand legend" : "Collapse legend"}
+                  title={legendCollapsed ? t("graph.expandLegend") : t("graph.collapseLegend")}
                 >
                   {legendCollapsed ? "▶" : "▼"}
                 </Button>
@@ -1509,7 +1509,7 @@ export function GraphView() {
                                 return { ...prev, hiddenTypes: next }
                               })
                             }}
-                            title="Double-click to toggle visibility"
+                            title={t("graph.doubleClickToggle")}
                           >
                             <span
                               className="inline-block h-3 w-3 rounded-full shrink-0 shadow-sm"

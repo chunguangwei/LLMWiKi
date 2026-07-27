@@ -19,6 +19,9 @@ import { describe, it, expect } from "vitest"
 import {
   buildAnthropicUrl,
   getProviderConfig,
+  parseAnthropicResponse,
+  parseGoogleResponse,
+  parseOpenAiResponse,
   supportsImageInput,
   type ChatMessage,
   type ContentBlock,
@@ -39,6 +42,52 @@ function mkConfig(over: Partial<LlmConfig>): LlmConfig {
     ...over,
   }
 }
+
+describe("non-streaming provider configuration", () => {
+  it("disables streaming on OpenAI and Anthropic request bodies", () => {
+    const messages: ChatMessage[] = [{ role: "user", content: "hello" }]
+    const openai = getProviderConfig(mkConfig({ streamingEnabled: false }))
+    const anthropic = getProviderConfig(mkConfig({
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-latest",
+      streamingEnabled: false,
+    }))
+
+    expect(openai.streaming).toBe(false)
+    expect(openai.buildBody(messages)).toMatchObject({ stream: false })
+    expect(anthropic.streaming).toBe(false)
+    expect(anthropic.buildBody(messages)).toMatchObject({ stream: false })
+  })
+
+  it("uses Gemini generateContent instead of the SSE endpoint", () => {
+    const provider = getProviderConfig(mkConfig({
+      provider: "google",
+      model: "gemini-2.5-flash",
+      streamingEnabled: false,
+    }))
+
+    expect(provider.url).toContain(":generateContent")
+    expect(provider.url).not.toContain("streamGenerateContent")
+  })
+
+  it("extracts complete response text for each HTTP wire", () => {
+    expect(parseOpenAiResponse({ choices: [{ message: { content: "openai" } }] })).toBe("openai")
+    expect(parseAnthropicResponse({ content: [{ type: "text", text: "anthropic" }] })).toBe("anthropic")
+    expect(parseGoogleResponse({
+      candidates: [{ content: { parts: [
+        { text: "hidden", thought: true },
+        { text: "google" },
+      ] } }],
+    })).toBe("google")
+  })
+
+  it("keeps streaming enabled for legacy configs without the new field", () => {
+    const provider = getProviderConfig(mkConfig({}))
+    expect(provider.streaming).toBe(true)
+    expect(provider.buildBody([{ role: "user", content: "hello" }]))
+      .toMatchObject({ stream: true })
+  })
+})
 
 function visionMessage(): ChatMessage {
   const blocks: ContentBlock[] = [

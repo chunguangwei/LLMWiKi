@@ -26,6 +26,34 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.11",
+    date: "2026-07-27",
+    highlights: {
+      en: [
+        "Synced upstream v0.6.4–v0.6.5: project-specific model configuration with separate model routing for Chat and Ingest tasks.",
+        "Multiple custom LLM providers, custom request headers, and a configurable streaming output option.",
+        "EPUB and MOBI ebook sources, native Org mode ingestion, and batch URL import.",
+        "Read Sources Only answer mode that grounds responses exclusively in original source material.",
+        "Official local MinerU API support with configurable endpoints and Pipeline mode.",
+        "Faster embedding indexing and wiki-link repair for large projects; MCP sessions are now bound to their projects.",
+        "Chrome Clipper: secure LAN connections and customizable keyboard shortcuts.",
+        "PDF preview now renders across desktop platforms; more compact Chat retrieval and Agent depth mode selectors.",
+        "Improved stability, compatibility, and error handling across document import, frontmatter, and Windows paths.",
+      ],
+      zh: [
+        "同步上游 v0.6.4–v0.6.5：新增项目级模型配置，支持 Chat、Ingest 等任务使用不同模型。",
+        "支持创建和切换多个自定义 LLM Provider，并新增自定义请求头和流式输出开关。",
+        "新增 EPUB / MOBI 电子书资料、Org mode 文件摄取与批量 URL 导入。",
+        "新增「只读原文」回答模式，仅依据原始资料提供答案。",
+        "新增官方 Local MinerU API 支持，可配置服务地址并使用 Pipeline 模式。",
+        "优化 Embedding 索引速度和大项目 Wiki 链接修复性能；MCP 会话与具体项目绑定，避免跨项目上下文混用。",
+        "Chrome 剪藏支持安全 LAN 连接与可自定义快捷键。",
+        "PDF 预览跨桌面平台正常渲染；Chat 检索模式和 Agent 深度模式改为更紧凑的选择方式。",
+        "优化文档导入、Frontmatter、Windows 路径等稳定性、兼容性和错误处理。",
+      ],
+    },
+  },
+  {
     version: "0.6.10",
     date: "2026-07-15",
     highlights: {

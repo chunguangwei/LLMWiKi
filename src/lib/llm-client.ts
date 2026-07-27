@@ -14,6 +14,21 @@ export interface StreamCallbacks {
   onError: (error: Error) => void
 }
 
+function bufferedStreamCallbacks(callbacks: StreamCallbacks): StreamCallbacks {
+  let content = ""
+  let reasoning = ""
+  return {
+    onToken: (token) => { content += token },
+    onReasoningToken: (token) => { reasoning += token },
+    onDone: () => {
+      if (reasoning) callbacks.onReasoningToken?.(reasoning)
+      if (content) callbacks.onToken(content)
+      callbacks.onDone()
+    },
+    onError: callbacks.onError,
+  }
+}
+
 // Lazy import keeps the Tauri event/invoke bindings out of bundles that
 // never touch the subprocess provider (e.g. vitest with a fetch mock).
 async function streamViaClaudeCodeCli(
@@ -78,11 +93,23 @@ export async function streamChat(
   // HTTP. Dispatch before getProviderConfig — that function throws for
   // this provider because it has no URL/headers.
   if (config.provider === "claude-code") {
-    return streamViaClaudeCodeCli(config, messages, callbacks, signal, requestOverrides)
+    return streamViaClaudeCodeCli(
+      config,
+      messages,
+      config.streamingEnabled === false ? bufferedStreamCallbacks(callbacks) : callbacks,
+      signal,
+      requestOverrides,
+    )
   }
 
   if (config.provider === "codex-cli") {
-    return streamViaCodexCli(config, messages, callbacks, signal, requestOverrides)
+    return streamViaCodexCli(
+      config,
+      messages,
+      config.streamingEnabled === false ? bufferedStreamCallbacks(callbacks) : callbacks,
+      signal,
+      requestOverrides,
+    )
   }
 
   const providerConfig = getProviderConfig(config)
@@ -93,7 +120,8 @@ export async function streamChat(
   // almost always a fast network failure (DNS, TLS, 404, refused) that
   // WebKit surfaces as a generic "Load failed". We track whether the
   // backstop actually fired so we can tell the two apart in the error.
-  const timeoutMs = 30 * 60 * 1000 // 30 min — generous backstop for huge-context reasoning models
+  const timeoutMinutes = Math.max(1, Math.min(1440, config.requestTimeoutMinutes ?? 30))
+  const timeoutMs = timeoutMinutes * 60 * 1000
   let combinedSignal = signal
   let timeoutController: AbortController | undefined
   let timeoutFired = false
@@ -179,6 +207,38 @@ export async function streamChat(
       return
     }
     onError(new Error(errorDetail))
+    return
+  }
+
+  if (!providerConfig.streaming) {
+    try {
+      const payload: unknown = await response.json()
+      const content = providerConfig.parseResponse(payload)
+      if (!content) {
+        onError(new Error("Model returned an empty non-streaming response"))
+        return
+      }
+      onToken(content)
+      onDone()
+    } catch (err) {
+      if (timeoutFired) {
+        onError(new Error(`Request timed out after ${Math.round(timeoutMs / 60000)} min. Try a faster model or a smaller context.`))
+        return
+      }
+      if (
+        signal?.aborted ||
+        (err instanceof Error && err.name === "AbortError") ||
+        isRequestCancelledError(err)
+      ) {
+        onDone()
+        return
+      }
+      if (isFetchNetworkError(err)) {
+        onError(new Error("Connection lost while reading the complete response. Try again."))
+        return
+      }
+      onError(err instanceof Error ? err : new Error(String(err)))
+    }
     return
   }
 

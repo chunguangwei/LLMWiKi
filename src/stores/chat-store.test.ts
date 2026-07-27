@@ -21,10 +21,12 @@ describe("chat-store conversation isolation", () => {
     })
   })
 
-  it("defaults to standard retrieval and allows smart retrieval opt-in", () => {
+  it("defaults to standard retrieval and allows explicit retrieval modes", () => {
     expect(useChatStore.getState().retrievalMode).toBe("standard")
     useChatStore.getState().setRetrievalMode("smart")
     expect(useChatStore.getState().retrievalMode).toBe("smart")
+    useChatStore.getState().setRetrievalMode("faithful")
+    expect(useChatStore.getState().retrievalMode).toBe("faithful")
   })
 
   it("writes async assistant results back to the original conversation", () => {

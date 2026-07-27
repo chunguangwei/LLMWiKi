@@ -116,6 +116,8 @@ const EXT_MAP: Record<string, FileCategory> = {
   numbers: "document",
   key: "document",
   epub: "document",
+  mobi: "document",
+  org: "document",
 
   // Data
   json: "data",
@@ -128,7 +130,10 @@ const EXT_MAP: Record<string, FileCategory> = {
 }
 
 export function getFileCategory(filePath: string): FileCategory {
-  const ext = filePath.split(".").pop()?.toLowerCase() ?? ""
+  // Strip the directory first (like getFileExtension) so basename entries such as
+  // "dockerfile"/"makefile" resolve; fall back to the basename when there's no dot.
+  const fileName = filePath.split(/[\\/]/).pop() ?? ""
+  const ext = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() ?? "" : fileName.toLowerCase()
   return EXT_MAP[ext] ?? "unknown"
 }
 
@@ -146,6 +151,9 @@ export const EXTRACTED_TEXT_PREVIEW_EXTENSIONS = new Set([
   "odt",
   "ods",
   "odp",
+  "epub",
+  "mobi",
+  "org",
 ])
 
 export function getFileExtension(filePath: string): string {

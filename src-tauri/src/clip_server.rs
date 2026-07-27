@@ -20,6 +20,15 @@ const MAX_RESTART_RETRIES: u32 = 10;
 const BIND_RETRY_DELAY_SECS: u64 = 2;
 const RESTART_DELAY_SECS: u64 = 5;
 
+const fn next_restart_count(current: u32) -> Option<u32> {
+    let next = current.saturating_add(1);
+    if next >= MAX_RESTART_RETRIES {
+        None
+    } else {
+        Some(next)
+    }
+}
+
 /// Get current daemon status as a string
 pub fn get_daemon_status() -> &'static str {
     match DAEMON_STATUS.load(Ordering::Relaxed) {
@@ -89,7 +98,6 @@ pub fn start_clip_server(app: AppHandle) {
             };
 
             DAEMON_STATUS.store(1, Ordering::Relaxed); // running
-            restart_count = 0; // Reset on successful bind
             println!("[Clip Server] Listening on http://{}", addr);
 
             for mut request in server.incoming_requests() {
@@ -104,6 +112,23 @@ pub fn start_clip_server(app: AppHandle) {
                     }
                     response
                         .add_header(Header::from_bytes("Access-Control-Max-Age", "600").unwrap());
+                    let _ = request.respond(response);
+                    continue;
+                }
+
+                // Loopback callers preserve the pre-LAN behavior used by the
+                // desktop app and older extensions. Any LAN client must use
+                // the same API token as port 19828; exposing clip/project
+                // endpoints without authentication would leak project paths
+                // and permit writes from every device on the network.
+                if !request_is_loopback(&request) && !request_is_authorized(&app, &request) {
+                    let mut response = Response::from_string(
+                        r#"{"ok":false,"error":"Missing or invalid API token"}"#,
+                    )
+                    .with_status_code(401);
+                    for h in &cors_headers {
+                        response.add_header(h.clone());
+                    }
                     let _ = request.respond(response);
                     continue;
                 }
@@ -276,15 +301,16 @@ pub fn start_clip_server(app: AppHandle) {
 
             // Server loop exited (shouldn't happen normally)
             DAEMON_STATUS.store(3, Ordering::Relaxed); // error
-            restart_count += 1;
-
-            if restart_count >= MAX_RESTART_RETRIES {
-                eprintln!(
-                    "[Clip Server] Exceeded max restarts ({}). Giving up.",
-                    MAX_RESTART_RETRIES
-                );
-                return;
-            }
+            restart_count = match next_restart_count(restart_count) {
+                Some(next) => next,
+                None => {
+                    eprintln!(
+                        "[Clip Server] Exceeded max restarts ({}). Giving up.",
+                        MAX_RESTART_RETRIES
+                    );
+                    return;
+                }
+            };
 
             eprintln!(
                 "[Clip Server] Crashed. Restarting in {}s (attempt {}/{})",
@@ -296,7 +322,58 @@ pub fn start_clip_server(app: AppHandle) {
 }
 
 fn cors_headers(origin: Option<&str>) -> Vec<Header> {
-    local_cors_headers(origin, "Content-Type")
+    local_cors_headers(origin, "Content-Type, Authorization, X-LLM-Wiki-Token")
+}
+
+fn request_is_loopback(request: &tiny_http::Request) -> bool {
+    address_is_loopback(request.remote_addr())
+}
+
+fn address_is_loopback(address: Option<&std::net::SocketAddr>) -> bool {
+    address
+        .map(|value| value.ip().is_loopback())
+        .unwrap_or(false)
+}
+
+fn request_is_authorized(app: &AppHandle, request: &tiny_http::Request) -> bool {
+    let headers = request
+        .headers()
+        .iter()
+        .map(|header| {
+            (
+                header.field.as_str().to_string().to_ascii_lowercase(),
+                header.value.as_str().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    crate::api_server::is_token_authorized(app, "", &headers)
+}
+
+#[cfg(test)]
+mod lan_auth_tests {
+    use super::{address_is_loopback, next_restart_count, MAX_RESTART_RETRIES};
+    use std::net::SocketAddr;
+
+    #[test]
+    fn only_ipv4_and_ipv6_loopback_addresses_bypass_clip_auth() {
+        let ipv4: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+        let ipv6: SocketAddr = "[::1]:50000".parse().unwrap();
+        let lan: SocketAddr = "192.168.1.20:50000".parse().unwrap();
+        assert!(address_is_loopback(Some(&ipv4)));
+        assert!(address_is_loopback(Some(&ipv6)));
+        assert!(!address_is_loopback(Some(&lan)));
+        assert!(!address_is_loopback(None));
+    }
+
+    #[test]
+    fn restart_counter_stops_at_the_configured_limit() {
+        let mut count = 0;
+        for expected in 1..MAX_RESTART_RETRIES {
+            count = next_restart_count(count).unwrap();
+            assert_eq!(count, expected);
+        }
+        assert_eq!(next_restart_count(count), None);
+    }
 }
 
 fn handle_set_project(body: &str) -> String {

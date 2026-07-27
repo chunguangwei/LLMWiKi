@@ -25,8 +25,7 @@ import {
   stampGeneratedLogDate,
   buildGenerationPrompt,
   sourceSummaryMediaRefsForExternalMarkdown,
-  aggregatePathsNeedingRepair,
-  filterAggregateRepairOutput,
+  buildDeterministicIngestLog,
   rewriteIngestPathFromTitleForTargetLanguage,
   canonicalizeSourcesField,
   isAppManagedAggregatePath,
@@ -112,43 +111,16 @@ describe("source summary media refs", () => {
   })
 })
 
-describe("aggregate repair targeting", () => {
-  it("repairs only the append-only log and leaves deterministic aggregates to the app", () => {
-    expect(aggregatePathsNeedingRepair(
-      ["wiki/index.md", "wiki/log.md"],
-      ['FILE block "wiki/overview.md" was not closed before end of stream — likely truncation.'],
-    )).toEqual([])
-
-    expect(aggregatePathsNeedingRepair(["wiki/index.md"], [])).toEqual(["wiki/log.md"])
-
-    expect(aggregatePathsNeedingRepair(
-      ["wiki/index.md", "wiki/overview.md", "wiki/log.md"],
-      [],
-    )).toEqual([])
+describe("deterministic ingest log", () => {
+  it("builds a deterministic append-only log entry without another LLM call", () => {
+    expect(buildDeterministicIngestLog("", "raw/sources/a.pdf", "2026-07-20")).toBe(
+      "# Wiki Log\n\n## [2026-07-20] ingest | raw/sources/a.pdf\n",
+    )
+    expect(buildDeterministicIngestLog("# Wiki Log\n", "raw/sources/b.pdf", "2026-07-20")).toBe(
+      "# Wiki Log\n\n## [2026-07-20] ingest | raw/sources/b.pdf\n",
+    )
   })
 
-  it("filters aggregate repair output to the requested aggregate paths only", () => {
-    const raw = [
-      "---FILE: wiki/overview.md---",
-      "# Overview",
-      "---END FILE---",
-      "",
-      "---FILE: wiki/sources/should-not-touch.md---",
-      "# Stray Source Summary",
-      "---END FILE---",
-      "",
-      "---FILE: wiki/entities/stray.md---",
-      "# Stray Entity",
-      "---END FILE---",
-    ].join("\n")
-
-    const filtered = filterAggregateRepairOutput(raw, ["wiki/overview.md"])
-
-    expect(filtered.text).toContain("---FILE: wiki/overview.md---")
-    expect(filtered.text).not.toContain("should-not-touch")
-    expect(filtered.text).not.toContain("wiki/entities/stray.md")
-    expect(filtered.warnings.join("\n")).toContain("Dropped 2 non-aggregate")
-  })
 })
 
 // ── H1: CRLF normalization ─────────────────────────────────────────
@@ -198,7 +170,7 @@ describe("parseFileBlocks — H2: truncated streams (surface, don't hide)", () =
       "---FILE: wiki/concepts/moe.md---",
       "# Mixture of Exp", // stream cut here
     ].join("\n")
-    const { blocks, warnings } = parseFileBlocks(text)
+    const { blocks, warnings, truncatedPaths } = parseFileBlocks(text)
     // Completed block makes it through.
     expect(blocks).toHaveLength(1)
     expect(blocks[0].path).toBe("wiki/entities/qwen.md")
@@ -206,6 +178,7 @@ describe("parseFileBlocks — H2: truncated streams (surface, don't hide)", () =
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).toMatch(/wiki\/concepts\/moe\.md/)
     expect(warnings[0]).toMatch(/not closed/i)
+    expect(truncatedPaths).toEqual(["wiki/concepts/moe.md"])
   })
 
   it("warns when the only block is unclosed", () => {

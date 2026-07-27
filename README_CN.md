@@ -32,7 +32,10 @@
 
 - **两步思维链摄入** — LLM 先分析再生成 Wiki 页面，来源可追溯，支持增量缓存
 - **多模态图片摄入** — 自动提取 PDF 内嵌图片，调用视觉模型生成事实性描述，搜索结果按图文分区，支持 lightbox 预览与跳转到原始文档对应位置
-- **可选 MinerU PDF 解析** — 可启用 MinerU 云端解析复杂 PDF（表格、公式、密集排版），默认仍使用内置本地解析
+- **多格式文档解析** — 支持 PDF、Office 文档、EPUB/MOBI、Org mode、图片、音视频、网页剪藏和批量 URL 导入，并提供内置、云端或本地 MinerU PDF 处理
+- **灵活的模型配置** — 支持项目级模型配置、Chat/Ingest 独立模型路由，以及自定义 Provider、请求头和流式输出
+- **原始资料检索** — 可使用“只读原文”模式，仅依据导入的原始资料回答
+- **项目管理与迁移** — 支持完整项目归档的跨设备导入导出，并可根据现有 Wiki 页面重建索引
 - **四信号知识图谱** — 直接链接、来源重叠、Adamic-Adar、类型亲和四维关联度模型
 - **Louvain 社区检测** — 自动发现知识聚类，内聚度评分
 - **图谱洞察** — 惊奇连接与知识空白检测，一键触发 Deep Research
@@ -320,15 +323,16 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 
 | 格式 | 方法 |
 |------|------|
-| PDF | 内置 pdf-extract（Rust）+ 文件缓存；可选 MinerU 云端解析表格、公式和复杂排版 |
+| PDF | 内置 pdf-extract（Rust）+ 文件缓存；可选 MinerU 云端、Local API 或 Pipeline 模式解析复杂排版 |
 | DOCX | docx-rs —— 标题、加粗/斜体、列表、表格 → 结构化 Markdown |
 | PPTX | ZIP + XML —— 逐页提取，保留标题/列表结构 |
 | XLSX/XLS/ODS | calamine —— 正确的单元格类型、多工作表支持、Markdown 表格 |
+| EPUB/MOBI | 提取电子书元数据、章节和正文，转换为可摄取内容 |
 | 图片 | 原生预览（png, jpg, gif, webp, svg 等） |
 | 视频/音频 | 内置播放器 |
 | 网页剪藏 | Readability.js + Turndown.js → 干净的 Markdown |
 
-> MinerU 是可选功能。启用后 PDF 文件会上传到 MinerU 云端解析；敏感文档建议继续使用内置本地解析。若 MinerU 解析失败，LLM Wiki 会回退到内置解析。MinerU 使用受其文件大小、页数和额度限制约束。
+> MinerU 是可选功能。复杂 PDF 可使用 MinerU 云端、官方 Local API 或本地 Pipeline 模式；本地模式无需上传文件，提取的图片会保存到项目管理的 `wiki/media` 目录。若 MinerU 失败，LLM Wiki 会回退到内置解析器。
 
 ### 16. 文件删除级联清理
 
@@ -366,7 +370,10 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 - **Obsidian 配置** —— 自动生成 `.obsidian/` 目录及推荐设置
 - **Markdown 渲染** —— 带边框的 GFM 表格、代码块、聊天和预览中的 wikilink 处理
 - **多 LLM 提供商** —— OpenAI、Anthropic、Google、Ollama、自定义 —— 各有特定的流式传输和请求头
-- **15 分钟超时** —— 长时间摄入操作不会过早失败
+- **可配置 LLM 超时** —— 可针对较慢的本地模型和长任务调整请求超时
+- **可配置 Firecrawl** —— 支持可选 API Key 和自定义 Base URL，可连接托管或自部署服务
+- **可折叠文件侧栏** —— 可收起 Knowledge/Files 导航并保存折叠状态
+- **项目维护** —— 支持 ZIP 导入导出迁移和确定性重建 `wiki/index.md`
 - **dataVersion 信号** —— 图谱和 UI 在 Wiki 内容变更时自动刷新
 
 ## 技术栈
@@ -380,8 +387,7 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 | 图谱 | sigma.js + graphology + ForceAtlas2 |
 | 搜索 | 分词搜索 + 图谱关联度 + 可选向量（LanceDB） |
 | 向量数据库 | LanceDB（Rust，嵌入式，可选） |
-| PDF | pdf-extract + 可选 MinerU 云端解析 |
-| Office | docx-rs + calamine |
+| 文档解析 | pdf-extract + MinerU 云端/本地 + docx-rs + calamine + EPUB/MOBI 提取 |
 | 国际化 | react-i18next |
 | 状态管理 | Zustand |
 | LLM | 流式 fetch（OpenAI、Anthropic、Google、Ollama、自定义） |
@@ -413,6 +419,7 @@ npm run tauri build    # 生产构建
 2. 启用「开发者模式」
 3. 点击「加载已解压的扩展程序」
 4. 选择 `extension/` 目录
+5. 使用 `Alt+Shift+L`（macOS 为 `Command+Shift+L`）直接剪藏当前页面；可在 `chrome://extensions/shortcuts` 中自定义快捷键
 
 ## 快速开始
 

@@ -8,6 +8,7 @@ import { ChatMessage, StreamingMessage, useSourceFiles, type ChatReferencePrevie
 import { ChatInput, type ChatSendOptions } from "./chat-input"
 import { useChatStore, chatMessagesToLLM, type MessageImage, type MessageReference } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
+import { resolveTaskLlmConfig } from "@/lib/llm-task-routing"
 import { isReasoningOnlyResponseError, streamChat } from "@/lib/llm-client"
 import { supportsImageInput } from "@/lib/llm-providers"
 import { executeIngestWrites } from "@/lib/ingest"
@@ -462,7 +463,15 @@ export function ChatPanel() {
 
   const project = useWikiStore((s) => s.project)
   const projectPathIndex = useWikiStore((s) => s.projectPathIndex)
-  const llmConfig = useWikiStore((s) => s.llmConfig)
+  const baseLlmConfig = useWikiStore((s) => s.llmConfig)
+  const providerConfigs = useWikiStore((s) => s.providerConfigs)
+  const taskModelRouting = useWikiStore((s) => s.taskModelRouting)
+  const projectLlmOverride = useWikiStore((s) => s.projectLlmOverride)
+  const customLlmPresets = useWikiStore((s) => s.customLlmPresets)
+  const llmConfig = useMemo(
+    () => resolveTaskLlmConfig("chat", baseLlmConfig, providerConfigs, taskModelRouting, projectLlmOverride, customLlmPresets),
+    [baseLlmConfig, providerConfigs, taskModelRouting, projectLlmOverride, customLlmPresets],
+  )
   const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
   const anyTxtAvailable = hasConfiguredAnyTxt(searchApiConfig.anyTxt)
   const imageInputAvailable = supportsImageInput(llmConfig)

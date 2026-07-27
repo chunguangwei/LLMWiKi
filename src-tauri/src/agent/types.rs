@@ -23,6 +23,9 @@ pub enum AgentRetrievalMode {
     // Let the Agent iteratively close evidence gaps under a strict retrieval
     // budget and no-progress guard.
     Smart,
+    // Use only raw source excerpts as answer evidence. This is explicit user
+    // intent, never inferred from wording or language-specific heuristics.
+    Faithful,
 }
 
 impl Default for AgentRetrievalMode {
@@ -329,6 +332,17 @@ mod tests {
         assert!(req.tools.web);
         assert!(req.tools.anytxt);
         assert!(req.images.is_empty());
+    }
+
+    #[test]
+    fn chat_request_accepts_faithful_retrieval_mode() {
+        let req: AgentChatRequest = serde_json::from_value(serde_json::json!({
+            "message": "quote the source",
+            "retrievalMode": "faithful"
+        }))
+        .unwrap();
+
+        assert_eq!(req.retrieval_mode, AgentRetrievalMode::Faithful);
     }
 
     #[test]

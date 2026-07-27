@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -48,6 +49,13 @@ pub struct LlmConfig {
     // do not reinterpret it as provider tokens without migrating callers.
     #[serde(default)]
     pub max_context_size: Option<usize>,
+    /// Provider-specific gateway headers. Values are validated again before
+    /// each request because app-state may be edited outside the settings UI.
+    #[serde(default)]
+    pub custom_headers: BTreeMap<String, String>,
+    /// Missing keeps the historical streaming behavior for existing configs.
+    #[serde(default)]
+    pub streaming_enabled: Option<bool>,
 }
 
 impl LlmConfig {
@@ -207,11 +215,16 @@ impl LlmClient {
         system: &str,
         user: &str,
         images: &[AgentImage],
-        on_delta: F,
+        mut on_delta: F,
     ) -> Result<String, String>
     where
         F: FnMut(&str) + Send,
     {
+        if self.config.streaming_enabled == Some(false) {
+            let text = self.generate_text(system, user, images).await?;
+            on_delta(&text);
+            return Ok(text);
+        }
         match self.config.provider.as_str() {
             "openai" => {
                 self.stream_openai_like(
@@ -510,8 +523,7 @@ impl LlmClient {
         let response = self
             .client
             .post(url)
-            .header("Content-Type", "application/json")
-            .header("x-goog-api-key", self.config.api_key.trim())
+            .headers(google_headers(&self.config)?)
             .json(&body)
             .send()
             .await
@@ -567,8 +579,7 @@ impl LlmClient {
         let response = self
             .client
             .post(url)
-            .header("Content-Type", "application/json")
-            .header("x-goog-api-key", self.config.api_key.trim())
+            .headers(google_headers(&self.config)?)
             .json(&body)
             .send()
             .await
@@ -598,7 +609,7 @@ impl LlmClient {
 }
 
 fn openai_headers(config: &LlmConfig, url: &str) -> Result<HeaderMap, String> {
-    let mut headers = HeaderMap::new();
+    let mut headers = custom_headers(config)?;
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
     let key = config.api_key.trim();
     if !key.is_empty() {
@@ -620,7 +631,7 @@ fn openai_headers(config: &LlmConfig, url: &str) -> Result<HeaderMap, String> {
 }
 
 fn anthropic_headers(config: &LlmConfig, url: &str) -> Result<HeaderMap, String> {
-    let mut headers = HeaderMap::new();
+    let mut headers = custom_headers(config)?;
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
     headers.insert(
         "anthropic-version",
@@ -643,6 +654,31 @@ fn anthropic_headers(config: &LlmConfig, url: &str) -> Result<HeaderMap, String>
             HeaderValue::from_str(&value)
                 .map_err(|err| format!("Invalid API key header: {err}"))?,
         );
+    }
+    Ok(headers)
+}
+
+fn google_headers(config: &LlmConfig) -> Result<HeaderMap, String> {
+    let mut headers = custom_headers(config)?;
+    headers.insert("Content-Type", HeaderValue::from_static("application/json"));
+    if !config.api_key.trim().is_empty() {
+        headers.insert(
+            "x-goog-api-key",
+            HeaderValue::from_str(config.api_key.trim())
+                .map_err(|err| format!("Invalid API key header: {err}"))?,
+        );
+    }
+    Ok(headers)
+}
+
+fn custom_headers(config: &LlmConfig) -> Result<HeaderMap, String> {
+    let mut headers = HeaderMap::new();
+    for (name, value) in &config.custom_headers {
+        let name = HeaderName::from_bytes(name.trim().as_bytes())
+            .map_err(|err| format!("Invalid custom header name '{name}': {err}"))?;
+        let value = HeaderValue::from_str(value.trim())
+            .map_err(|err| format!("Invalid custom header value for '{name}': {err}"))?;
+        headers.insert(name, value);
     }
     Ok(headers)
 }
@@ -980,7 +1016,29 @@ mod tests {
             reasoning: None,
             max_tokens: None,
             max_context_size: None,
+            custom_headers: BTreeMap::new(),
+            streaming_enabled: None,
         }
+    }
+
+    #[test]
+    fn custom_headers_are_validated_and_required_auth_wins_case_insensitively() {
+        let mut config = config("openai");
+        config
+            .custom_headers
+            .insert("X-Tenant-ID".into(), "team-a".into());
+        config
+            .custom_headers
+            .insert("authorization".into(), "Custom secret".into());
+        let headers =
+            openai_headers(&config, "https://api.openai.com/v1/chat/completions").unwrap();
+        assert_eq!(headers.get("x-tenant-id").unwrap(), "team-a");
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer key");
+
+        config
+            .custom_headers
+            .insert("X-Bad".into(), "ok\r\nInjected: yes".into());
+        assert!(custom_headers(&config).is_err());
     }
 
     #[test]
@@ -1061,6 +1119,14 @@ mod tests {
             Some(4096)
         );
         assert_eq!(cfg.max_tokens, None);
+        assert_eq!(cfg.streaming_enabled, None);
+
+        let disabled: LlmConfig = serde_json::from_value(json!({
+            "provider": "openai",
+            "streamingEnabled": false
+        }))
+        .unwrap();
+        assert_eq!(disabled.streaming_enabled, Some(false));
     }
 
     #[test]

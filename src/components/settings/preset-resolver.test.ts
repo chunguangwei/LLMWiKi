@@ -94,6 +94,27 @@ describe("resolveConfig", () => {
     expect(resolved.reasoning).toEqual({ mode: "off" })
   })
 
+  it("preserves an explicit non-streaming provider preference", () => {
+    const preset: LlmPreset = {
+      id: "openai",
+      label: "OpenAI",
+      provider: "openai",
+      defaultModel: "gpt-5",
+    }
+
+    expect(resolveConfig(
+      preset,
+      { streamingEnabled: false },
+      fallbackConfig(),
+    ).streamingEnabled).toBe(false)
+    expect(resolveConfig(
+      preset,
+      undefined,
+      fallbackConfig({ streamingEnabled: false }),
+    ).streamingEnabled)
+      .toBeUndefined()
+  })
+
   it("carries Azure API version and model family overrides", () => {
     const preset: LlmPreset = {
       id: "azure",

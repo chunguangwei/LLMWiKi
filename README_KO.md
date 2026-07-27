@@ -32,7 +32,10 @@
 
 - **2단계 Chain-of-Thought 인제스트** — LLM이 먼저 분석한 뒤, 출처 추적성과 증분 캐시를 갖춘 Wiki 페이지를 생성합니다
 - **멀티모달 이미지 인제스트** — PDF에 포함된 이미지를 추출하고, Vision LLM으로 사실 기반 캡션을 생성하며, 이미지 인식 검색 결과와 라이트박스 미리보기, 원본 위치로 이동 기능을 제공합니다
-- **선택적 MinerU PDF 파싱** — 표, 수식, 복잡한 레이아웃이 있는 PDF에는 MinerU 클라우드 파싱을 사용할 수 있으며, 기본값은 내장 로컬 파서입니다
+- **다중 형식 문서 파싱** — PDF, Office 문서, EPUB/MOBI, Org mode, 이미지, 미디어, 웹 클립, URL 일괄 가져오기를 지원하며 내장, 클라우드 또는 로컬 MinerU PDF 처리를 선택할 수 있습니다
+- **유연한 모델 설정** — 프로젝트별 모델 설정, Chat/Ingest 개별 라우팅, 사용자 지정 Provider, 요청 헤더, 스트리밍 출력을 지원합니다
+- **원본 자료 기반 검색** — “원본 자료만” 모드에서 가져온 원본 자료만을 근거로 답변합니다
+- **프로젝트 관리 및 마이그레이션** — 전체 프로젝트 아카이브를 장치 간에 가져오고 내보내며 기존 Wiki 페이지에서 인덱스를 다시 만들 수 있습니다
 - **4-신호 지식 그래프** — 직접 링크, 출처 중복, Adamic-Adar, 타입 친화도를 사용하는 관련성 모델입니다
 - **Louvain 커뮤니티 감지** — 지식 클러스터를 자동으로 발견하고 응집도를 점수화합니다
 - **그래프 인사이트** — 뜻밖의 연결과 지식 공백을 찾아내고, 한 번의 클릭으로 Deep Research를 실행합니다
@@ -328,15 +331,16 @@ LLM Wiki는 문서를 자동으로 정리되고 서로 연결된 지식 베이�
 
 | 형식 | 방식 |
 |------|------|
-| PDF | 파일 캐싱이 포함된 내장 pdf-extract(Rust); 표, 수식, 복잡한 레이아웃에는 선택적으로 MinerU 클라우드 파싱 사용 |
+| PDF | 파일 캐싱이 포함된 내장 pdf-extract(Rust); 복잡한 레이아웃에는 MinerU Cloud, Local API 또는 Pipeline 모드 사용 가능 |
 | DOCX | docx-rs — headings, bold/italic, lists, tables → 구조화된 Markdown |
 | PPTX | ZIP + XML — slide-by-slide extraction with heading/list structure |
 | XLSX/XLS/ODS | calamine — proper cell types, multi-sheet support, Markdown tables |
+| EPUB/MOBI | 전자책 메타데이터, 장, 본문을 추출해 인제스트 가능한 콘텐츠로 변환 |
 | Images | Native preview(png, jpg, gif, webp, svg 등) |
 | Video/Audio | 내장 player |
 | Web clips | Readability.js + Turndown.js → clean Markdown |
 
-> MinerU는 선택 기능입니다. 활성화하면 PDF 파일이 파싱을 위해 MinerU 클라우드로 업로드됩니다. 민감한 문서는 내장 로컬 파서를 사용하는 것을 권장합니다. MinerU 파싱이 실패하면 LLM Wiki는 내장 파서로 자동 fallback합니다. MinerU 사용에는 파일 크기, 페이지 수, quota 제한이 적용됩니다.
+> MinerU는 선택 기능입니다. 복잡한 PDF에는 MinerU Cloud, 공식 Local API 또는 로컬 Pipeline 모드를 사용할 수 있습니다. 로컬 모드는 파일을 외부로 전송하지 않으며 추출된 이미지는 프로젝트가 관리하는 `wiki/media`에 저장됩니다. 실패하면 내장 파서로 fallback합니다.
 
 ### 16. Cascade Cleanup을 포함한 파일 삭제
 
@@ -374,7 +378,10 @@ LLM Wiki는 문서를 자동으로 정리되고 서로 연결된 지식 베이�
 - **Obsidian 설정** — 권장 설정이 포함된 `.obsidian/` 디렉터리 자동 생성
 - **Markdown 렌더링** — 테두리가 있는 GFM tables, 적절한 code blocks, chat과 preview의 wikilink processing
 - **다중 provider LLM 지원** — OpenAI, Anthropic, Google, Ollama, Custom. 각각 provider별 streaming과 header를 지원합니다
-- **15분 timeout** — 긴 인제스트 작업이 너무 일찍 실패하지 않습니다
+- **설정 가능한 LLM timeout** — 느린 로컬 모델과 장시간 작업에 맞춰 요청 제한 시간을 조정할 수 있습니다
+- **설정 가능한 Firecrawl** — 선택적 API key와 custom Base URL로 hosted 및 self-hosted 서비스를 지원합니다
+- **접을 수 있는 파일 사이드바** — Knowledge/Files 탐색을 접고 상태를 유지합니다
+- **프로젝트 유지관리** — ZIP 가져오기/내보내기 마이그레이션과 `wiki/index.md` 재구축을 지원합니다
 - **dataVersion signaling** — Wiki 콘텐츠가 변경되면 그래프와 UI가 자동 새로고침됩니다
 
 ## 기술 스택
@@ -388,8 +395,7 @@ LLM Wiki는 문서를 자동으로 정리되고 서로 연결된 지식 베이�
 | Graph | sigma.js + graphology + ForceAtlas2 |
 | Search | Tokenized search + graph relevance + optional vector(LanceDB) |
 | Vector DB | LanceDB(Rust, embedded, optional) |
-| PDF | pdf-extract + 선택적 MinerU 클라우드 파서 |
-| Office | docx-rs + calamine |
+| 문서 파싱 | pdf-extract + MinerU Cloud/Local + docx-rs + calamine + EPUB/MOBI 추출 |
 | i18n | react-i18next |
 | State | Zustand |
 | LLM | Streaming fetch(OpenAI, Anthropic, Google, Ollama, Custom) |
@@ -422,6 +428,7 @@ npm run tauri build    # Production build
 2. "Developer mode"를 활성화합니다
 3. "Load unpacked"를 클릭합니다
 4. `extension/` 디렉터리를 선택합니다
+5. `Alt+Shift+L`(macOS에서는 `Command+Shift+L`)로 현재 페이지를 바로 클립합니다. `chrome://extensions/shortcuts`에서 단축키를 변경할 수 있습니다
 
 ## 빠른 시작
 

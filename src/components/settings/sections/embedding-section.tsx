@@ -147,6 +147,8 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
     outputDimensionality: draft.embeddingOutputDimensionality,
     maxChunkChars: draft.embeddingMaxChunkChars,
     overlapChunkChars: draft.embeddingOverlapChunkChars,
+    concurrency: draft.embeddingConcurrency,
+    batchSize: draft.embeddingBatchSize,
     extraHeaders: draft.embeddingExtraHeaders,
   }
 
@@ -320,6 +322,43 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
               <p className="text-xs text-muted-foreground">
                 {t("settings.sections.embedding.overlapChunkCharsHint")}
               </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>{t("settings.sections.embedding.concurrency")}</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={32}
+                  step={1}
+                  value={draft.embeddingConcurrency}
+                  onChange={(e) => setDraft(
+                    "embeddingConcurrency",
+                    Math.max(1, Math.min(32, Number(e.target.value) || 1)),
+                  )}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.sections.embedding.concurrencyHint")}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>{t("settings.sections.embedding.batchSize")}</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={64}
+                  step={1}
+                  value={draft.embeddingBatchSize}
+                  onChange={(e) => setDraft(
+                    "embeddingBatchSize",
+                    Math.max(1, Math.min(64, Number(e.target.value) || 1)),
+                  )}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.sections.embedding.batchSizeHint")}
+                </p>
+              </div>
             </div>
           </div>
 

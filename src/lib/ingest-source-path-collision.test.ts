@@ -15,6 +15,7 @@ let sourceMarkers: string[] = []
 let failLongChunksOnce = new Set<number>()
 let extraReviewResponse = ""
 let generationSuffix = ""
+let truncatedRepairResponse = ""
 let abortDuringReview: AbortController | null = null
 let interactiveGenerationOverride = ""
 let mergeRequestCount = 0
@@ -87,6 +88,12 @@ vi.mock("./llm-client", () => ({
       return
     }
 
+    if (systemPrompt.startsWith("You are repairing truncated wiki FILE blocks")) {
+      cb.onToken(truncatedRepairResponse)
+      cb.onDone()
+      return
+    }
+
     const targetMatch = systemPrompt.match(
       /source summary page at \*\*(wiki\/sources\/[^*]+)\*\*/,
     )
@@ -142,6 +149,7 @@ describe("autoIngest source summary paths", () => {
     failLongChunksOnce = new Set()
     extraReviewResponse = ""
     generationSuffix = ""
+    truncatedRepairResponse = ""
     abortDuringReview = null
     interactiveGenerationOverride = ""
     mergeRequestCount = 0
@@ -193,6 +201,12 @@ describe("autoIngest source summary paths", () => {
         endpoint: "",
         apiKey: "",
         model: "",
+      },
+      mineruConfig: {
+        enabled: false,
+        backend: "cloud",
+        token: "",
+        modelVersion: "vlm",
       },
     })
   })
@@ -619,6 +633,63 @@ describe("autoIngest source summary paths", () => {
     expect(reviews[0].description).not.toContain("Truncated Orphan")
   })
 
+  it("retries a truncated FILE block with a targeted generation request", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["project-a config"]
+    generationSuffix = [
+      "",
+      "---FILE: wiki/concepts/recovered.md---",
+      "---",
+      'title: "Recovered concept"',
+      'sources: ["project-a/config.yaml"]',
+      "---",
+      "",
+      "# Recovered concept",
+      "",
+      "This response was cut off",
+    ].join("\n")
+    truncatedRepairResponse = [
+      "---FILE: wiki/concepts/recovered.md---",
+      "---",
+      'title: "Recovered concept"',
+      'sources: ["project-a/config.yaml"]',
+      "---",
+      "",
+      "# Recovered concept",
+      "",
+      "This block was regenerated completely.",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/concepts/stray.md---",
+      "# Stray concept",
+      "---END FILE---",
+    ].join("\n")
+
+    const written = await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/config.yaml`,
+      useWikiStore.getState().llmConfig,
+      undefined,
+      "project-a",
+    )
+
+    expect(written).toContain("wiki/concepts/recovered.md")
+    await expect(
+      fs.readFile(`${tmp.path}/wiki/concepts/recovered.md`, "utf8"),
+    ).resolves.toContain("This block was regenerated completely.")
+    expect(written).not.toContain("wiki/concepts/stray.md")
+    await expect(
+      fs.readFile(`${tmp.path}/wiki/concepts/stray.md`, "utf8"),
+    ).rejects.toThrow()
+    expect(
+      mockStreamChat.mock.calls.some(([, messages]) =>
+        String(messages[0]?.content ?? "").startsWith(
+          "You are repairing truncated wiki FILE blocks",
+        ),
+      ),
+    ).toBe(true)
+  })
+
   it("propagates cancellation that happens during the dedicated review stage", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["project-a config"]
@@ -667,6 +738,34 @@ describe("autoIngest source summary paths", () => {
       ),
     ).toBe(true)
     updateSpy.mockRestore()
+  })
+
+  it("uses a configured local MinerU backend without a cloud token", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["local mineru source"]
+    await writeFileRaw(`${tmp.path}/raw/sources/project-a/local.pdf`, "pdf fallback text\n")
+    useWikiStore.setState({
+      mineruConfig: {
+        enabled: true,
+        backend: "local",
+        token: "",
+        modelVersion: "vlm",
+      },
+    })
+    mockParseWithMineru.mockResolvedValueOnce({
+      markdown: "local MinerU markdown",
+      savedImages: [],
+    })
+
+    await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/local.pdf`,
+      useWikiStore.getState().llmConfig,
+      undefined,
+      "project-a",
+    )
+
+    expect(mockParseWithMineru).toHaveBeenCalled()
   })
 
   it("does not fall back to built-in PDF extraction when MinerU is cancelled", async () => {

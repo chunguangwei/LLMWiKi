@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-07-14（Round 6，上游 v0.6.0 → v0.6.3，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-07-27（Round 7，上游 v0.6.3 → v0.6.5，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.3`（Round 6 追平：smart retrieval / in-page selection assistant / page links / persistent file history / agent content interactions / ingest lifecycle fixes）|
-| **本 fork 版本** | `0.6.4`（Round 6 上游同步 v0.6.0→v0.6.3）|
+| Upstream 版本号 | `0.6.5`（Round 7 追平：项目级模型路由 / 多自定义 provider / 流式开关 / EPUB+MOBI / Org mode / 批量 URL 导入 / 只读原文模式 / MCP 会话绑定项目 / embedding 加速）|
+| **本 fork 版本** | `0.6.11`（Round 7 上游同步 v0.6.3→v0.6.5）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -47,6 +47,19 @@
 >   - package-lock.json/Cargo.lock：采用上游版本后重新生成。
 >   - `persist.integration.test.ts`：修正路径 `.llm-wiki/chats` → `.llm-wiki-local/chats`。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2274 ✅（160 文件）/ cargo check ✅。版本号 `0.6.4` > 上游 `0.6.3`，自动更新降级判定保持有效。
+>
+> **Round 7 同步（2026-07-27，v0.6.3 → v0.6.5）**：`git merge upstream/main`（HEAD `4cb17cb`）。上游本轮 68 个提交、125 文件（+7690/−1146），主线是模型配置体系（项目级模型、Chat/Ingest 分路由、多自定义 provider、自定义请求头、流式开关）+ 资料格式扩展（EPUB/MOBI 经新 `ebook.rs`、Org mode、批量 URL 导入）+ 只读原文回答模式 + MCP 会话绑定项目 + embedding 索引加速。
+> - **13 个冲突文件，全部 keep-both 或弃我方取上游**：
+>   - `Cargo.toml`：版本保留我方线；依赖取上游 `epub 2.1.5`+`mobi`+`html2text`（移入 `[dependencies]` 主表，避免落在 target 段之后），保留我方 single-instance/libc target 段；删除我方旧 `epub = "2"` 注释块。
+>   - `fs.rs`：**弃我方自研 epub 提取**（`extract_epub_text`/`xhtml_to_plain_text`/`decode_html_entities` 及 5 个 CJK 回归测试）——上游 `ebook.rs` 用 `html2text` 正确处理 UTF-8，我方实现冗余；采用上游 `EBOOK_EXTS`/`LEGACY_DOC_EXTS`（doc/xls 已上移 OFFICE）与 org 提取；保留上游 org 测试。
+>   - `llm-providers.ts`：**保留我方 Azure 双端点修复**（`azureV1`/`azureClassic`/`azureAuthStyle`，v0.6.8–0.6.10 的 404/model/max_completion_tokens 系列），套进上游重构（`mergeLlmRequestHeaders` 自定义请求头 + `buildOpenAiCompatibleBody(..., streaming)` 流式参数）。
+>   - `App.tsx`：keep-both——我方 activity 持久化导入 + 上游 `loadCustomLlmPresets`/`loadTaskModelRouting`/`loadProjectLlmOverride`。
+>   - `knowledge-tree.tsx`：保留我方 34 类 `TYPE_CONFIG`（labelKey 模式 + dark: 配色），不取上游 `sidebar.typeLabels.*`；删除合并产生的重复 `useTranslation` 导入。
+>   - `search-view.tsx`：保留我方 Esc 返回/关闭按钮（搜索聚焦导航），placeholder 改用上游 `search.placeholderWithShortcut`。
+>   - `i18n/{en,zh}.json`：keep-both（我方 `editor.refresh`/ingest resume 键 + 上游 `editor.frontmatter`/fileSync 键）；另补上游漏发的 `lint.reconcile*` 5 键（parity 测试抓到）。
+>   - `changelog.ts`：弃上游 0.6.4/0.6.1 条目（与我方同号冲突），内容并入我方新 0.6.11 条目。
+>   - `package.json`/`tauri.conf.json`/`Cargo.toml`：版本号统一升 `0.6.11` > 上游 `0.6.5`，自动更新降级判定保持有效；`Cargo.lock` 取上游后由 cargo 重新生成。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2368 ✅（165 文件）/ i18n parity ✅ 6/6 / cargo check ✅ / cargo test ✅。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局

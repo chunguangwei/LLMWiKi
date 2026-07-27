@@ -348,6 +348,20 @@ describe("chat persistence — round-trip (new format)", () => {
     expect(raw).toContain('"retrievalMode": "smart"')
   })
 
+  it("round-trips faithful source retrieval preference", async () => {
+    await saveChatPreferences(tmp.path, {
+      useWebSearch: false,
+      useAnyTxtSearch: false,
+      agentMode: "standard",
+      retrievalMode: "faithful",
+      selectedSkills: [],
+      disabledSkills: [],
+    })
+
+    const loaded = await loadChatPreferences(tmp.path)
+    expect(loaded.retrievalMode).toBe("faithful")
+  })
+
   it("defaults chat search preferences to off when no file exists", async () => {
     await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
       useWebSearch: false,
