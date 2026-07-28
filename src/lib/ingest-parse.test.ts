@@ -30,6 +30,7 @@ import {
   canonicalizeSourcesField,
   isAppManagedAggregatePath,
   updateBoundedRecentIndexSection,
+  filterTruncatedFileRepairOutput,
 } from "./ingest"
 
 // ── Happy paths ─────────────────────────────────────────────────────
@@ -187,6 +188,34 @@ describe("parseFileBlocks — H2: truncated streams (surface, don't hide)", () =
     expect(blocks).toHaveLength(0)
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).toMatch(/rope\.md/)
+  })
+})
+
+describe("filterTruncatedFileRepairOutput", () => {
+  it("keeps one requested block and drops duplicate and unrequested blocks", () => {
+    const requested = "wiki/concepts/recovered.md"
+    const result = filterTruncatedFileRepairOutput([
+      `---FILE: ${requested}---`,
+      "# First complete repair",
+      "---END FILE---",
+      `---FILE: ${requested}---`,
+      "# Duplicate repair",
+      "---END FILE---",
+      "---FILE: wiki/concepts/unrequested.md---",
+      "# Unrequested",
+      "---END FILE---",
+    ].join("\n"), [requested])
+
+    expect(result.paths).toEqual([requested])
+    expect(result.text).toContain("# First complete repair")
+    expect(result.text).not.toContain("# Duplicate repair")
+    expect(result.text).not.toContain("# Unrequested")
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/duplicate FILE block/),
+        expect.stringMatching(/unrequested FILE block/),
+      ]),
+    )
   })
 })
 

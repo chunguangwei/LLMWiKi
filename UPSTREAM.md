@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-07-27（Round 7，上游 v0.6.3 → v0.6.5，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-07-27（Round 8，上游 v0.6.5 → v0.6.6，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.5`（Round 7 追平：项目级模型路由 / 多自定义 provider / 流式开关 / EPUB+MOBI / Org mode / 批量 URL 导入 / 只读原文模式 / MCP 会话绑定项目 / embedding 加速）|
-| **本 fork 版本** | `0.6.11`（Round 7 上游同步 v0.6.3→v0.6.5）|
+| Upstream 版本号 | `0.6.6`（Round 8 追平：博查网页搜索 Provider / Ingest 截断定向恢复 / PDF 跨平台预览 / Windows 路径与 Clip Server 稳定性）|
+| **本 fork 版本** | `0.6.12`（Round 8 上游同步 v0.6.5→v0.6.6）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -60,6 +60,11 @@
 >   - `changelog.ts`：弃上游 0.6.4/0.6.1 条目（与我方同号冲突），内容并入我方新 0.6.11 条目。
 >   - `package.json`/`tauri.conf.json`/`Cargo.toml`：版本号统一升 `0.6.11` > 上游 `0.6.5`，自动更新降级判定保持有效；`Cargo.lock` 取上游后由 cargo 重新生成。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2368 ✅（165 文件）/ i18n parity ✅ 6/6 / cargo check ✅ / cargo test ✅。
+
+> **Round 8 同步（2026-07-27，v0.6.5 → v0.6.6）**：`git merge upstream/main`（HEAD `98786f6`）。上游本轮仅 1 个发布提交、16 文件（+293/−24）：博查（Bocha）网页搜索 Provider（Agent / Deep Research / API / MCP 均可用）、Ingest 截断定向恢复（自动重新生成缺失 Wiki 文件）、PDF 跨平台预览完善、Windows 计划导入/嵌套路径/盘符与 UNC 路径处理、Clip Server 重试上限 off-by-one 修复。
+> - **6 个冲突文件，全部为版本号类**：`package.json`/`package-lock.json`/`Cargo.toml`/`Cargo.lock`/`tauri.conf.json` 保留我方版本线并统一升 `0.6.12` > 上游 `0.6.6`（上游本轮仅 bump 版本号，无依赖变更）；`changelog.ts` 按惯例将上游 0.6.6 条目内容并入我方新 0.6.12 条目，不保留上游同号条目。
+> - **自动合并文件语义核查**：`tools.rs`/`ingest.ts`/`web-search.ts`/`clip_server.rs` 合并后与上游完全一致（fork 在这些文件无分歧改动）；fork 的 Azure 修复在 `provider.rs`、搜索聚焦导航在 `wiki-store.ts`，均未受本轮影响、完整保留。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2370 ✅（165 文件）/ cargo check ✅ / cargo test ✅。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局

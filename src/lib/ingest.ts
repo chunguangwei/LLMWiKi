@@ -1125,8 +1125,10 @@ async function autoIngestImpl(
   const writtenPaths = writeResult.writtenPaths
   const writeWarnings = writeResult.warnings
   const hardFailures = writeResult.hardFailures
-  let unrecoveredTruncatedPaths = writeResult.truncatedPaths.filter((path) =>
-    !writtenPaths.some((writtenPath) => normalizePath(writtenPath) === normalizePath(path))
+  let unrecoveredTruncatedPaths = uniqueNormalizedPaths(
+    writeResult.truncatedPaths.filter((path) =>
+      !writtenPaths.some((writtenPath) => normalizePath(writtenPath) === normalizePath(path))
+    ),
   )
 
   if (unrecoveredTruncatedPaths.length > 0 && !signal?.aborted) {
@@ -1170,7 +1172,10 @@ async function autoIngestImpl(
         {
           temperature: 0.1,
           reasoning: { mode: "off" },
-          max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize),
+          // A repair must regenerate the complete FILE body. Reusing the
+          // smaller review budget can immediately truncate the same long page
+          // that exhausted the original response.
+          max_tokens: computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
         },
       )
       throwIfIngestAborted(signal, activityId)
@@ -1191,9 +1196,15 @@ async function autoIngestImpl(
           activityId,
           onFileWritten,
         )
-        const recoveredPaths = repairResult.writtenPaths.length === filteredRepair.paths.length
-          ? filteredRepair.paths
-          : []
+        // Match successful writes against the paths requested from the model,
+        // not the final on-disk paths. writeFileBlocks may legitimately rewrite
+        // a title-derived filename for the selected output language.
+        const completedInputPathKeys = new Set(
+          repairResult.completedInputPaths.map(normalizePath),
+        )
+        const recoveredPaths = filteredRepair.paths.filter((path) =>
+          completedInputPathKeys.has(normalizePath(path)),
+        )
         for (const path of repairResult.writtenPaths) {
           if (!writtenPaths.some((writtenPath) => normalizePath(writtenPath) === normalizePath(path))) {
             writtenPaths.push(path)
@@ -1207,8 +1218,9 @@ async function autoIngestImpl(
         }
         writeWarnings.push(...repairResult.warnings)
         hardFailures.push(...repairResult.hardFailures)
+        const recoveredPathKeys = new Set(recoveredPaths.map(normalizePath))
         unrecoveredTruncatedPaths = unrecoveredTruncatedPaths.filter((path) =>
-          !recoveredPaths.includes(path)
+          !recoveredPathKeys.has(normalizePath(path))
         )
       }
     } catch (err) {
@@ -1782,10 +1794,20 @@ async function writeFileBlocks(
   signal?: AbortSignal,
   activityId?: string,
   onFileWritten?: (relativePath: string) => void,
-): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[]; truncatedPaths: string[] }> {
+): Promise<{
+  writtenPaths: string[]
+  completedInputPaths: string[]
+  warnings: string[]
+  hardFailures: string[]
+  truncatedPaths: string[]
+}> {
   const { blocks, warnings: parseWarnings, truncatedPaths } = parseFileBlocks(text)
   const warnings = [...parseWarnings]
   const writtenPaths: string[] = []
+  // Keep the model-requested path separate from the final path. Path
+  // canonicalization may rename the file after parsing, but callers that
+  // repair a specific FILE block still need to know that request succeeded.
+  const completedInputPaths: string[] = []
   // "Hard failures" = blocks we INTENDED to write but the FS rejected
   // (disk full, permission, OS-level errors). Distinct from soft drops
   // (language mismatch, parse warnings, path-traversal rejections):
@@ -1936,6 +1958,7 @@ async function writeFileBlocks(
         await writeFile(fullPath, toWrite)
       }
       writtenPaths.push(relativePath)
+      completedInputPaths.push(rawRelativePath)
       onFileWritten?.(relativePath)
     } catch (err) {
       const msg = `Failed to write "${relativePath}": ${err instanceof Error ? err.message : String(err)}`
@@ -1945,7 +1968,13 @@ async function writeFileBlocks(
     }
   }
 
-  return { writtenPaths, warnings, hardFailures, truncatedPaths }
+  return {
+    writtenPaths,
+    completedInputPaths,
+    warnings,
+    hardFailures,
+    truncatedPaths,
+  }
 }
 
 function isOwnedOnlyBySource(content: string, sourceIdentity: string): boolean {
@@ -2360,17 +2389,37 @@ function buildTruncatedFileRepairPrompt(
   ].filter(Boolean).join("\n")
 }
 
-function filterTruncatedFileRepairOutput(
+export function filterTruncatedFileRepairOutput(
   text: string,
   allowedPaths: readonly string[],
 ): { text: string; paths: string[]; warnings: string[] } {
   const allowed = new Set(allowedPaths.map(normalizePath))
   const { blocks, warnings } = parseFileBlocks(text)
-  const kept = blocks.filter((block) => allowed.has(normalizePath(block.path)))
-  const dropped = blocks.filter((block) => !allowed.has(normalizePath(block.path)))
+  const seen = new Set<string>()
+  const kept: ParsedFileBlock[] = []
+  const dropped: ParsedFileBlock[] = []
+  const duplicates: ParsedFileBlock[] = []
+  for (const block of blocks) {
+    const pathKey = normalizePath(block.path)
+    if (!allowed.has(pathKey)) {
+      dropped.push(block)
+      continue
+    }
+    if (seen.has(pathKey)) {
+      duplicates.push(block)
+      continue
+    }
+    seen.add(pathKey)
+    kept.push(block)
+  }
   if (dropped.length > 0) {
     warnings.push(
       `Dropped ${dropped.length} unrequested FILE block(s) from truncated repair output: ${dropped.map((block) => block.path).join(", ")}`,
+    )
+  }
+  if (duplicates.length > 0) {
+    warnings.push(
+      `Dropped ${duplicates.length} duplicate FILE block(s) from truncated repair output: ${duplicates.map((block) => block.path).join(", ")}`,
     )
   }
   return {
@@ -2380,6 +2429,16 @@ function filterTruncatedFileRepairOutput(
     paths: kept.map((block) => block.path),
     warnings,
   }
+}
+
+function uniqueNormalizedPaths(paths: readonly string[]): string[] {
+  const seen = new Set<string>()
+  return paths.filter((path) => {
+    const key = normalizePath(path)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function getStore() {

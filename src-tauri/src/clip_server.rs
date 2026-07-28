@@ -22,7 +22,7 @@ const RESTART_DELAY_SECS: u64 = 5;
 
 const fn next_restart_count(current: u32) -> Option<u32> {
     let next = current.saturating_add(1);
-    if next >= MAX_RESTART_RETRIES {
+    if next > MAX_RESTART_RETRIES {
         None
     } else {
         Some(next)
@@ -368,7 +368,7 @@ mod lan_auth_tests {
     #[test]
     fn restart_counter_stops_at_the_configured_limit() {
         let mut count = 0;
-        for expected in 1..MAX_RESTART_RETRIES {
+        for expected in 1..=MAX_RESTART_RETRIES {
             count = next_restart_count(count).unwrap();
             assert_eq!(count, expected);
         }
