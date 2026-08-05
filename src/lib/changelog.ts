@@ -26,6 +26,26 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.13",
+    date: "2026-07-28",
+    highlights: {
+      en: [
+        "Synced upstream v0.6.7: recoverable ingest queue controls — select, restart, cancel, and reorder queued tasks.",
+        "Bounded concurrent source parsing for faster batch imports, and an option to keep parsed source markdown.",
+        "Reasoning effort controls are now provider-aware; buffered SSE streaming errors are surfaced and failed streams are cancelled.",
+        "Archive exports are hardened against path traversal and can no longer target project-internal paths.",
+        "GUI now resolves CLI paths through the login shell; reviews can be resolved after research is saved.",
+      ],
+      zh: [
+        "同步上游 v0.6.7：新增可恢复的摄取队列控制——可选择、重启、取消和调整排队任务顺序。",
+        "资料解析支持有界并发，批量导入更快；新增可选保留解析后的原文 Markdown。",
+        "推理强度控制现在能感知 Provider 能力；缓冲式 SSE 流错误会正确透出并取消失败流。",
+        "归档导出安全加固：防御路径穿越，禁止导出到项目内部路径。",
+        "GUI 下通过 login shell 解析 CLI 路径；研究保存后即可解决 Review。",
+      ],
+    },
+  },
+  {
     version: "0.6.12",
     date: "2026-07-27",
     highlights: {

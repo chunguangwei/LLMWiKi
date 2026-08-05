@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-07-27（Round 8，上游 v0.6.5 → v0.6.6，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-07-28（Round 9，上游 v0.6.6 → v0.6.7，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.6`（Round 8 追平：博查网页搜索 Provider / Ingest 截断定向恢复 / PDF 跨平台预览 / Windows 路径与 Clip Server 稳定性）|
-| **本 fork 版本** | `0.6.12`（Round 8 上游同步 v0.6.5→v0.6.6）|
+| Upstream 版本号 | `0.6.7`（Round 9 追平：可恢复摄取队列控制 / 有界并发资料解析 / 可选保留解析后原文 markdown / reasoning 控制感知 provider / SSE 流错误处理 / 归档导出安全加固 / GUI 经 login shell 解析 CLI 路径）|
+| **本 fork 版本** | `0.6.13`（Round 9 上游同步 v0.6.6→v0.6.7）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -65,6 +65,13 @@
 > - **6 个冲突文件，全部为版本号类**：`package.json`/`package-lock.json`/`Cargo.toml`/`Cargo.lock`/`tauri.conf.json` 保留我方版本线并统一升 `0.6.12` > 上游 `0.6.6`（上游本轮仅 bump 版本号，无依赖变更）；`changelog.ts` 按惯例将上游 0.6.6 条目内容并入我方新 0.6.12 条目，不保留上游同号条目。
 > - **自动合并文件语义核查**：`tools.rs`/`ingest.ts`/`web-search.ts`/`clip_server.rs` 合并后与上游完全一致（fork 在这些文件无分歧改动）；fork 的 Azure 修复在 `provider.rs`、搜索聚焦导航在 `wiki-store.ts`，均未受本轮影响、完整保留。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2370 ✅（165 文件）/ cargo check ✅ / cargo test ✅。
+
+> **Round 9 同步（2026-07-28，v0.6.6 → v0.6.7）**：`git merge upstream/main`（HEAD `ad215b5`）。上游本轮 13 个提交、48 文件（+2003/−200）：可恢复摄取队列控制（选择/重启/取消/排序，`ingest-queue.ts` 重写 + activity-panel 批量操作）、有界并发资料解析、可选保留解析后原文 markdown（新 `parsed-source-output.ts`）、reasoning 控制感知 provider（新 `reasoning-capabilities.ts`）、缓冲式 SSE 流错误透出与失败流取消（`llm-client.ts`/`provider.rs`）、归档导出路径穿越加固、GUI 经 login shell 解析 CLI 路径（`cli_resolver.rs`）、研究保存后即可 resolve review。
+> - **8 个冲突文件**：5 个版本号类（`package.json`/`package-lock.json`/`Cargo.toml`/`Cargo.lock`/`tauri.conf.json`）保留我方版本线并统一升 `0.6.13` > 上游 `0.6.7`；`fs.rs` 两处冲突均为上游「清理 Rust 警告」的格式性改动（irrefutable-let 包块、删注释），语义相同，取上游；`i18n/{en,zh}.json` keep-both——取上游新的队列控制键（`selectAll`/`restartSelected`/`moveUp` 等）与新文案，保留我方 `resume`/`resuming`/`left`/`resumeTitle`/`reloadWhileRunningConfirm` 5 个断点续传键。
+> - **changelog.ts 无冲突**：上游 v0.6.7 发布未写 changelog 条目，按惯例由我方新 0.6.13 条目概括本轮上游内容。
+> - **自动合并语义核查**：`llm-providers.ts`（前端）与 `provider.rs`（Rust）均与上游有交叉改动但自动合并成功，fork 的 Azure 双端点修复（`azureV1`/`azureClassic`/`azureAuthStyle`、`is_azure_v1_endpoint`/`include_model` 逻辑）确认完整保留。
+> - **合并后修复（cargo 编译错误抓到）**：`fs.rs` 表格块尾部花括号按上游结构调整（`cells.push`/`rows.push` 移入对应内层块）；`provider.rs` 上游新增测试 `generic_custom_gateway_does_not_receive_openai_reasoning_fields` 适配 fork 的 6 参 `openai_like_body`（补 `use_completion_tokens: false`）。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2397 ✅（168 文件）/ cargo check ✅ / cargo test 386 ✅。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局
