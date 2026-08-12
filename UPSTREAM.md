@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-07-28（Round 9，上游 v0.6.6 → v0.6.7，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-08-12（Round 10，上游 v0.6.7 → v0.6.8，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.7`（Round 9 追平：可恢复摄取队列控制 / 有界并发资料解析 / 可选保留解析后原文 markdown / reasoning 控制感知 provider / SSE 流错误处理 / 归档导出安全加固 / GUI 经 login shell 解析 CLI 路径）|
-| **本 fork 版本** | `0.6.13`（Round 9 上游同步 v0.6.6→v0.6.7）|
+| Upstream 版本号 | `0.6.8`（Round 10 追平：AnyDoc 文档解析 / 并发摄取 worker 池 / 流式 Chat API / 文件历史 opt-in / 俄语+意大利语界面 / 设置快捷键 / 图谱性能）|
+| **本 fork 版本** | `0.6.14`（Round 10 上游同步 v0.6.7→v0.6.8）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -72,6 +72,17 @@
 > - **自动合并语义核查**：`llm-providers.ts`（前端）与 `provider.rs`（Rust）均与上游有交叉改动但自动合并成功，fork 的 Azure 双端点修复（`azureV1`/`azureClassic`/`azureAuthStyle`、`is_azure_v1_endpoint`/`include_model` 逻辑）确认完整保留。
 > - **合并后修复（cargo 编译错误抓到）**：`fs.rs` 表格块尾部花括号按上游结构调整（`cells.push`/`rows.push` 移入对应内层块）；`provider.rs` 上游新增测试 `generic_custom_gateway_does_not_receive_openai_reasoning_fields` 适配 fork 的 6 参 `openai_like_body`（补 `use_completion_tokens: false`）。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2397 ✅（168 文件）/ cargo check ✅ / cargo test 386 ✅。
+
+> **Round 10 同步（2026-08-12，v0.6.7 → v0.6.8）**：`git merge upstream/main`（HEAD `fa2652e`）。上游本轮 30 个提交、78 文件（+7960/−712）：AnyDoc 文档解析（新 `anydoc = "0.1.6"` 依赖 + `rust-version = "1.88"` 地板）、并发摄取 worker 池（可配置并发数）、流式 Chat API、文件版本历史 opt-in + 上限 + 清理控制、俄语/意大利语界面、设置快捷键（Cmd+,/Ctrl+,）、默认应用打开源文件、原始资料按名称/路径过滤、需认证的本地 MinerU、容忍无效 TLS 证书的受信代理、Linux Search 窗口渲染加固、大型图谱性能。
+> - **10 个冲突文件**：
+>   - 5 个版本号类保留我方版本线并统一升 `0.6.14` > 上游 `0.6.8`；`Cargo.lock` 冲突块 keep-both（我方 `aes-gcm`/`argon2` + 上游 `anydoc`）。
+>   - `changelog.ts`：弃上游 0.6.8 条目（与我方 0.6.13 位置冲突），内容并入我方新 0.6.14 条目。
+>   - `App.tsx`：keep-both——上游 `useGlobalShortcut`（Cmd+, 开设置）+ 我方 zoom 注释块。
+>   - `search-view.tsx`：保留我方搜索聚焦导航（`inputRef`/Esc 返回/关闭按钮），采用上游删除 `autoFocus` 的 Linux 加固——首屏聚焦改由 `searchFocusRequest` effect 在挂载时兜底。
+>   - `i18n/{en,zh}.json`：keep-both（上游 `openExternal*` + 我方 reingest/vision 等键）。
+> - **i18n parity 修复**：上游新增 `it.json`/`ru.json` 只覆盖上游键集，我方 321 个 fork 专属键（chat 搜索、find 栏、editor refresh、update banner 等）在两新语言中缺失——以英文值为兜底补齐（未翻译），parity 测试恢复 6/6。
+> - **合并后修复**：`provider.rs` 上游 4 个新测试适配 fork 的 6 参 `openai_like_body`（补 `use_completion_tokens: false`）；上游 o-series/GPT-5 的 `max_completion_tokens` 转换由 `adapt_openai_strict_completion_body` 统一处理，与 fork 的 Azure v1 参数共存不冲突。本轮曾因磁盘 99% 满导致 `cargo test` 链接失败，`cargo clean` 释放 37.5G 后重建通过。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2440 ✅（171 文件）/ i18n parity ✅ 6/6 / cargo check ✅ / cargo test 411 ✅。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局

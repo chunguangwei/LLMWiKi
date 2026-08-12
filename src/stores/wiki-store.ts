@@ -191,6 +191,7 @@ interface ProxyConfig {
   enabled: boolean
   url: string
   bypassLocal: boolean
+  acceptInvalidCerts?: boolean
 }
 
 interface ScheduledImportConfig {
@@ -263,6 +264,8 @@ interface SourceWatchConfig {
   persistExtractedMarkdown: boolean
   /** Maximum number of source text extraction jobs allowed at once. */
   parsingConcurrency: number
+  /** Maximum number of ingest tasks allowed to prepare concurrently. */
+  ingestConcurrency: number
   includeExtensions: string[]
   excludeExtensions: string[]
   excludeDirs: string[]
@@ -286,6 +289,8 @@ export interface MineruConfig {
   backend?: "cloud" | "local"
   /** Base URL of a compatible self-hosted MinerU HTTP wrapper. */
   localEndpoint?: string
+  /** Optional Bearer token used only for the self-hosted MinerU service. */
+  localToken?: string
   localBackend?: MineruLocalBackend
   localEffort?: MineruEffort
   localParseMethod?: MineruParseMethod
@@ -636,6 +641,7 @@ export const useWikiStore = create<WikiState>((set) => ({
     enabled: false,
     url: "",
     bypassLocal: true,
+    acceptInvalidCerts: false,
   },
 
   scheduledImportConfig: {

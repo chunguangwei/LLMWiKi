@@ -150,6 +150,36 @@ export interface FileHistoryEntry {
   content: string
 }
 
+export interface FileHistoryStats {
+  bytes: number
+  files: number
+  entries: number
+}
+
+export interface FileHistorySettings {
+  enabled: boolean
+  maxVersionsPerFile: number
+}
+
+export async function getFileHistorySettings(projectPath: string): Promise<FileHistorySettings> {
+  return invoke<FileHistorySettings>("get_file_history_settings", { projectPath })
+}
+
+export async function setFileHistorySettings(
+  projectPath: string,
+  settings: FileHistorySettings,
+): Promise<FileHistorySettings> {
+  return invoke<FileHistorySettings>("set_file_history_settings", { projectPath, settings })
+}
+
+export async function getFileHistoryStats(projectPath: string): Promise<FileHistoryStats> {
+  return invoke<FileHistoryStats>("get_file_history_stats", { projectPath })
+}
+
+export async function clearFileHistory(projectPath: string): Promise<void> {
+  return invoke<void>("clear_file_history", { projectPath })
+}
+
 export async function listFileHistory(projectPath: string, filePath: string): Promise<FileHistoryEntry[]> {
   return invoke<FileHistoryEntry[]>("list_file_history", { projectPath, filePath })
 }

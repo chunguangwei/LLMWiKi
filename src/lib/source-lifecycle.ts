@@ -49,8 +49,17 @@ export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "pdf",
   "doc",
   "docx",
+  "docm",
+  "ppt",
+  "pps",
+  "pot",
   "pptx",
+  "pptm",
+  "ppsx",
+  "ppsm",
   "xlsx",
+  "xlsm",
+  "xlsb",
   "odt",
   "odp",
   "ods",
@@ -430,6 +439,11 @@ export async function deleteSourceFiles(
       await deleteFile(`${pp}/raw/sources/.cache/${info.fileName}.txt`)
     } catch {
       // cache file may not exist
+    }
+    try {
+      await deleteFile(`${pp}/raw/sources/.cache/${info.fileName}.txt.parser`)
+    } catch {
+      // Version markers exist only for structured-document parser caches.
     }
     for (const cacheKey of new Set([info.identity, info.fileName])) {
       try {

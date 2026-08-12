@@ -7,15 +7,15 @@ export const DEFAULT_SOURCE_WATCH_CONFIG: SourceWatchConfig = sourceWatchDefault
 export const SOURCE_WATCH_FILE_TYPE_GROUPS = [
   {
     id: "documents",
-    extensions: ["md", "mdx", "txt", "org", "pdf", "doc", "docx", "odt", "rtf", "epub", "mobi"],
+    extensions: ["md", "mdx", "txt", "org", "pdf", "doc", "docx", "docm", "odt", "rtf", "epub", "mobi"],
   },
   {
     id: "presentations",
-    extensions: ["pptx", "odp"],
+    extensions: ["ppt", "pps", "pot", "pptx", "pptm", "ppsx", "ppsm", "odp"],
   },
   {
     id: "spreadsheets",
-    extensions: ["xls", "xlsx", "ods", "csv"],
+    extensions: ["xls", "xlsx", "xlsm", "xlsb", "ods", "csv"],
   },
   {
     id: "web",
@@ -47,12 +47,18 @@ export function normalizeSourceWatchConfig(config?: Partial<SourceWatchConfig> |
   const parsingConcurrency = Number.isFinite(rawParsingConcurrency)
     ? Math.max(1, Math.min(8, Math.floor(rawParsingConcurrency)))
     : DEFAULT_SOURCE_WATCH_CONFIG.parsingConcurrency
+  const rawIngestConcurrency = config?.ingestConcurrency
+    ?? DEFAULT_SOURCE_WATCH_CONFIG.ingestConcurrency
+  const ingestConcurrency = Number.isFinite(rawIngestConcurrency)
+    ? Math.max(1, Math.min(5, Math.floor(rawIngestConcurrency)))
+    : DEFAULT_SOURCE_WATCH_CONFIG.ingestConcurrency
   return {
     enabled: config?.enabled ?? DEFAULT_SOURCE_WATCH_CONFIG.enabled,
     autoIngest: config?.autoIngest ?? DEFAULT_SOURCE_WATCH_CONFIG.autoIngest,
     persistExtractedMarkdown:
       config?.persistExtractedMarkdown ?? DEFAULT_SOURCE_WATCH_CONFIG.persistExtractedMarkdown,
     parsingConcurrency,
+    ingestConcurrency,
     includeExtensions: normalizeExtensions(config?.includeExtensions ?? DEFAULT_SOURCE_WATCH_CONFIG.includeExtensions),
     excludeExtensions: normalizeExtensions(config?.excludeExtensions ?? DEFAULT_SOURCE_WATCH_CONFIG.excludeExtensions),
     excludeDirs: normalizeList(config?.excludeDirs ?? DEFAULT_SOURCE_WATCH_CONFIG.excludeDirs),

@@ -32,7 +32,15 @@ import {
 } from "@/lib/dedup-queue"
 import type { DuplicateGroup } from "@/lib/dedup"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
-import { openProject } from "@/commands/fs"
+import {
+  clearFileHistory,
+  getFileHistorySettings,
+  getFileHistoryStats,
+  openProject,
+  setFileHistorySettings,
+  type FileHistorySettings,
+  type FileHistoryStats,
+} from "@/commands/fs"
 import { addToRecentProjects } from "@/lib/project-store"
 
 interface GroupUiEntry {
@@ -63,6 +71,120 @@ export function MaintenanceSection() {
   const [scanCompleted, setScanCompleted] = useState(false)
   const [projectToolStatus, setProjectToolStatus] = useState<string | null>(null)
   const [projectToolBusy, setProjectToolBusy] = useState(false)
+  const [historyStats, setHistoryStats] = useState<FileHistoryStats | null>(null)
+  const [historySettings, setHistorySettingsState] = useState<FileHistorySettings | null>(null)
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+
+  const refreshHistoryStats = useCallback(async () => {
+    if (!project) {
+      setHistoryStats(null)
+      return
+    }
+    const projectPath = project.path
+    try {
+      setHistoryError(null)
+      const stats = await getFileHistoryStats(projectPath)
+      if (useWikiStore.getState().project?.path === projectPath) {
+        setHistoryStats(stats)
+      }
+    } catch (error) {
+      if (useWikiStore.getState().project?.path !== projectPath) return
+      console.warn("[Maintenance] failed to load file history stats:", error)
+      setHistoryError(String(error))
+      setHistoryStats(null)
+    }
+  }, [project])
+
+  useEffect(() => {
+    void refreshHistoryStats()
+  }, [refreshHistoryStats])
+
+  useEffect(() => {
+    let active = true
+    setHistorySettingsState(null)
+    setHistoryBusy(false)
+    setHistoryError(null)
+    if (!project) return () => { active = false }
+    void getFileHistorySettings(project.path)
+      .then((settings) => {
+        if (active) setHistorySettingsState(settings)
+      })
+      .catch((error) => {
+        if (active) setHistoryError(String(error))
+      })
+    return () => { active = false }
+  }, [project])
+
+  const updateHistorySettings = useCallback(async (next: FileHistorySettings) => {
+    if (!project) return
+    const projectPath = project.path
+    setHistoryBusy(true)
+    try {
+      setHistoryError(null)
+      const saved = await setFileHistorySettings(projectPath, next)
+      if (useWikiStore.getState().project?.path !== projectPath) return
+      setHistorySettingsState(saved)
+      setHistoryStats(await getFileHistoryStats(projectPath))
+    } catch (error) {
+      if (useWikiStore.getState().project?.path !== projectPath) return
+      setHistoryError(String(error))
+      try {
+        setHistorySettingsState(await getFileHistorySettings(projectPath))
+      } catch {
+        // Keep the original settings error visible.
+      }
+    } finally {
+      if (useWikiStore.getState().project?.path === projectPath) {
+        setHistoryBusy(false)
+      }
+    }
+  }, [project])
+
+  const commitHistoryRetention = useCallback(async (value: number) => {
+    if (!historySettings) return
+    if (value === 0 && !window.confirm(t("settings.sections.maintenance.history.zeroConfirm"))) {
+      if (project) {
+        const projectPath = project.path
+        try {
+          const settings = await getFileHistorySettings(projectPath)
+          if (useWikiStore.getState().project?.path === projectPath) {
+            setHistorySettingsState(settings)
+          }
+        } catch (error) {
+          if (useWikiStore.getState().project?.path === projectPath) {
+            setHistoryError(String(error))
+          }
+        }
+      }
+      return
+    }
+    await updateHistorySettings({
+      ...historySettings,
+      enabled: value === 0 ? false : historySettings.enabled,
+      maxVersionsPerFile: value,
+    })
+  }, [historySettings, project, t, updateHistorySettings])
+
+  const handleClearHistory = useCallback(async () => {
+    if (!project || !window.confirm(t("settings.sections.maintenance.history.confirm"))) return
+    const projectPath = project.path
+    setHistoryBusy(true)
+    try {
+      setHistoryError(null)
+      await clearFileHistory(projectPath)
+      if (useWikiStore.getState().project?.path !== projectPath) return
+      setHistoryStats(await getFileHistoryStats(projectPath))
+    } catch (error) {
+      if (useWikiStore.getState().project?.path === projectPath) {
+        setHistoryError(String(error))
+      }
+    } finally {
+      if (useWikiStore.getState().project?.path === projectPath) {
+        setHistoryBusy(false)
+      }
+    }
+  }, [project, t])
 
   const handleRebuildIndex = useCallback(async () => {
     if (!project) return
@@ -280,6 +402,99 @@ export function MaintenanceSection() {
 
       <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">
         <div className="flex items-center gap-2">
+          <Clock className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">
+            {t("settings.sections.maintenance.history.title")}
+          </h3>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t("settings.sections.maintenance.history.description")}
+        </p>
+        {historySettings && (
+          <div className="space-y-3 rounded-md border border-border/60 bg-background/60 p-3">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="file-history-enabled">
+                  {t("settings.sections.maintenance.history.enabled")}
+                </Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("settings.sections.maintenance.history.enabledHint")}
+                </p>
+              </div>
+              <button
+                id="file-history-enabled"
+                type="button"
+                role="switch"
+                aria-checked={historySettings.enabled}
+                disabled={!project || historyBusy}
+                onClick={() => void updateHistorySettings({
+                  ...historySettings,
+                  enabled: !historySettings.enabled,
+                })}
+                className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors disabled:opacity-50 ${historySettings.enabled ? "border-primary bg-primary" : "border-border bg-muted"}`}
+              >
+                <span className={`absolute top-0.5 h-[18px] w-[18px] rounded-full bg-background shadow-sm transition-transform ${historySettings.enabled ? "left-[22px]" : "left-0.5"}`} />
+              </button>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="file-history-retention">
+                  {t("settings.sections.maintenance.history.retention")}
+                </Label>
+                <span className="text-xs font-medium tabular-nums">
+                  {t("settings.sections.maintenance.history.retentionValue", {
+                    count: historySettings.maxVersionsPerFile,
+                  })}
+                </span>
+              </div>
+              <input
+                id="file-history-retention"
+                type="range"
+                min={0}
+                max={30}
+                step={1}
+                value={historySettings.maxVersionsPerFile}
+                disabled={!project || historyBusy}
+                onChange={(event) => setHistorySettingsState({
+                  ...historySettings,
+                  maxVersionsPerFile: Number(event.target.value),
+                })}
+                onPointerUp={(event) => void commitHistoryRetention(Number(event.currentTarget.value))}
+                onKeyUp={(event) => {
+                  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+                    void commitHistoryRetention(Number(event.currentTarget.value))
+                  }
+                }}
+                className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-muted accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sections.maintenance.history.retentionHint")}
+              </p>
+            </div>
+          </div>
+        )}
+        {historyStats && (
+          <p className="text-xs text-muted-foreground">
+            {t("settings.sections.maintenance.history.usage", {
+              size: formatBytes(historyStats.bytes),
+              files: historyStats.files,
+              entries: historyStats.entries,
+            })}
+          </p>
+        )}
+        {historyError && <p className="text-xs text-destructive">{historyError}</p>}
+        <Button
+          variant="outline"
+          onClick={() => void handleClearHistory()}
+          disabled={!project || historyBusy || !historyStats || historyStats.files === 0}
+        >
+          {historyBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          {t("settings.sections.maintenance.history.clear")}
+        </Button>
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">
+        <div className="flex items-center gap-2">
           <Wrench className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">
             {t("settings.sections.maintenance.dedup.title", {
@@ -380,6 +595,12 @@ export function MaintenanceSection() {
       })}
     </div>
   )
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 // --- helpers ---------------------------------------------------------------

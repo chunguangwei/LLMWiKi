@@ -60,6 +60,18 @@ describe("source-lifecycle path helpers", () => {
     expect(isIngestableSourcePath("C:\\project\\raw\\sources\\book.MOBI")).toBe(true)
   })
 
+  it("accepts AnyDoc Office and RTF source variants", () => {
+    for (const path of [
+      "report.docm",
+      "deck.ppt",
+      "show.ppsm",
+      "workbook.xlsb",
+      "notes.rtf",
+    ]) {
+      expect(isIngestableSourcePath(`raw/sources/${path}`)).toBe(true)
+    }
+  })
+
   it("derives folder context from absolute raw/sources paths without leaking the project prefix", () => {
     expect(
       folderContextForSourcePath("/tmp/project/raw/sources/reports/2026/report.pdf"),
@@ -96,6 +108,7 @@ describe("source-lifecycle path helpers", () => {
         autoIngest: true,
         persistExtractedMarkdown: false,
         parsingConcurrency: 2,
+        ingestConcurrency: 1,
         includeExtensions: ["md"],
         excludeExtensions: ["json"],
         excludeDirs: ["drafts"],
@@ -157,6 +170,7 @@ describe("source-lifecycle path helpers", () => {
         autoIngest: true,
         persistExtractedMarkdown: false,
         parsingConcurrency: 2,
+        ingestConcurrency: 1,
         includeExtensions: ["json", "yaml", "md"],
         excludeExtensions: [],
         excludeDirs: [],
@@ -227,6 +241,7 @@ describe("source-lifecycle path helpers", () => {
         autoIngest: true,
         persistExtractedMarkdown: false,
         parsingConcurrency: 2,
+        ingestConcurrency: 1,
         includeExtensions: ["md"],
         excludeExtensions: [],
         excludeDirs: ["drafts"],
@@ -264,6 +279,7 @@ describe("source-lifecycle path helpers", () => {
         autoIngest: true,
         persistExtractedMarkdown: false,
         parsingConcurrency: 2,
+        ingestConcurrency: 1,
         includeExtensions: ["md", "pdf"],
         excludeExtensions: [],
         excludeDirs: [],
@@ -348,6 +364,7 @@ describe("source-lifecycle path helpers", () => {
         autoIngest: true,
         persistExtractedMarkdown: false,
         parsingConcurrency: 2,
+        ingestConcurrency: 1,
         includeExtensions: ["md"],
         excludeExtensions: [],
         excludeDirs: [],

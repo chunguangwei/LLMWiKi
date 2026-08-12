@@ -26,6 +26,28 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.14",
+    date: "2026-08-12",
+    highlights: {
+      en: [
+        "Synced upstream v0.6.8: AnyDoc document parsing with broader Word, PowerPoint, Excel, OpenDocument, and RTF support, richer structure preservation, safe legacy fallback, and versioned extraction caches.",
+        "Concurrent ingest worker pool with a configurable worker count; incomplete ingest output now fails explicitly instead of being kept.",
+        "Streaming chat API; open source files in the default app; filter raw sources by name or path.",
+        "File version history is now opt-in and bounded, with usage and cleanup controls.",
+        "New Russian and Italian UI locales; Cmd+, / Ctrl+, opens Settings.",
+        "Improved large knowledge graph performance, scheduled import cleanup, Deep Research validation with retry, GPT-5 / o-series / Azure parameter compatibility, authenticated local MinerU, and trusted proxies with invalid TLS certs.",
+      ],
+      zh: [
+        "同步上游 v0.6.8：集成 AnyDoc 文档解析，扩展 Word、PowerPoint、Excel、OpenDocument 和 RTF 格式支持，增强结构保留，并支持旧解析器安全回退与解析缓存版本管理。",
+        "新增并发摄取 worker 池，可配置并发数；摄取输出不完整现在会明确失败，不再保留残缺结果。",
+        "新增流式 Chat API；可用默认应用打开源文件；原始资料支持按名称或路径过滤。",
+        "文件版本历史改为按需开启且有上限，并新增占用查看与清理功能。",
+        "新增俄语、意大利语界面；Cmd+, / Ctrl+, 快捷键打开设置。",
+        "优化大型知识图谱性能、定时导入清理、深度研究校验与失败重试、GPT-5 / o 系列 / Azure 参数兼容性，支持需认证的本地 MinerU 与容忍无效 TLS 证书的受信代理。",
+      ],
+    },
+  },
+  {
     version: "0.6.13",
     date: "2026-07-28",
     highlights: {

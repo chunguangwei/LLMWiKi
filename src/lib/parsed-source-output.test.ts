@@ -36,6 +36,14 @@ describe("parsed source output", () => {
     expect(parsedMarkdownOutputPath("/project", "/project/raw/sources/data.json")).toBeNull()
   })
 
+  it("supports AnyDoc-only Office variants and RTF", () => {
+    for (const fileName of ["a.docm", "a.ppt", "a.ppsm", "a.xlsb", "a.rtf"]) {
+      expect(
+        parsedMarkdownOutputPath("/project", `/project/raw/sources/${fileName}`),
+      ).toBe(`/project/raw/parsed/${fileName}.md`)
+    }
+  })
+
   it("creates the mirrored directory and writes atomically", async () => {
     await expect(
       persistParsedMarkdown(

@@ -562,14 +562,20 @@ export function languageRule(sourceContent: string = ""): string {
  * Auto-ingest: reads source → LLM analyzes → LLM writes wiki pages, all in one go.
  * Used when importing new files.
  *
- * Concurrency: this function holds a per-project lock for its full
- * duration. Two simultaneous calls for the same project (e.g. queue
- * + Save-to-Wiki) take turns. The lock is necessary because the
- * analysis stage reads `wiki/index.md` and the generation stage
- * overwrites it; without serialization, each call would emit an
- * "updated" index based on the same pre-state and overwrite each
- * other's additions.
+ * Concurrency: source preparation and LLM generation for different sources may
+ * overlap. Wiki-page and aggregate-file mutations run through a per-project
+ * commit boundary. Queue callers can add stricter ordering around that boundary.
  */
+export type IngestCommitRunner = <T>(operation: () => Promise<T>) => Promise<T>
+
+export interface AutoIngestOptions {
+  /**
+   * Adds queue ordering around a commit. The supplied runner must not acquire
+   * the project mutex; autoIngest always acquires it inside this callback.
+   */
+  runCommit?: IngestCommitRunner
+}
+
 export async function autoIngest(
   projectPath: string,
   sourcePath: string,
@@ -577,9 +583,21 @@ export async function autoIngest(
   signal?: AbortSignal,
   folderContext?: string,
   onFileWritten?: (relativePath: string) => void,
+  options?: AutoIngestOptions,
 ): Promise<string[]> {
-  return withProjectLock(normalizePath(projectPath), () =>
-    autoIngestImpl(projectPath, sourcePath, llmConfig, signal, folderContext, onFileWritten),
+  const pp = normalizePath(projectPath)
+  const sp = normalizePath(sourcePath)
+  return withProjectLock(
+    `ingest-source\0${pp}\0${sp}`,
+    () => autoIngestImpl(
+      projectPath,
+      sourcePath,
+      llmConfig,
+      signal,
+      folderContext,
+      onFileWritten,
+      options,
+    ),
   )
 }
 
@@ -645,6 +663,7 @@ async function autoIngestImpl(
   signal?: AbortSignal,
   folderContext?: string,
   onFileWritten?: (relativePath: string) => void,
+  options?: AutoIngestOptions,
 ): Promise<string[]> {
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
@@ -653,6 +672,10 @@ async function autoIngestImpl(
   const sourceIdentity = sourceIdentityForPath(pp, sp)
   const sourceSummarySlug = sourceSummarySlugFromIdentity(sourceIdentity)
   const sourceSummaryPath = `wiki/sources/${sourceSummarySlug}.md`
+  const queueCommit = options?.runCommit
+  const runCommit: IngestCommitRunner = queueCommit
+    ? ((operation) => queueCommit(() => withProjectLock(pp, operation)))
+    : ((operation) => withProjectLock(pp, operation))
   console.log(`[ingest:diag] autoIngestImpl ENTRY for "${fileName}" (project="${pp}", source="${sp}")`)
   const activityId = activity.addItem({
     type: "ingest",
@@ -745,7 +768,9 @@ async function autoIngestImpl(
   const cachedFiles = await checkIngestCache(pp, sourceIdentity, sourceContent)
   console.log(`[ingest:diag] cache check for "${sourceIdentity}":`, cachedFiles === null ? "MISS (full pipeline)" : `HIT (${cachedFiles.length} cached files)`)
   if (cachedFiles !== null) {
-    try {
+    return runCommit(async () => {
+      throwIfIngestAborted(signal, activityId)
+      try {
       console.log(`[ingest:diag] cache-hit branch: starting image extraction for ${sp}`)
       const skipNativePdfImageExtraction = isPdf && hasMineruImageRefs(sourceContent, sourceSummarySlug)
       let savedImages = skipNativePdfImageExtraction
@@ -780,17 +805,19 @@ async function autoIngestImpl(
           const captionLlm = resolveCaptionConfig(mmCfg, llmConfig)
           if (captionLlm) {
             try {
-              await captionMarkdownImages(pp, appendSavedImageRefsForCaption(sourceContent, savedImages), captionLlm, {
-                signal,
-                shouldCaption: (url) =>
-                  isSavedImagePromptUrl(pp, sourceSummarySlug, url),
-                urlToAbsPath: (url) => promptImageUrlToAbs(pp, url),
-                concurrency: mmCfg.concurrency,
-                onProgress: (done, total) =>
-                  activity.updateItem(activityId, {
-                    detail: `Captioning images... ${done}/${total}`,
-                  }),
-              })
+              await withProjectLock(`${pp}\0image-caption-cache`, () =>
+                captionMarkdownImages(pp, appendSavedImageRefsForCaption(sourceContent, savedImages), captionLlm, {
+                  signal,
+                  shouldCaption: (url) =>
+                    isSavedImagePromptUrl(pp, sourceSummarySlug, url),
+                  urlToAbsPath: (url) => promptImageUrlToAbs(pp, url),
+                  concurrency: mmCfg.concurrency,
+                  onProgress: (done, total) =>
+                    activity.updateItem(activityId, {
+                      detail: `Captioning images... ${done}/${total}`,
+                    }),
+                }),
+              )
             } catch (err) {
               console.warn(
                 `[ingest:caption] cache-hit caption pass failed:`,
@@ -810,18 +837,19 @@ async function autoIngestImpl(
       } else {
         console.log(`[ingest:diag] cache-hit branch: skipping injection (no images returned from extraction)`)
       }
-    } catch (err) {
-      console.warn(
-        `[ingest:images] cache-hit injection failed for "${fileName}":`,
-        err instanceof Error ? err.message : err,
-      )
-    }
-    activity.updateItem(activityId, {
-      status: "done",
-      detail: `Skipped (unchanged) — ${cachedFiles.length} files from previous ingest`,
-      filesWritten: cachedFiles,
+      } catch (err) {
+        console.warn(
+          `[ingest:images] cache-hit injection failed for "${fileName}":`,
+          err instanceof Error ? err.message : err,
+        )
+      }
+      activity.updateItem(activityId, {
+        status: "done",
+        detail: `Skipped (unchanged) — ${cachedFiles.length} files from previous ingest`,
+        filesWritten: cachedFiles,
+      })
+      return cachedFiles
     })
-    return cachedFiles
   }
 
   // ── Step 0.5: Extract embedded images ─────────────────────────
@@ -922,21 +950,23 @@ async function autoIngestImpl(
     activity.updateItem(activityId, { detail: "Captioning images..." })
     const ourMediaPrefix = `${pp}/wiki/media/${sourceSummarySlug}/`
     try {
-      const result = await captionMarkdownImages(pp, enrichedSourceContent, captionLlm, {
-        signal,
-        // Strict filter: only caption images we know we just
-        // extracted into this source's media directory. Skips any
-        // pre-existing markdown image refs the user may have typed
-        // into the source content (e.g. for hand-authored .md
-        // sources).
-        shouldCaption: (url) => url.startsWith(ourMediaPrefix) || isSavedImagePromptUrl(pp, sourceSummarySlug, url),
-        urlToAbsPath: (url) => promptImageUrlToAbs(pp, url),
-        concurrency: mmCfg.concurrency,
-        onProgress: (done, total) =>
-          activity.updateItem(activityId, {
-            detail: `Captioning images... ${done}/${total}`,
-          }),
-      })
+      const result = await withProjectLock(`${pp}\0image-caption-cache`, () =>
+        captionMarkdownImages(pp, enrichedSourceContent, captionLlm, {
+          signal,
+          // Strict filter: only caption images we know we just
+          // extracted into this source's media directory. Skips any
+          // pre-existing markdown image refs the user may have typed
+          // into the source content (e.g. for hand-authored .md
+          // sources).
+          shouldCaption: (url) => url.startsWith(ourMediaPrefix) || isSavedImagePromptUrl(pp, sourceSummarySlug, url),
+          urlToAbsPath: (url) => promptImageUrlToAbs(pp, url),
+          concurrency: mmCfg.concurrency,
+          onProgress: (done, total) =>
+            activity.updateItem(activityId, {
+              detail: `Captioning images... ${done}/${total}`,
+            }),
+        }),
+      )
       enrichedSourceContent = stripWikiMediaAbsPaths(pp, result.enrichedMarkdown)
       console.log(
         `[ingest:caption] images=${savedImages.length} fresh=${result.freshCaptions} cached=${result.cachedCaptions} failed=${result.failed}`,
@@ -1121,6 +1151,7 @@ async function autoIngestImpl(
   }
 
   // ── Step 3: Write files ───────────────────────────────────────
+  return runCommit(async () => {
   throwIfIngestAborted(signal, activityId)
   activity.updateItem(activityId, { detail: "Writing files..." })
   await migrateLegacySourceSummaryIfSafe(pp, sourceIdentity, sourceSummaryPath)
@@ -1325,7 +1356,34 @@ async function autoIngestImpl(
     }
   }
 
+  // A partial write is not a successful ingest. Keep the generated files on
+  // disk so a retry can merge/repair them, but do not cache or embed the
+  // incomplete result. Throwing here keeps the queue task visible as
+  // pending/failed instead of removing it as "done" while Sources reports the
+  // same file as not ingested.
+  if (hardFailures.length > 0 || unrecoveredTruncatedPaths.length > 0) {
+    const reasons = [
+      hardFailures.length > 0
+        ? `${hardFailures.length} wiki file write failure(s)`
+        : "",
+      unrecoveredTruncatedPaths.length > 0
+        ? `${unrecoveredTruncatedPaths.length} truncated wiki file(s) could not be repaired: ${unrecoveredTruncatedPaths.join(", ")}`
+        : "",
+    ].filter(Boolean)
+    const message = `Ingest incomplete: ${reasons.join("; ")}`
+    activity.updateItem(activityId, {
+      status: "error",
+      detail: warningSummary
+        ? `${message} — ${warningSummary} (saved to .llm-wiki/ingest-warnings.log)`
+        : message,
+      filesWritten: writtenPaths,
+    })
+    throw new Error(message)
+  }
+
   // ── Step 4: Parse review items ────────────────────────────────
+  // Do this only after the completeness gate above. Otherwise every queue
+  // retry could duplicate review items derived from the same partial output.
   throwIfIngestAborted(signal, activityId)
   const reviewItems = [
     ...parseReviewBlocks(generation, sp),
@@ -1389,6 +1447,7 @@ async function autoIngestImpl(
   })
 
   return writtenPaths
+  })
 }
 
 /**

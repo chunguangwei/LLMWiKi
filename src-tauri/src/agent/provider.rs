@@ -138,7 +138,7 @@ impl AgentLlmProvider for LlmClient {
 
 impl LlmClient {
     pub fn new(config: LlmConfig) -> Result<Self, String> {
-        let client = reqwest::Client::builder()
+        let client = crate::proxy::configure_http_client(reqwest::Client::builder())
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .build()
             .map_err(|err| format!("Failed to build LLM HTTP client: {err}"))?;
@@ -317,6 +317,7 @@ impl LlmClient {
         if include_model {
             body["model"] = Value::String(self.config.model.clone());
         }
+        adapt_openai_strict_completion_body(&mut body, &self.config);
         apply_openai_reasoning(&mut body, &self.config);
         body
     }
@@ -965,6 +966,22 @@ fn apply_openai_reasoning(body: &mut Value, config: &LlmConfig) {
     }
 }
 
+fn adapt_openai_strict_completion_body(body: &mut Value, config: &LlmConfig) {
+    let custom_azure = config.provider == "custom" && is_azure_endpoint(&config.custom_endpoint);
+    let strict_model = is_openai_reasoning_model(config)
+        || (custom_azure && config.azure_model_family.as_deref() == Some("gpt5"));
+    if !strict_model || (config.provider != "openai" && config.provider != "azure" && !custom_azure)
+    {
+        return;
+    }
+    if let Some(max_tokens) = body
+        .as_object_mut()
+        .and_then(|value| value.remove("max_tokens"))
+    {
+        body["max_completion_tokens"] = max_tokens;
+    }
+}
+
 fn apply_anthropic_reasoning(body: &mut Value, config: &LlmConfig) {
     let Some(reasoning) = config.reasoning.as_ref() else {
         return;
@@ -1256,6 +1273,66 @@ mod tests {
                 .and_then(|value| value.mode.as_deref()),
             Some("auto")
         );
+    }
+
+    #[test]
+    fn azure_gpt5_uses_max_completion_tokens() {
+        let mut cfg = config("azure");
+        cfg.model = "deployment-name-does-not-identify-model".to_string();
+        cfg.azure_model_family = Some("gpt5".to_string());
+        let body =
+            LlmClient::new(cfg)
+                .unwrap()
+                .openai_like_body("system", "user", &[], false, false, false);
+
+        assert_eq!(
+            body.get("max_completion_tokens").and_then(Value::as_u64),
+            Some(DEFAULT_MAX_TOKENS as u64)
+        );
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn openai_o_series_uses_max_completion_tokens() {
+        let mut cfg = config("openai");
+        cfg.model = "o3-mini".to_string();
+        let body =
+            LlmClient::new(cfg)
+                .unwrap()
+                .openai_like_body("system", "user", &[], true, false, false);
+
+        assert!(body.get("max_completion_tokens").is_some());
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn ordinary_azure_model_keeps_max_tokens() {
+        let mut cfg = config("azure");
+        cfg.model = "gpt-4o".to_string();
+        cfg.azure_model_family = Some("standard".to_string());
+        let body =
+            LlmClient::new(cfg)
+                .unwrap()
+                .openai_like_body("system", "user", &[], false, false, false);
+
+        assert!(body.get("max_tokens").is_some());
+        assert!(body.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn custom_azure_gpt5_deployment_uses_max_completion_tokens() {
+        let mut cfg = config("custom");
+        cfg.custom_endpoint =
+            "https://example.openai.azure.com/openai/deployments/prod".to_string();
+        cfg.model = "deployment-name".to_string();
+        cfg.azure_model_family = Some("gpt5".to_string());
+        let body =
+            LlmClient::new(cfg)
+                .unwrap()
+                .openai_like_body("system", "user", &[], false, false, false);
+
+        assert!(body.get("max_completion_tokens").is_some());
+        assert!(body.get("max_tokens").is_none());
     }
 
     #[test]

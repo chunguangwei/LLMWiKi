@@ -126,14 +126,13 @@ export function SearchView() {
   const visibleImages = showSupportingImages ? imageHits : matchingImages
 
   // Focus + select the search box whenever the global Cmd/Ctrl+F handler
-  // bumps `searchFocusRequest`. Skip the initial mount (value 0) — the
-  // input's own `autoFocus` already covers the first render, and selecting
-  // an empty field then is a no-op anyway. On repeat presses (view already
-  // mounted) this is the only thing that re-focuses it.
+  // bumps `searchFocusRequest`, and focus it once on mount. Upstream
+  // dropped the input's `autoFocus` attribute to harden Linux Search
+  // window rendering, so first-render focus now goes through this effect
+  // as well. Selecting an empty field on first render is a no-op anyway.
   useEffect(() => {
-    if (searchFocusRequest === 0) return
     inputRef.current?.focus()
-    inputRef.current?.select()
+    if (searchFocusRequest !== 0) inputRef.current?.select()
   }, [searchFocusRequest])
 
   // Esc closes the global search and returns to the previous view. When
@@ -245,7 +244,6 @@ export function SearchView() {
                 }
               }}
               placeholder={t("search.placeholderWithShortcut")}
-              autoFocus
               className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
