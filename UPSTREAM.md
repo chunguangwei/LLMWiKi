@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-08-12（Round 10，上游 v0.6.7 → v0.6.8，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-08-17（Round 11，上游 v0.6.8 → v0.6.9，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.8`（Round 10 追平：AnyDoc 文档解析 / 并发摄取 worker 池 / 流式 Chat API / 文件历史 opt-in / 俄语+意大利语界面 / 设置快捷键 / 图谱性能）|
-| **本 fork 版本** | `0.6.14`（Round 10 上游同步 v0.6.7→v0.6.8）|
+| Upstream 版本号 | `0.6.9`（Round 11 追平：单页向量索引 API+MCP / 回答上下文详情面板 / 应用内对话框替换原生对话框 / CJK 文件名 / Ingest 结构化数据保留）|
+| **本 fork 版本** | `0.6.15`（Round 11 上游同步 v0.6.8→v0.6.9）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -83,6 +83,17 @@
 > - **i18n parity 修复**：上游新增 `it.json`/`ru.json` 只覆盖上游键集，我方 321 个 fork 专属键（chat 搜索、find 栏、editor refresh、update banner 等）在两新语言中缺失——以英文值为兜底补齐（未翻译），parity 测试恢复 6/6。
 > - **合并后修复**：`provider.rs` 上游 4 个新测试适配 fork 的 6 参 `openai_like_body`（补 `use_completion_tokens: false`）；上游 o-series/GPT-5 的 `max_completion_tokens` 转换由 `adapt_openai_strict_completion_body` 统一处理，与 fork 的 Azure v1 参数共存不冲突。本轮曾因磁盘 99% 满导致 `cargo test` 链接失败，`cargo clean` 释放 37.5G 后重建通过。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2440 ✅（171 文件）/ i18n parity ✅ 6/6 / cargo check ✅ / cargo test 411 ✅。
+
+> **Round 11 同步（2026-08-17，v0.6.8 → v0.6.9）**：`git merge upstream/main`（HEAD `723e259`）。上游本轮 14 个提交：单页 Wiki 向量索引 API + MCP 工具（新 `page_embedding` 命令模块，安全增量更新）、回答上下文详情面板（上下文大小/分类引用/图谱证据）、应用内对话框全面替换系统原生对话框（新 `app-dialog-store`）、结构化 lint 规则、项目对话框操作小窗口可见性、默认 auto 语言下 CJK 页面保留中文文件名、Ingest 保留结构化资料数据（DDL/schema/表格）、定时导入误清理已排除来源修复、页面嵌入修订加固。
+> - **12 个冲突文件**：
+>   - 5 个版本号类（`package.json`/`package-lock.json`/`Cargo.toml`/`Cargo.lock`/`tauri.conf.json`）保留我方版本线并统一升 `0.6.15` > 上游 `0.6.9`。
+>   - `commands/mod.rs`：keep-both（我方 `package` + 上游 `page_embedding`）。
+>   - `App.tsx`/`about-section.tsx`：keep-both——我方 `app-repo` 引用 + 就地更新逻辑（`runInPlaceUpdate`/`relaunchApp`/进度状态机），上游 `useAppDialog`。
+>   - `knowledge-tree.tsx`：采用上游 `useAppDialog` 导入（`useTranslation` 我方行 2 已有，去重）；body 自动合并已正确带入 `appDialog.alert` 删除失败提示。
+>   - `i18n/{it,ru}.json`：keep-both——上游压缩格式的 `common` 键（新增 `ok`/`confirm`/`notice`）+ 我方 `layout`/`errors` 段落。
+>   - `changelog.ts`：弃上游 0.6.9 条目（其内容大半为上轮 0.6.8 回顾，我方 0.6.14 已覆盖），仅将本轮新内容并入我方新 0.6.15 条目。
+> - **自动合并语义核查**：`wiki-store.ts` 搜索聚焦导航（`searchFocusRequest`）、`llm-providers.ts` 前端 Azure 双端点修复（`azureV1`/`azureClassic`/`azureAuthStyle`）、`provider.rs` Azure 逻辑均完整保留、未受本轮影响。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2456 ✅（174 文件）/ i18n parity ✅ 6/6 / cargo check ✅（2 个 fork 预存 dead-code 警告，非本轮引入）/ cargo test 422 ✅（2 ignored）。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局
