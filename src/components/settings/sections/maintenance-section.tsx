@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { useAppDialog } from "@/stores/app-dialog-store"
 import { invoke } from "@tauri-apps/api/core"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import {
@@ -62,6 +63,7 @@ function findTaskForGroup(
 
 export function MaintenanceSection() {
   const { t } = useTranslation()
+  const appDialog = useAppDialog()
   const llmConfig = useWikiStore((s) => s.llmConfig)
   const project = useWikiStore((s) => s.project)
 
@@ -143,7 +145,10 @@ export function MaintenanceSection() {
 
   const commitHistoryRetention = useCallback(async (value: number) => {
     if (!historySettings) return
-    if (value === 0 && !window.confirm(t("settings.sections.maintenance.history.zeroConfirm"))) {
+    if (value === 0 && !(await appDialog.confirm({
+      message: t("settings.sections.maintenance.history.zeroConfirm"),
+      variant: "destructive",
+    }))) {
       if (project) {
         const projectPath = project.path
         try {
@@ -164,10 +169,13 @@ export function MaintenanceSection() {
       enabled: value === 0 ? false : historySettings.enabled,
       maxVersionsPerFile: value,
     })
-  }, [historySettings, project, t, updateHistorySettings])
+  }, [appDialog, historySettings, project, t, updateHistorySettings])
 
   const handleClearHistory = useCallback(async () => {
-    if (!project || !window.confirm(t("settings.sections.maintenance.history.confirm"))) return
+    if (!project || !(await appDialog.confirm({
+      message: t("settings.sections.maintenance.history.confirm"),
+      variant: "destructive",
+    }))) return
     const projectPath = project.path
     setHistoryBusy(true)
     try {
@@ -184,7 +192,7 @@ export function MaintenanceSection() {
         setHistoryBusy(false)
       }
     }
-  }, [project, t])
+  }, [appDialog, project, t])
 
   const handleRebuildIndex = useCallback(async () => {
     if (!project) return

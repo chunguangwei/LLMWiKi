@@ -21,6 +21,7 @@ import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
 import type { WikiProject } from "@/types/wiki"
 import { APP_REPO, APP_RELEASES_URL } from "@/lib/app-repo"
+import { useAppDialog } from "@/stores/app-dialog-store"
 
 // Apply interface zoom globally by scaling the rem base (root font-size)
 // rather than transform: scale(). Scaling the document keeps layout and
@@ -64,6 +65,7 @@ async function refreshAfterGithubSync(proj: WikiProject, touched: string[]): Pro
 }
 
 function App() {
+  const appDialog = useAppDialog()
   const project = useWikiStore((s) => s.project)
   const setProject = useWikiStore((s) => s.setProject)
   const setFileTree = useWikiStore((s) => s.setFileTree)
@@ -745,7 +747,7 @@ function App() {
       const validated = await openProject(proj.path)
       await handleProjectOpened(validated)
     } catch (err) {
-      window.alert(`Failed to open project: ${err}`)
+      await appDialog.alert({ message: `Failed to open project: ${err}` })
     }
   }
 
@@ -760,7 +762,7 @@ function App() {
       const proj = await openProject(selected)
       await handleProjectOpened(proj)
     } catch (err) {
-      window.alert(`Failed to open project: ${err}`)
+      await appDialog.alert({ message: `Failed to open project: ${err}` })
     }
   }
 

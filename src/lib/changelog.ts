@@ -26,6 +26,26 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.15",
+    date: "2026-08-17",
+    highlights: {
+      en: [
+        "Synced upstream v0.6.9: single-page Wiki vector indexing API and MCP tool with safe incremental updates.",
+        "Answer context details panel: inspect context size, categorized references, and knowledge-graph evidence behind each answer.",
+        "Native system dialogs replaced with consistent in-app dialogs; project dialog actions stay visible on small windows.",
+        "CJK pages keep CJK filenames under the default auto language; ingest preserves structured source data (DDL, schemas, tables).",
+        "Fixed scheduled imports reconciling excluded sources; hardened page embedding revisions and lint configuration.",
+      ],
+      zh: [
+        "同步上游 v0.6.9：新增单个 Wiki 页面向量索引 API 与 MCP 工具，支持安全的增量更新。",
+        "新增回答上下文详情面板，可查看每次回答的上下文大小、分类引用与知识图谱证据。",
+        "系统原生对话框替换为风格一致的应用内对话框；小窗口下项目对话框操作保持可见。",
+        "默认自动语言下 CJK 页面保留中文文件名；摄取保留 DDL、schema、表格等结构化资料数据。",
+        "修复定时导入误清理已排除来源的问题；加固页面嵌入修订与 lint 配置。",
+      ],
+    },
+  },
+  {
     version: "0.6.14",
     date: "2026-08-12",
     highlights: {

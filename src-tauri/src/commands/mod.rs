@@ -12,6 +12,7 @@ pub mod file_sync;
 pub mod github_backup;
 pub mod fs;
 pub mod package;
+pub mod page_embedding;
 pub mod project;
 pub mod project_maintenance;
 pub mod search;

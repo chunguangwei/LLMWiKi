@@ -1520,7 +1520,15 @@ export function rewriteIngestPathFromTitleForTargetLanguage(
   content: string,
   targetLang: string | undefined,
 ): string {
-  if (!targetLang || targetLang === "auto" || !CJK_OUTPUT_LANGUAGES.has(targetLang)) {
+  const title = extractGeneratedPageTitle(content)
+  // "auto" (the default output language) means "follow the source", so resolve
+  // it from the generated title. The title is the filename authority; using
+  // the whole body lets large SQL/code blocks or English technical prose
+  // outweigh a short CJK title and silently retain an ASCII filename.
+  const shouldUseCjkFilename = !targetLang || targetLang === "auto"
+    ? Boolean(title && containsCjk(title))
+    : CJK_OUTPUT_LANGUAGES.has(targetLang)
+  if (!shouldUseCjkFilename) {
     return relativePath
   }
   if (
@@ -1530,7 +1538,6 @@ export function rewriteIngestPathFromTitleForTargetLanguage(
   ) {
     return relativePath
   }
-  const title = extractGeneratedPageTitle(content)
   if (!title || !containsCjk(title)) return relativePath
 
   const slash = relativePath.lastIndexOf("/")
@@ -2168,6 +2175,7 @@ export function buildAnalysisPrompt(
     "- What evidence supports them?",
     "- How strong is the evidence?",
     "- Which named subject is each claim about? Do not transfer claims, limits, or evaluations from one entity/model/product/method to another just because they share keywords.",
+    "- Preserve structured source data verbatim in the analysis when present: include SQL DDL / CREATE TABLE statements, schema definitions, API signatures, configuration, and tables in fenced code blocks or Markdown tables. Do not reduce exact field names, types, constraints, keys, or indexes to prose.",
     "",
     "## Connections to Existing Wiki",
     "- What existing pages does this source relate to?",
@@ -2290,8 +2298,9 @@ export function buildGenerationPrompt(
     "- Preserve subject boundaries: when a source discusses multiple entities/models/products/methods, keep claims, evaluations, limitations, benchmark results, and recommendations attached to the exact subject they describe.",
     "- Do not merge or generalize a claim about one subject into another subject's page solely because they share terms (for example context window size, benchmark name, dataset, architecture, or feature name).",
     "- If a page needs to mention another subject for comparison, write it explicitly as a comparison and cite which source/frontmatter `sources` entry supports that statement.",
-    "- Use kebab-case filenames",
+    "- Use kebab-case for Latin-script filenames; for Chinese/Japanese/Korean titles keep the CJK characters (do NOT romanize to pinyin/romaji or translate to English)",
     "- Derive filenames from the page title in the mandatory output language, but short proper nouns and technical identifiers take precedence: preserve names such as OpenAI, GPT-5, Transformer, CLIP, ImageNet, PyTorch, CUDA, GitHub, arXiv, React, LanceDB, AnyTXT, MinerU, model names, dataset names, tool names, and code identifiers in their standard original form. Do not put raw URLs, citation strings, or full paper titles directly into file paths; convert surrounding descriptive prose to a safe readable title. For Chinese/Japanese/Korean prose titles, keep readable CJK characters in the filename instead of translating the slug to English.",
+    "- Preserve structured source data verbatim: copy SQL DDL / CREATE TABLE statements, schema definitions, API signatures, configuration, and tabular data into fenced code blocks (or Markdown tables) in the source summary page instead of paraphrasing them. Exact column names, types, constraints, primary/foreign keys, and indexes must survive ingest — a prose-only summary that drops them loses the structure the user imported the source to keep.",
     "- Follow the analysis recommendations on what to emphasize",
     "- If the analysis found connections to existing pages, add cross-references",
     "",
@@ -2803,6 +2812,7 @@ function buildChunkAnalysisSystemPrompt(
     "- New or updated concepts",
     "- Any schema-defined page types beyond entity/concept that the main chunk genuinely supports",
     "- Claims, findings, evidence, contradictions",
+    "- Exact structured data from this chunk, when present: preserve SQL DDL / CREATE TABLE statements, schema definitions, API signatures, configuration, and tables verbatim in fenced code blocks or Markdown tables; retain field names, types, constraints, keys, and indexes",
     "- Open questions or research gaps",
     "",
     "## Updated Global Digest",
