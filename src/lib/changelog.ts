@@ -26,6 +26,28 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.16",
+    date: "2026-08-21",
+    highlights: {
+      en: [
+        "Synced upstream v0.6.10: source-based knowledge filtering.",
+        "Batch Deep Research for review items, and rerunning completed or failed research tasks.",
+        "Support for MinerU 3.0–3.2 backend names; image captions follow the configured output language.",
+        "Detailed reporting for files skipped during source import.",
+        "Improved large duplicate scans; fixed Deep Research concurrency, file naming, vector indexing, and wikilink consistency.",
+        "Improved Agent model routing and provider compatibility; fixed language detection, retry behavior, and Windows CRLF data integrity issues.",
+      ],
+      zh: [
+        "同步上游 v0.6.10：新增按原始资料来源筛选知识内容。",
+        "Review 支持批量执行深度研究，并可重新运行已完成或失败的研究任务。",
+        "支持 MinerU 3.0–3.2 后端名称，图片描述会遵循配置的输出语言。",
+        "文件导入新增跳过文件及具体原因的详细报告。",
+        "优化大规模重复文件扫描，并修复深度研究并发、文件命名、向量索引和 Wiki 链接一致性问题。",
+        "完善 Agent 模型路由与 Provider 兼容性，并修复语言误判、重试行为和 Windows CRLF 数据完整性问题。",
+      ],
+    },
+  },
+  {
     version: "0.6.15",
     date: "2026-08-17",
     highlights: {

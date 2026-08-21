@@ -99,6 +99,8 @@
     "knowledge": "知识库",
     "files": "文件",
     "rawSources": "原始资料",
+    "filterBySource": "按原始资料筛选知识",
+    "allSources": "全部资料",
     "noWikiPages": "暂无 Wiki 页面，请先导入原始资料。",
     "typeLabels": {
       "overview": "概览", "entity": "实体", "concept": "概念",
@@ -174,6 +176,7 @@
     "thinking": "思考中",
     "open": "打开",
     "retry": "重试",
+    "rerun": "重新执行",
     "remove": "移除",
     "status": {
       "queued": "排队中",
@@ -255,6 +258,20 @@
     "refreshFolderHint": "重新扫描资料文件夹，并处理新增、修改或删除的文件。",
     "refreshFolderTooltip": "按自动监控相同规则重新扫描当前项目的资料文件夹。允许的新增或修改文件会加入提取队列；已删除的资料会走正常的 Wiki 与索引清理流程；随后重建文件树。",
     "refreshFailed": "刷新原始资料失败：{{error}}",
+    "importSkip": {
+      "failed": "导入失败：{{error}}",
+      "summary": "已导入 {{imported}} 个，跳过 {{skipped}} 个",
+      "showRemaining": "显示其余 {{count}} 个跳过的文件",
+      "showLess": "收起跳过的文件",
+      "reason": {
+        "unsupported-type": "不支持的文件类型",
+        "excluded": "被排除规则阻止",
+        "too-large": "超过文件大小上限",
+        "unreadable": "无法读取文件",
+        "copy-failed": "无法复制文件",
+        "sensitive-config": "已跳过工具配置文件"
+      }
+    },
     "openExternal": "用默认应用打开",
     "openExternalFailed": "无法打开「{{name}}」：{{error}}",
     "reingestAll": "重提全部",
@@ -541,11 +558,13 @@
     "selectPending": "选择待处理项",
     "selectItem": "选择 {{title}}",
     "selectedCount": "已选择 {{count}} 项",
+    "researchSelected": "研究选中项（{{count}}）",
     "markSelectedResolved": "标记为已解决",
     "dismissSelected": "忽略选中项",
     "affectedPages": "相关页面",
     "allClear": "一切正常，无需审阅",
-    "resolvedDivider": "— 已解决 —"
+    "resolvedDivider": "— 已解决 —",
+    "actionFailed": "操作失败，该条目仍保持待处理，可以重试：{{error}}"
   },
   "settings": {
     "title": "设置",

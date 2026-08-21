@@ -271,9 +271,17 @@ function detectLatinLanguage(text: string): string | null {
     return "Hungarian"
   }
 
-  // German — common patterns
-  if (/[äöüß]/.test(lower) || /\b(und|der|die|das|ist|nicht|ein|eine)\b/.test(lower)) {
-    if (/\b(und|der|die|das|ist)\b/.test(lower)) return "German"
+  // German — require multiple independent function-word signals. A single
+  // `die` is common English prose ("cells die"), and previously made an
+  // otherwise English Markdown document switch to German in auto mode.
+  const germanSignals = new Set(
+    lower.match(/\b(?:und|der|die|das|ist|nicht|ein|eine)\b/g) ?? [],
+  )
+  if (
+    germanSignals.size >= 2 ||
+    (/[äöüß]/.test(lower) && germanSignals.size >= 1)
+  ) {
+    return "German"
   }
 
   // French — common patterns

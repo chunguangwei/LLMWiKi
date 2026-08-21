@@ -27,7 +27,7 @@ vi.mock("@/commands/fs", () => ({
   readFileAsBase64: (p: string) => mockReadBase64(p),
 }))
 
-import { captionMarkdownImages, __test } from "./image-caption-pipeline"
+import { captionMarkdownImages, loadCaptionCache, __test } from "./image-caption-pipeline"
 import type { LlmConfig } from "@/stores/wiki-store"
 
 const cfg: LlmConfig = {
@@ -114,6 +114,78 @@ describe("captionMarkdownImages", () => {
       mimeType: "image/png",
       model: "vl-test",
     })
+  })
+
+  it("forwards outputLanguage to captionImage", async () => {
+    mockReadBase64.mockResolvedValue({ base64: "AAAA", mimeType: "image/png" })
+    mockCaption.mockResolvedValue("ein rotes Quadrat")
+
+    await captionMarkdownImages("/proj", "![](/abs/img-1.png)", cfg, {
+      outputLanguage: "German",
+    })
+
+    expect(mockCaption).toHaveBeenCalledWith(
+      "AAAA",
+      "image/png",
+      cfg,
+      undefined,
+      expect.objectContaining({ outputLanguage: "German" }),
+    )
+  })
+
+  it("does not reuse a caption cached for a different output language", async () => {
+    mockReadBase64.mockResolvedValue({ base64: "AAAA", mimeType: "image/png" })
+    mockCaption.mockResolvedValue("ein rotes Quadrat")
+    const knownHash = await __test.sha256OfBase64("AAAA")
+    mockFileExists.mockResolvedValue(true)
+    mockReadFile.mockResolvedValue(JSON.stringify({
+      [knownHash]: {
+        caption: "a red square",
+        mimeType: "image/png",
+        model: "vl-old",
+        capturedAt: "2026-01-01T00:00:00Z",
+      },
+    }))
+
+    const out = await captionMarkdownImages("/proj", "![](/abs/img-1.png)", cfg, {
+      outputLanguage: "German",
+    })
+
+    expect(out.freshCaptions).toBe(1)
+    expect(out.cachedCaptions).toBe(0)
+    expect(mockCaption).toHaveBeenCalledTimes(1)
+    const written = JSON.parse(mockWriteFile.mock.calls[0][1] as string)
+    expect(written[__test.captionCacheKey(knownHash, "German")]).toMatchObject({
+      caption: "ein rotes Quadrat",
+      imageHash: knownHash,
+      outputLanguage: "German",
+    })
+  })
+
+  it("reuses a caption cached for the same output language", async () => {
+    mockReadBase64.mockResolvedValue({ base64: "AAAA", mimeType: "image/png" })
+    const knownHash = await __test.sha256OfBase64("AAAA")
+    const key = __test.captionCacheKey(knownHash, "German")
+    mockFileExists.mockResolvedValue(true)
+    mockReadFile.mockResolvedValue(JSON.stringify({
+      [key]: {
+        caption: "ein rotes Quadrat",
+        mimeType: "image/png",
+        model: "vl-old",
+        capturedAt: "2026-01-01T00:00:00Z",
+        imageHash: knownHash,
+        outputLanguage: "German",
+      },
+    }))
+
+    const out = await captionMarkdownImages("/proj", "![](/abs/img-1.png)", cfg, {
+      outputLanguage: "german",
+    })
+
+    expect(out.cachedCaptions).toBe(1)
+    expect(out.freshCaptions).toBe(0)
+    expect(mockCaption).not.toHaveBeenCalled()
+    expect(out.enrichedMarkdown).toContain("![ein rotes Quadrat]")
   })
 
   it("dedupes by SHA-256: two refs to the same bytes → one LLM call, both rewritten", async () => {
@@ -362,5 +434,34 @@ describe("captionMarkdownImages", () => {
     opts = mockCaption.mock.calls[0][4] as { contextBefore: string; contextAfter: string }
     expect(opts.contextBefore).toBe("leading text only ")
     expect(opts.contextAfter).toBe("")
+  })
+})
+
+describe("loadCaptionCache", () => {
+  it("selects the newest caption per image when no language is requested", async () => {
+    const knownHash = await __test.sha256OfBase64("AAAA")
+    const germanKey = __test.captionCacheKey(knownHash, "German")
+    mockFileExists.mockResolvedValue(true)
+    // Put the legacy entry last to prove selection does not depend on JSON key order.
+    mockReadFile.mockResolvedValue(JSON.stringify({
+      [germanKey]: {
+        caption: "neue Beschreibung",
+        mimeType: "image/png",
+        model: "vl-new",
+        capturedAt: "2026-08-18T00:00:00Z",
+        imageHash: knownHash,
+        outputLanguage: "German",
+      },
+      [knownHash]: {
+        caption: "old description",
+        mimeType: "image/png",
+        model: "vl-old",
+        capturedAt: "2026-01-01T00:00:00Z",
+      },
+    }))
+
+    const captions = await loadCaptionCache("/proj")
+
+    expect(captions.get(knownHash)).toBe("neue Beschreibung")
   })
 })

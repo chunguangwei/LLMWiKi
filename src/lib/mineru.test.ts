@@ -385,6 +385,31 @@ describe("parseWithMineru", () => {
     }
   })
 
+  it.each([
+    ["2.1.11", "hybrid-engine"],
+    ["3.1.15", "hybrid-auto-engine"],
+    ["3.4.4", "hybrid-engine"],
+  ])("submits the backend name supported by MinerU %s", async (version, expectedBackend) => {
+    mockHttpFetch
+      .mockResolvedValueOnce(jsonResponse({ status: "healthy", version }))
+      .mockResolvedValueOnce(jsonResponse({ task_id: "task-1" }, { status: 202 }))
+      .mockResolvedValueOnce(jsonResponse({ status: "completed" }))
+      .mockResolvedValueOnce(jsonResponse({
+        results: { report: { md_content: "# Parsed locally" } },
+      }))
+
+    await expect(parseWithMineru({
+      enabled: true,
+      backend: "local",
+      localBackend: "hybrid-engine",
+      token: "",
+      modelVersion: "vlm",
+    }, "/tmp/report.pdf")).resolves.toBe("# Parsed locally")
+
+    const form = mockHttpFetch.mock.calls[1]?.[1]?.body as FormData
+    expect(form.get("backend")).toBe(expectedBackend)
+  })
+
   it("rejects oversized local-backend files before reading or uploading", async () => {
     fsMocks.getFileSize.mockResolvedValueOnce(__mineruTest.MAX_ACCURATE_PARSE_BYTES + 1)
 
@@ -401,6 +426,7 @@ describe("parseWithMineru", () => {
 
   it("rejects an empty local-backend result instead of caching it as success", async () => {
     mockHttpFetch
+      .mockResolvedValueOnce(jsonResponse({ status: "healthy", version: "3.1.15" }))
       .mockResolvedValueOnce(jsonResponse({ task_id: "task-1" }, { status: 202 }))
       .mockResolvedValueOnce(jsonResponse({ status: "completed" }))
       .mockResolvedValueOnce(jsonResponse({ results: { doc: { md_content: "  " } } }))
@@ -415,6 +441,7 @@ describe("parseWithMineru", () => {
 
   it("saves and rewrites images returned by the official local API", async () => {
     mockHttpFetch
+      .mockResolvedValueOnce(jsonResponse({ status: "healthy", version: "3.1.15" }))
       .mockResolvedValueOnce(jsonResponse({ task_id: "task-1" }, { status: 202 }))
       .mockResolvedValueOnce(jsonResponse({ status: "completed" }))
       .mockResolvedValueOnce(jsonResponse({
@@ -443,12 +470,13 @@ describe("parseWithMineru", () => {
       "/project/wiki/media/doc/mineru/images/image-1.png",
       btoa("image bytes"),
     )
-    const form = mockHttpFetch.mock.calls[0]?.[1]?.body as FormData
+    const form = mockHttpFetch.mock.calls[1]?.[1]?.body as FormData
     expect(form.get("return_images")).toBe("true")
   })
 
   it("uses the data URI MIME type when the MinerU filename extension disagrees", async () => {
     mockHttpFetch
+      .mockResolvedValueOnce(jsonResponse({ status: "healthy", version: "3.1.15" }))
       .mockResolvedValueOnce(jsonResponse({ task_id: "task-1" }, { status: 202 }))
       .mockResolvedValueOnce(jsonResponse({ status: "completed" }))
       .mockResolvedValueOnce(jsonResponse({

@@ -673,6 +673,23 @@ async function downloadAndExtractMarkdown(
 
 // ── Local backend ──
 
+const MINERU_3_0_TO_3_2_BACKENDS: Partial<
+  Record<NonNullable<MineruConfig["localBackend"]>, string>
+> = {
+  "vlm-engine": "vlm-auto-engine",
+  "hybrid-engine": "hybrid-auto-engine",
+}
+
+function localMineruBackendForVersion(
+  backend: NonNullable<MineruConfig["localBackend"]>,
+  version: unknown,
+): string {
+  if (typeof version === "string" && /^3\.[0-2](?:\.|$)/.test(version.trim())) {
+    return MINERU_3_0_TO_3_2_BACKENDS[backend] ?? backend
+  }
+  return backend
+}
+
 /**
  * Parse a document through the official `mineru-api` asynchronous protocol.
  * Files are submitted as multipart/form-data to `/tasks`; the task status and
@@ -688,7 +705,8 @@ async function parseWithLocalMineru(
 ): Promise<MineruExtractedMarkdown> {
   const httpFetch = await getHttpFetch()
   const apiBase = localMineruApiBase(config.localEndpoint)
-  if (config.localBackend?.endsWith("http-client") && !config.localServerUrl?.trim()) {
+  const configuredBackend = config.localBackend || "hybrid-engine"
+  if (configuredBackend.endsWith("http-client") && !config.localServerUrl?.trim()) {
     throw new Error("MinerU HTTP client backends require a model server URL")
   }
   const fileSize = await getFileSize(sourcePath)
@@ -696,6 +714,22 @@ async function parseWithLocalMineru(
     throw new Error("MinerU accurate parsing supports files up to 200 MB")
   }
   throwIfAborted(signal)
+  let serverVersion: unknown
+  if (configuredBackend.endsWith("-engine")) {
+    try {
+      const healthRes = await httpFetch(
+        `${apiBase}/health`,
+        localMineruRequestInit(config.localToken, { signal }),
+      )
+      if (healthRes.ok) {
+        const health = await healthRes.json() as { version?: unknown }
+        serverVersion = health.version
+      }
+    } catch (err) {
+      if (signal?.aborted) throw err
+    }
+  }
+  const localBackend = localMineruBackendForVersion(configuredBackend, serverVersion)
   const { base64 } = await readFileAsBase64(sourcePath)
   const bytes = decodeBase64ToBytes(base64)
   const fileBuffer = bytes.buffer.slice(
@@ -705,7 +739,7 @@ async function parseWithLocalMineru(
   const form = new FormData()
   form.append("files", new Blob([fileBuffer], { type: "application/pdf" }), fileName)
   form.append("lang_list", config.localLanguage || "ch")
-  form.append("backend", config.localBackend || "hybrid-engine")
+  form.append("backend", localBackend)
   form.append("effort", config.localEffort || "medium")
   form.append("parse_method", config.localParseMethod || "auto")
   form.append("formula_enable", String(config.localFormulaEnabled !== false))

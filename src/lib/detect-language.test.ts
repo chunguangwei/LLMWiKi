@@ -94,6 +94,14 @@ describe("detectLanguage", () => {
       expect(detectLanguage("der Hund und die Katze sind nicht das Problem")).toBe("German")
     })
 
+    it("does not classify English Markdown containing the verb die as German", () => {
+      expect(detectLanguage([
+        "# Cell lifecycle",
+        "Damaged cells die when repair pathways fail.",
+        "The remaining cells continue to divide and support the tissue.",
+      ].join("\n"))).toBe("English")
+    })
+
     it("detects Spanish via word patterns", () => {
       expect(detectLanguage("el nino y los libros del colegio que son para todos")).toBe("Spanish")
     })

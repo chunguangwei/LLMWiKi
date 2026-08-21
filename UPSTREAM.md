@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-08-17（Round 11，上游 v0.6.8 → v0.6.9，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-08-21（Round 12，上游 v0.6.9 → v0.6.10，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.9`（Round 11 追平：单页向量索引 API+MCP / 回答上下文详情面板 / 应用内对话框替换原生对话框 / CJK 文件名 / Ingest 结构化数据保留）|
-| **本 fork 版本** | `0.6.15`（Round 11 上游同步 v0.6.8→v0.6.9）|
+| Upstream 版本号 | `0.6.10`（Round 12 追平：按来源筛选知识 / 批量 Deep Research + 研究重跑 / MinerU 3.0–3.2 / 导入跳过文件报告 / Agent 模型路由修复）|
+| **本 fork 版本** | `0.6.16`（Round 12 上游同步 v0.6.9→v0.6.10）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -94,6 +94,12 @@
 >   - `changelog.ts`：弃上游 0.6.9 条目（其内容大半为上轮 0.6.8 回顾，我方 0.6.14 已覆盖），仅将本轮新内容并入我方新 0.6.15 条目。
 > - **自动合并语义核查**：`wiki-store.ts` 搜索聚焦导航（`searchFocusRequest`）、`llm-providers.ts` 前端 Azure 双端点修复（`azureV1`/`azureClassic`/`azureAuthStyle`）、`provider.rs` Azure 逻辑均完整保留、未受本轮影响。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2456 ✅（174 文件）/ i18n parity ✅ 6/6 / cargo check ✅（2 个 fork 预存 dead-code 警告，非本轮引入）/ cargo test 422 ✅（2 ignored）。
+
+> **Round 12 同步（2026-08-21，v0.6.9 → v0.6.10）**：`git merge upstream/main`（HEAD `889789c`）。上游本轮 20 个提交、45 文件（+1725/−185）：按来源筛选知识（`knowledge-source-filter.ts`）、Review 批量 Deep Research + 已完成/失败研究任务重跑（`research-store.ts` 重构）、MinerU 3.0–3.2 后端名兼容、图片描述遵循输出语言、导入跳过文件详细报告、大规模重复扫描分批、Deep Research wikilink 规范化、Agent 路由 chat 模型进后端、隐藏 agent router 诊断、自定义模型无 temperature 重试、DeepSeek agent 任务关 thinking、德语误判修复。
+> - **7 个冲突文件**：5 个版本号类保留我方版本线并统一升 `0.6.16` > 上游 `0.6.10`；`knowledge-tree.tsx` keep-both（上游 `useMemo`/`selectedSource` 来源筛选 + 我方 localStorage 持久化 `expandedTypes`）；`changelog.ts` 弃上游 0.6.10/0.6.9 条目头，内容并入我方新 0.6.16 条目。
+> - **合并后修复**：`provider.rs` 上游新测试 `deepseek_v4_structured_tasks_disable_thinking` 适配 fork 的 6 参 `openai_like_body`（补 `use_completion_tokens: false`，同 Round 9/10 模式）。
+> - **README 补齐**：外层 `README.md` 功能一览补 v0.6.5–v0.6.10 的 11 行新功能（项目级模型配置 / EPUB+MOBI+Org / 只读原文 / AnyDoc / 摄取队列控制 / MinerU API / 流式 Chat API+MCP / 上下文详情面板 / 批量 Deep Research / 来源筛选），修正 Rust 1.88+、i18n 四语言、测试数 ~2500、网页搜索 provider 列表（含博查）。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2501 ✅（177 文件）/ cargo check ✅ / cargo test 424 ✅（2 ignored）。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局

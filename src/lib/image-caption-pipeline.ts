@@ -15,7 +15,8 @@
  *      texted image carries enough semantic load that the model
  *      preserves it through paraphrasing.
  *
- * Cache key = SHA-256 of image bytes. This makes duplicate images
+ * Cache key = SHA-256 of image bytes plus the requested output language.
+ * This makes duplicate images
  * across PDFs (logos, page headers, recurring chart templates) a
  * single LLM call across the whole project — without it, a corpus
  * of slide decks with shared brand assets would caption the same
@@ -23,7 +24,9 @@
  *
  * Cache file lives at
  *   `<project>/.llm-wiki/image-caption-cache.json`
- * keyed `{ "<sha256>": { caption, mimeType, model, capturedAt } }`.
+ * Legacy language-neutral entries remain keyed by SHA-256. Language-aware
+ * entries include the image hash and language in their metadata so changing a
+ * project's output language cannot silently reuse a caption in the old one.
  * The model + capturedAt fields aren't read by anything yet but
  * shipping the metadata now means we can implement Phase 4's
  * "re-caption with new model" without a second cache version.
@@ -44,6 +47,8 @@ interface CaptionEntry {
   mimeType: string
   model: string
   capturedAt: string
+  imageHash?: string
+  outputLanguage?: string
 }
 
 type CaptionCache = Record<string, CaptionEntry>
@@ -79,13 +84,37 @@ async function sha256OfBase64(b64: string): Promise<string> {
  */
 export async function loadCaptionCache(
   projectPath: string,
+  outputLanguage?: string,
 ): Promise<Map<string, string>> {
   const cache = await readCache(projectPath)
   const out = new Map<string, string>()
-  for (const [hash, entry] of Object.entries(cache)) {
+  const selectedAt = new Map<string, number>()
+  const language = normalizeCaptionLanguage(outputLanguage)
+  for (const [key, entry] of Object.entries(cache)) {
+    const hash = entry.imageHash ?? (/^[a-f0-9]{64}$/i.test(key) ? key : null)
+    if (!hash) continue
+    const entryLanguage = normalizeCaptionLanguage(entry.outputLanguage)
+    if (language && entryLanguage !== language) continue
+    if (!language) {
+      const capturedAt = Date.parse(entry.capturedAt)
+      const timestamp = Number.isFinite(capturedAt) ? capturedAt : 0
+      if ((selectedAt.get(hash) ?? -1) > timestamp) continue
+      selectedAt.set(hash, timestamp)
+    }
     out.set(hash, entry.caption)
   }
   return out
+}
+
+function normalizeCaptionLanguage(outputLanguage?: string): string {
+  const language = outputLanguage?.trim()
+  if (!language || language.toLowerCase() === "auto") return ""
+  return language.normalize("NFKC").toLowerCase()
+}
+
+function captionCacheKey(imageHash: string, outputLanguage?: string): string {
+  const language = normalizeCaptionLanguage(outputLanguage)
+  return language ? `${imageHash}::language:${encodeURIComponent(language)}` : imageHash
 }
 
 async function readCache(projectPath: string): Promise<CaptionCache> {
@@ -260,6 +289,8 @@ export interface CaptionPipelineOptions {
    * passes the user's chosen value.
    */
   concurrency?: number
+  /** Language requested for factual captions (for example, "German"). */
+  outputLanguage?: string
   /**
    * Progress hook fired after each image finishes (ok or failed),
    * with running counts. Used by ingest to update the activity
@@ -382,7 +413,8 @@ export async function captionMarkdownImages(
     }
 
     const hash = await sha256OfBase64(bytes.base64)
-    const hit = cache[hash]
+    const cacheKey = captionCacheKey(hash, options?.outputLanguage)
+    const hit = cache[cacheKey]
     if (hit) {
       captionByUrl.set(ref.url, hit.caption)
       cachedCaptions++
@@ -401,13 +433,21 @@ export async function captionMarkdownImages(
         bytes.mimeType,
         llmConfig,
         options?.signal,
-        { contextBefore: before, contextAfter: after },
+        {
+          contextBefore: before,
+          contextAfter: after,
+          outputLanguage: options?.outputLanguage,
+        },
       )
-      cache[hash] = {
+      cache[cacheKey] = {
         caption,
         mimeType: bytes.mimeType,
         model: llmConfig.model,
         capturedAt: new Date().toISOString(),
+        imageHash: hash,
+        ...(normalizeCaptionLanguage(options?.outputLanguage)
+          ? { outputLanguage: options?.outputLanguage?.trim() }
+          : {}),
       }
       captionByUrl.set(ref.url, caption)
       freshCaptions++
@@ -476,4 +516,10 @@ export async function captionMarkdownImages(
 
 // Exported for direct unit testing — keeps the module surface small
 // while letting the test file pin behavior on the helpers.
-export const __test = { findImageReferences, sha256OfBase64, MD_IMAGE_RE }
+export const __test = {
+  captionCacheKey,
+  findImageReferences,
+  normalizeCaptionLanguage,
+  sha256OfBase64,
+  MD_IMAGE_RE,
+}

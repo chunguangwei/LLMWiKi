@@ -37,6 +37,7 @@ const DEDUP_PREFILTER_TOP_K = 8
 const DEDUP_PREFILTER_THRESHOLD = 0.68
 const DEDUP_PREFILTER_MAX_PAGES = 5_000
 const DEDUP_DETECTOR_BATCH_SUMMARIES = 80
+const DEDUP_FALLBACK_BATCH_OVERLAP = 8
 const DEDUP_EMPTY_PREFILTER_FULL_SCAN_LIMIT = 250
 
 /**
@@ -220,10 +221,35 @@ export async function runDuplicateDetection(
     }
   }
 
-  return detectDuplicateGroups(summaries, llm, {
+  return detectDuplicateGroupsInBoundedBatches(summaries, llm, {
     signal: options.signal,
     notDuplicates: notDup,
   })
+}
+
+async function detectDuplicateGroupsInBoundedBatches(
+  summaries: EntitySummary[],
+  llm: DedupLlmCall,
+  options: { signal?: AbortSignal; notDuplicates?: string[][] },
+): Promise<DuplicateGroup[]> {
+  if (summaries.length <= DEDUP_DETECTOR_BATCH_SUMMARIES) {
+    return detectDuplicateGroups(summaries, llm, options)
+  }
+
+  // Keep likely aliases adjacent while bounding every LLM request. A small
+  // overlap prevents a duplicate pair at a batch boundary from being split.
+  const ordered = [...summaries].sort((left, right) =>
+    `${left.title}\u0000${left.slug}`.localeCompare(`${right.title}\u0000${right.slug}`),
+  )
+  const stride = DEDUP_DETECTOR_BATCH_SUMMARIES - DEDUP_FALLBACK_BATCH_OVERLAP
+  const groups: DuplicateGroup[] = []
+  for (let start = 0; start < ordered.length; start += stride) {
+    if (options.signal?.aborted) throw new Error("Duplicate scan cancelled")
+    const batch = ordered.slice(start, start + DEDUP_DETECTOR_BATCH_SUMMARIES)
+    if (batch.length < 2) break
+    groups.push(...await detectDuplicateGroups(batch, llm, options))
+  }
+  return uniqueDuplicateGroups(groups)
 }
 
 async function detectDuplicateGroupsWithEmbeddingPrefilter(
@@ -245,7 +271,7 @@ async function detectDuplicateGroupsWithEmbeddingPrefilter(
     // is meant to find. For large wikis, the old full scan is what caused
     // #359 hangs, so no candidates means no detector call.
     return summaries.length <= DEDUP_EMPTY_PREFILTER_FULL_SCAN_LIMIT
-      ? detectDuplicateGroups(summaries, llm, options)
+      ? detectDuplicateGroupsInBoundedBatches(summaries, llm, options)
       : []
   }
 

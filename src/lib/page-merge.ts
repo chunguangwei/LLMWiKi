@@ -209,7 +209,7 @@ export async function mergePageContent(
  * `[[clients/foo-overview]]`; merge prompts intentionally preserve existing
  * links, so the application must repair those targets deterministically.
  */
-function stripBodyWikilinkPathPrefixes(content: string): string {
+export function stripBodyWikilinkPathPrefixes(content: string): string {
   const frontmatter = content.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)
   if (!frontmatter) return content
 

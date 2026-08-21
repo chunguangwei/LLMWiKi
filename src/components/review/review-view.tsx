@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react"
-import { queueResearch } from "@/lib/deep-research"
+import { queueResearch, queueResearchBatch } from "@/lib/deep-research"
 import {
   AlertTriangle,
   Copy,
@@ -25,6 +25,7 @@ import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from
 import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
 import { useResearchStore } from "@/stores/research-store"
+import { reviewResearchTopic, selectedResearchReviews } from "@/lib/review-batch-research"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; color: string }> = {
   contradiction: { icon: AlertTriangle, color: "text-amber-500" },
@@ -45,6 +46,27 @@ export function ReviewView() {
   const project = useWikiStore((s) => s.project)
   const [refreshing, setRefreshing] = useState(false)
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(() => new Set())
+  const [workingReviewIds, setWorkingReviewIds] = useState<Set<string>>(() => new Set())
+  const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({})
+  const researchTasks = useResearchStore((s) => s.tasks)
+
+  const setReviewWorking = useCallback((id: string, working: boolean) => {
+    setWorkingReviewIds((current) => {
+      const next = new Set(current)
+      if (working) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }, [])
+
+  const setReviewError = useCallback((id: string, error: unknown | null) => {
+    setReviewErrors((current) => {
+      const next = { ...current }
+      if (error === null) delete next[id]
+      else next[id] = error instanceof Error ? error.message : String(error)
+      return next
+    })
+  }, [])
 
   // Reload review items from disk. The review pane has no equivalent of
   // lint's re-run, so external writers — the resolve API, another window,
@@ -89,6 +111,8 @@ export function ReviewView() {
     if (action.startsWith("save:") && project) {
       // Decode and save the content to wiki
       try {
+        setReviewWorking(id, true)
+        setReviewError(id, null)
         const encoded = action.slice(5)
         const content = decodeURIComponent(atob(encoded))
 
@@ -129,7 +153,9 @@ export function ReviewView() {
         resolveItem(id, "Saved to Wiki")
       } catch (err) {
         console.error("Failed to save to wiki from review:", err)
-        resolveItem(id, "Save failed")
+        setReviewError(id, err)
+      } finally {
+        setReviewWorking(id, false)
       }
     } else if ((action.startsWith("open:") || actionLooksLikeOpen(action)) && project) {
       // Open a page in the right-side preview without resolving the
@@ -157,6 +183,8 @@ export function ReviewView() {
       // Delete a file
       const filePath = action.slice(7)
       try {
+        setReviewWorking(id, true)
+        setReviewError(id, null)
         await deleteFile(filePath)
         await refreshProjectFileTree(pp, {
           projectId: project.id,
@@ -165,7 +193,9 @@ export function ReviewView() {
         resolveItem(id, "Deleted")
       } catch (err) {
         console.error("Failed to delete:", err)
-        resolveItem(id, "Delete failed")
+        setReviewError(id, err)
+      } finally {
+        setReviewWorking(id, false)
       }
     } else if (actionLooksLikeResearch(action) && project) {
       // Actions with "research" trigger deep research, not just page creation
@@ -197,6 +227,8 @@ export function ReviewView() {
         : action
       if (item) {
         try {
+          setReviewWorking(id, true)
+          setReviewError(id, null)
           const drafts = createReviewPageDrafts(item, realAction)
           const created: Array<{
             title: string
@@ -254,7 +286,9 @@ export function ReviewView() {
             : `Created ${created.length} pages`)
         } catch (err) {
           console.error("Failed to create page from review:", err)
-          resolveItem(id, "Create failed")
+          setReviewError(id, err)
+        } finally {
+          setReviewWorking(id, false)
         }
       } else {
         resolveItem(id, action)
@@ -262,7 +296,7 @@ export function ReviewView() {
     } else {
       resolveItem(id, action)
     }
-  }, [appDialog, project, items, resolveItem, t])
+  }, [appDialog, project, items, resolveItem, setReviewError, setReviewWorking, t])
 
   const pending = items.filter((i) => !i.resolved)
   const resolved = items.filter((i) => i.resolved)
@@ -306,6 +340,38 @@ export function ReviewView() {
     }
     setSelectedReviewIds(new Set())
   }, [dismissItem, selectedPendingIds])
+
+  const batchResearchItems = useMemo(
+    () => selectedResearchReviews(items, selectedReviewIds, researchTasks),
+    [items, researchTasks, selectedReviewIds],
+  )
+
+  const handleBatchResearch = useCallback(async () => {
+    if (!project) return
+    const eligibleItems = selectedResearchReviews(
+      items,
+      selectedReviewIds,
+      useResearchStore.getState().tasks,
+    )
+    if (eligibleItems.length === 0) return
+    const state = useWikiStore.getState()
+    if (!hasConfiguredDeepResearchSources(state.searchApiConfig)) {
+      await appDialog.alert({ message: t("research.notConfigured") })
+      return
+    }
+    queueResearchBatch(
+      normalizePath(project.path),
+      eligibleItems.map((item) => ({
+        topic: reviewResearchTopic(item),
+        searchQueries: item.searchQueries,
+        sourceReviewId: item.id,
+      })),
+      state.llmConfig,
+      state.searchApiConfig,
+    )
+    const queuedIds = new Set(eligibleItems.map((item) => item.id))
+    setSelectedReviewIds((current) => new Set([...current].filter((id) => !queuedIds.has(id))))
+  }, [appDialog, items, project, selectedReviewIds, t])
 
   return (
     <div className="flex h-full flex-col">
@@ -357,6 +423,15 @@ export function ReviewView() {
             variant="outline"
             size="sm"
             className="h-7 text-xs"
+            disabled={batchResearchItems.length === 0}
+            onClick={handleBatchResearch}
+          >
+            {t("review.researchSelected", { count: batchResearchItems.length })}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
             disabled={selectedPendingIds.length === 0}
             onClick={handleBatchResolve}
           >
@@ -390,6 +465,8 @@ export function ReviewView() {
                 onDismiss={dismissItem}
                 selected={selectedReviewIds.has(item.id)}
                 onSelectedChange={setReviewSelected}
+                working={workingReviewIds.has(item.id)}
+                error={reviewErrors[item.id]}
               />
             ))}
             {resolved.length > 0 && pending.length > 0 && (
@@ -405,6 +482,8 @@ export function ReviewView() {
                 onDismiss={dismissItem}
                 selected={selectedReviewIds.has(item.id)}
                 onSelectedChange={setReviewSelected}
+                working={workingReviewIds.has(item.id)}
+                error={reviewErrors[item.id]}
               />
             ))}
           </div>
@@ -420,12 +499,16 @@ function ReviewCard({
   onDismiss,
   selected,
   onSelectedChange,
+  working,
+  error,
 }: {
   item: ReviewItem
   onResolve: (id: string, action: string) => void
   onDismiss: (id: string) => void
   selected: boolean
   onSelectedChange: (id: string, selected: boolean) => void
+  working: boolean
+  error?: string
 }) {
   const { t } = useTranslation()
   const config = typeConfig[item.type]
@@ -484,6 +567,11 @@ function ReviewCard({
 
       {!item.resolved ? (
         <div className="space-y-2">
+          {error && (
+            <div className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+              {t("review.actionFailed", { error })}
+            </div>
+          )}
           {researchRunning && (
             <div className="text-xs text-muted-foreground">
               {t(`research.status.${researchTask.status}`)}
@@ -495,7 +583,7 @@ function ReviewCard({
               variant="default"
               size="sm"
               className="h-7 text-xs gap-1"
-              disabled={researchRunning}
+              disabled={researchRunning || working}
               onClick={() => onResolve(item.id, "__deep_research__")}
             >
               🔍 {t("research.title")}
@@ -507,7 +595,7 @@ function ReviewCard({
               variant="outline"
               size="sm"
               className="h-7 text-xs"
-              disabled={researchRunning}
+              disabled={researchRunning || working}
               onClick={() => onResolve(item.id, opt.action)}
             >
               {opt.label}

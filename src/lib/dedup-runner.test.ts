@@ -300,6 +300,26 @@ describe("runDuplicateDetection embedding prefilter", () => {
     expect(mockStreamChat).not.toHaveBeenCalled()
   })
 
+  it("bounds every LLM request when a large wiki has no embedding prefilter", async () => {
+    setupLargeProject(170)
+    mockLoadNotDuplicates.mockResolvedValue([])
+    setupEmbeddingConfig(false)
+    mockStreamChat.mockImplementation(async (_c, _m, cb) => {
+      cb.onToken('{"groups": []}')
+      cb.onDone()
+    })
+
+    await runDuplicateDetection("/project", cfg)
+
+    expect(mockStreamChat.mock.calls.length).toBeGreaterThan(1)
+    for (const call of mockStreamChat.mock.calls) {
+      const prompt = call[1][1].content as string
+      const count = Number(prompt.match(/Wiki pages to scan \((\d+) entries\)/)?.[1])
+      expect(count).toBeGreaterThanOrEqual(2)
+      expect(count).toBeLessThanOrEqual(80)
+    }
+  })
+
   it("keeps the not-duplicates whitelist active on the prefiltered path", async () => {
     setupThreePageProject()
     mockLoadNotDuplicates.mockResolvedValue([["foo", "bar"]])

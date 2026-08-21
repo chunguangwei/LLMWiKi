@@ -592,11 +592,11 @@ impl LlmClient {
 
     pub fn structured_task_config(&self, max_tokens: u32) -> Self {
         let mut config = self.config.clone();
-        // Structured tasks need concise final content, but forcing "off" is
-        // invalid for thinking-only models and generic custom gateways. Auto
-        // omits provider-specific controls and is the portable safe default.
+        // Agent protocol calls need compact machine-readable output. Let
+        // provider adapters translate "off" only where a supported wire-level
+        // control exists; generic gateways continue to receive no extra field.
         config.reasoning = Some(LlmReasoningConfig {
-            mode: Some("auto".to_string()),
+            mode: Some("off".to_string()),
             budget_tokens: None,
         });
         config.max_tokens = Some(max_tokens);
@@ -933,10 +933,26 @@ fn requires_bearer_auth(url: &str) -> bool {
     lower.contains("minimax.io") || lower.contains("minimaxi.com")
 }
 
+fn is_deepseek_endpoint(config: &LlmConfig) -> bool {
+    let endpoint = config.custom_endpoint.to_ascii_lowercase();
+    endpoint.contains("api.deepseek.com") || endpoint.contains("api.deepseek.cn")
+}
+
+fn supports_deepseek_thinking_param(config: &LlmConfig) -> bool {
+    let model = config.model.to_ascii_lowercase().replace('_', "-");
+    model.contains("deepseek-v4")
+}
+
 fn apply_openai_reasoning(body: &mut Value, config: &LlmConfig) {
     let Some(reasoning) = config.reasoning.as_ref() else {
         return;
     };
+    if is_deepseek_endpoint(config) && supports_deepseek_thinking_param(config) {
+        if reasoning.mode.as_deref() == Some("off") {
+            body["thinking"] = json!({ "type": "disabled" });
+        }
+        return;
+    }
     if config.provider == "ollama" {
         match reasoning.mode.as_deref() {
             Some("off") => body["reasoning_effort"] = Value::String("none".to_string()),
@@ -1254,7 +1270,7 @@ mod tests {
     }
 
     #[test]
-    fn structured_task_config_uses_portable_auto_reasoning_and_raises_output_budget() {
+    fn structured_task_config_disables_reasoning_and_raises_output_budget() {
         let mut cfg = config("openai");
         cfg.reasoning = Some(LlmReasoningConfig {
             mode: Some("high".to_string()),
@@ -1271,7 +1287,22 @@ mod tests {
                 .reasoning
                 .as_ref()
                 .and_then(|value| value.mode.as_deref()),
-            Some("auto")
+            Some("off")
+        );
+    }
+
+    #[test]
+    fn deepseek_v4_structured_tasks_disable_thinking() {
+        let mut cfg = config("custom");
+        cfg.custom_endpoint = "https://api.deepseek.com/v1/chat/completions".to_string();
+        cfg.model = "deepseek-v4-flash".to_string();
+
+        let client = LlmClient::new(cfg).unwrap().structured_task_config(8_192);
+        let body = client.openai_like_body("system", "user", &[], true, false, false);
+
+        assert_eq!(
+            body.pointer("/thinking/type").and_then(Value::as_str),
+            Some("disabled")
         );
     }
 

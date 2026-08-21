@@ -130,6 +130,40 @@ describe("streamChat — buffered streaming responses", () => {
     expect(onDone).not.toHaveBeenCalled()
   })
 
+  it("retries a custom endpoint without temperature when the provider rejects it", async () => {
+    mockHttpFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { message: "Unsupported parameter: temperature" },
+      }), { status: 400 }))
+      .mockResolvedValueOnce(new Response([
+        openAiSseToken("retried"),
+        "data: [DONE]",
+      ].join("\n\n"), { status: 200 }))
+    const onToken = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+
+    await streamChat(
+      customStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken, onDone, onError },
+      undefined,
+      { temperature: 0.1, max_tokens: 512 },
+    )
+
+    expect(mockHttpFetch).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(String(mockHttpFetch.mock.calls[0][1]?.body))).toMatchObject({
+      temperature: 0.1,
+      max_tokens: 512,
+    })
+    const retryBody = JSON.parse(String(mockHttpFetch.mock.calls[1][1]?.body))
+    expect(retryBody.temperature).toBeUndefined()
+    expect(retryBody.max_tokens).toBe(512)
+    expect(onToken).toHaveBeenCalledWith("retried")
+    expect(onDone).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
   it("cancels a still-open response body after an SSE endpoint error", async () => {
     let bodyCancelled = false
     const body = new ReadableStream<Uint8Array>({

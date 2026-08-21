@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import {
   FileText, Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, TrendingUp, Target, ChevronRight, ChevronDown, Layout, Globe, Trash2,
@@ -17,6 +17,8 @@ import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
 import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
 import { filterRawSourceTree } from "@/lib/source-filter"
 import { useAppDialog } from "@/stores/app-dialog-store"
+import { parseSources } from "@/lib/sources-merge"
+import { filterPagesBySource, listPageSourceIdentities } from "@/lib/knowledge-source-filter"
 
 export interface WikiPageInfo {
   path: string
@@ -24,6 +26,7 @@ export interface WikiPageInfo {
   type: string
   tags: string[]
   origin?: string
+  sources: string[]
 }
 
 // Maps a page's frontmatter `type` (always the english slug, e.g.
@@ -129,6 +132,7 @@ export function KnowledgeTree() {
   const fileTree = useWikiStore((s) => s.fileTree)
   const dataVersion = useWikiStore((s) => s.dataVersion)
   const [pages, setPages] = useState<WikiPageInfo[]>([])
+  const [selectedSource, setSelectedSource] = useState<string | null>(null)
   // Restored from localStorage (per project) so expand/collapse choices
   // survive reload / relaunch instead of resetting to the default set.
   const [expandedTypes, setExpandedTypes] = useState<Set<string>>(() =>
@@ -160,6 +164,7 @@ export function KnowledgeTree() {
             title: file.name.replace(".md", "").replace(/-/g, " "),
             type: "other",
             tags: [],
+            sources: [],
           })
         }
       }
@@ -181,6 +186,20 @@ export function KnowledgeTree() {
   useEffect(() => {
     setExpandedTypes(loadExpandedTypes(project?.id))
   }, [project?.id])
+
+  useEffect(() => {
+    setSelectedSource(null)
+  }, [project?.id])
+
+  const sourceOptions = useMemo(() => listPageSourceIdentities(pages), [pages])
+  const visiblePages = useMemo(
+    () => filterPagesBySource(pages, selectedSource),
+    [pages, selectedSource],
+  )
+
+  useEffect(() => {
+    if (selectedSource && !sourceOptions.includes(selectedSource)) setSelectedSource(null)
+  }, [selectedSource, sourceOptions])
 
   const handleDeleteClick = useCallback(
     async (pagePath: string) => {
@@ -226,7 +245,7 @@ export function KnowledgeTree() {
 
   // Group pages by type
   const grouped = new Map<string, WikiPageInfo[]>()
-  for (const page of pages) {
+  for (const page of visiblePages) {
     const list = grouped.get(page.type) ?? []
     list.push(page)
     grouped.set(page.type, list)
@@ -256,6 +275,25 @@ export function KnowledgeTree() {
         <div className="mb-2 px-2 text-xs font-semibold uppercase text-muted-foreground">
           {project.name}
         </div>
+
+        {sourceOptions.length > 1 && (
+          <div className="mb-2 px-2">
+            <label className="sr-only" htmlFor="knowledge-source-filter">
+              {t("sidebar.filterBySource")}
+            </label>
+            <select
+              id="knowledge-source-filter"
+              value={selectedSource ?? ""}
+              onChange={(event) => setSelectedSource(event.target.value || null)}
+              className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">{t("sidebar.allSources")}</option>
+              {sourceOptions.map((source) => (
+                <option key={source} value={source}>{source}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {sortedGroups.length === 0 && (
           <div className="px-2 py-4 text-center text-xs text-muted-foreground">
@@ -486,7 +524,7 @@ export function parsePageInfo(path: string, fileName: string, content: string): 
     }
   }
 
-  return { path, title, type, tags, origin }
+  return { path, title, type, tags, origin, sources: parseSources(content) }
 }
 
 /**

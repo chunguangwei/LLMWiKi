@@ -65,6 +65,11 @@ describe("parseSources — inline `sources: [...]`", () => {
     ])
   })
 
+  it("parses CRLF frontmatter", () => {
+    const content = '---\r\ntitle: Windows\r\nsources: ["BookA.pdf", "BookB.pdf"]\r\n---\r\n# Body\r\n'
+    expect(parseSources(content)).toEqual(["BookA.pdf", "BookB.pdf"])
+  })
+
   it("keeps commas inside quoted source filenames", () => {
     expect(parseSources(WRAP('sources: ["reports/Q1, revised.pdf", "测试，最终版.md"]'))).toEqual([
       "reports/Q1, revised.pdf",
@@ -99,6 +104,12 @@ describe("parseSources — multi-line YAML list form", () => {
 // ── writeSources ────────────────────────────────────────────────────
 
 describe("writeSources", () => {
+  it("preserves CRLF frontmatter delimiters when updating sources", () => {
+    const before = '---\r\ntitle: Windows\r\nsources: ["a.md"]\r\n---\r\n# Body\r\n'
+    const after = writeSources(before, ["a.md", "b.md"])
+    expect(after).toContain('---\r\ntitle: Windows\r\nsources: ["a.md", "b.md"]\r\n---\r\n')
+    expect(parseSources(after)).toEqual(["a.md", "b.md"])
+  })
   it("replaces an existing inline sources array", () => {
     const before = WRAP('title: X\nsources: ["a.md"]')
     const after = writeSources(before, ["a.md", "b.md"])
@@ -136,6 +147,32 @@ describe("writeSources", () => {
     expect(after).not.toMatch(/^\s+-\s+a\.md/m)
   })
 
+  it("preserves the following frontmatter field after an LF block list", () => {
+    const before = WRAP(
+      ["title: X", "sources:", "  - a.md", "  - b.md", "tags: [keep]"].join("\n"),
+    )
+    const after = writeSources(before, ["a.md", "b.md", "c.md"])
+
+    expect(after).toContain('sources: ["a.md", "b.md", "c.md"]\ntags: [keep]')
+  })
+
+  it("preserves the following frontmatter field after a CRLF block list", () => {
+    const before = [
+      "---",
+      "title: Windows",
+      "sources:",
+      "  - a.md",
+      "  - b.md",
+      "tags: [keep]",
+      "---",
+      "# Body",
+      "",
+    ].join("\r\n")
+    const after = writeSources(before, ["a.md", "b.md", "c.md"])
+
+    expect(after).toContain('sources: ["a.md", "b.md", "c.md"]\r\ntags: [keep]')
+  })
+
   it("returns content unchanged when there is no frontmatter", () => {
     const before = "# heading\n\nbody"
     expect(writeSources(before, ["a.md"])).toBe(before)
@@ -150,6 +187,35 @@ describe("writeSources", () => {
     expect(after).toContain("# Title")
     expect(after).toContain("Lots of prose here.")
     expect(after).toContain("And more prose.")
+  })
+})
+
+describe("mergeArrayFieldsIntoContent — CRLF", () => {
+  it("preserves existing array values when the existing page uses CRLF", () => {
+    const existing = [
+      "---",
+      "title: Windows",
+      'sources: ["old.pdf"]',
+      "tags: [existing]",
+      "---",
+      "# Existing",
+      "",
+    ].join("\r\n")
+    const incoming = WRAP([
+      "title: Windows",
+      'sources: ["new.pdf"]',
+      "tags: [incoming]",
+    ].join("\n"), "# Updated\n")
+
+    const merged = mergeArrayFieldsIntoContent(
+      incoming,
+      existing,
+      ["sources", "tags"],
+    )
+
+    expect(parseFrontmatterArray(merged, "sources")).toEqual(["old.pdf", "new.pdf"])
+    expect(parseFrontmatterArray(merged, "tags")).toEqual(["existing", "incoming"])
+    expect(merged).toContain("# Updated")
   })
 })
 

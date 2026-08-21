@@ -142,6 +142,25 @@ export function isReasoningOnlyResponseError(err: unknown): boolean {
   return /^Model produced [\d,]+ characters of reasoning \/ chain-of-thought, but no actual response content\./.test(message)
 }
 
+function shouldRetryWithoutTemperature(
+  config: LlmConfig,
+  status: number,
+  errorDetail: string,
+  requestOverrides?: RequestOverrides,
+): boolean {
+  if (config.provider !== "custom" || requestOverrides?.temperature === undefined) return false
+  if (status !== 400 && status !== 422) return false
+  const detail = errorDetail.toLowerCase()
+  return detail.includes("temperature") && (
+    detail.includes("unsupported") ||
+    detail.includes("not support") ||
+    detail.includes("unknown") ||
+    detail.includes("not allowed") ||
+    detail.includes("only") ||
+    detail.includes("invalid")
+  )
+}
+
 export async function streamChat(
   config: LlmConfig,
   messages: import("./llm-providers").ChatMessage[],
@@ -260,6 +279,10 @@ export async function streamChat(
       if (body) errorDetail += ` — ${body}`
     } catch {
       // ignore body read failure
+    }
+    if (shouldRetryWithoutTemperature(config, response.status, errorDetail, requestOverrides)) {
+      const { temperature: _temperature, ...retryOverrides } = requestOverrides ?? {}
+      return streamChat(config, messages, callbacks, signal, retryOverrides)
     }
     if (
       response.status === 404 &&
