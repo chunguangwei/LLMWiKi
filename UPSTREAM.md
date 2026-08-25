@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-08-21（Round 12，上游 v0.6.9 → v0.6.10，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-08-25（Round 13，上游 v0.6.10 → v0.6.11，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.10`（Round 12 追平：按来源筛选知识 / 批量 Deep Research + 研究重跑 / MinerU 3.0–3.2 / 导入跳过文件报告 / Agent 模型路由修复）|
-| **本 fork 版本** | `0.6.16`（Round 12 上游同步 v0.6.9→v0.6.10）|
+| Upstream 版本号 | `0.6.11`（Round 13 追平：可配置 Ingest 推理强度 / Claude CLI Provider 测试修复 / 原始资料自然排序 / 切项目时旧资料闪现修复）|
+| **本 fork 版本** | `0.6.17`（Round 13 上游同步 v0.6.10→v0.6.11）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -100,6 +100,11 @@
 > - **合并后修复**：`provider.rs` 上游新测试 `deepseek_v4_structured_tasks_disable_thinking` 适配 fork 的 6 参 `openai_like_body`（补 `use_completion_tokens: false`，同 Round 9/10 模式）。
 > - **README 补齐**：外层 `README.md` 功能一览补 v0.6.5–v0.6.10 的 11 行新功能（项目级模型配置 / EPUB+MOBI+Org / 只读原文 / AnyDoc / 摄取队列控制 / MinerU API / 流式 Chat API+MCP / 上下文详情面板 / 批量 Deep Research / 来源筛选），修正 Rust 1.88+、i18n 四语言、测试数 ~2500、网页搜索 provider 列表（含博查）。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2501 ✅（177 文件）/ cargo check ✅ / cargo test 424 ✅（2 ignored）。
+
+> **Round 13 同步（2026-08-25，v0.6.10 → v0.6.11）**：`git merge upstream/main`（HEAD `e808211`）。上游本轮 8 个提交、36 文件（+380/−78）：可配置 Ingest 推理强度（`c99a26d`，替代硬编码关闭）、Claude CLI Provider 测试参数保留、原始资料自然数字排序、切换项目时旧资料条目闪现修复、源码构建文档（protoc + mcp-server 步骤）。
+> - **6 个冲突文件**：5 个版本号类保留我方版本线并统一升 `0.6.17` > 上游 `0.6.11`；`changelog.ts` 弃上游 0.6.11/0.6.10 条目头，内容并入我方新 0.6.17 条目。功能代码全部自动合并，无需手工介入。
+> - **README 补齐**：外层 `README.md` 功能一览补「可配置 Ingest 推理强度」一行。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2512 ✅（179 文件）/ cargo check ✅ / cargo test ✅。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局

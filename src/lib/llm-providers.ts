@@ -9,6 +9,7 @@ import {
 import {
   isAdaptiveAnthropicModel,
   isGeminiThinkingLevelModel,
+  isOpenRouterEndpoint,
   normalizeReasoningForProvider,
 } from "@/lib/reasoning-capabilities"
 
@@ -494,6 +495,15 @@ function buildOpenAiCompatibleBody(
   adaptOpenAiStrictCompletionBody(config, body)
   adaptKimiBody(config, body)
   adaptXiaomiMimoBody(config, body, reasoning)
+
+  if (config.provider === "custom" && isOpenRouterEndpoint(config.customEndpoint)) {
+    if (reasoning.mode === "custom" && reasoning.budgetTokens !== undefined) {
+      body.reasoning = { max_tokens: reasoning.budgetTokens }
+    } else if (reasoning.mode !== "auto") {
+      body.reasoning = { effort: reasoning.mode === "off" ? "none" : reasoning.mode }
+    }
+    return body
+  }
 
   if (isDeepSeekEndpoint(config)) {
     // DeepSeek V4 thinking mode. `thinking.type=disabled` is the most
