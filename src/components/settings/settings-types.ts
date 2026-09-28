@@ -82,6 +82,7 @@ export interface SettingsDraft {
 
   // Source folder auto watch
   sourceWatchConfig: SourceWatchConfig
+  sourceWatchAllProjects: boolean
 
   // MinerU PDF parsing
   mineruEnabled: boolean

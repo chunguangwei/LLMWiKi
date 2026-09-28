@@ -137,10 +137,30 @@ jobs:
           tagName: ${{ github.event_name == 'push' && github.ref_name || '' }}
           releaseName: ${{ github.event_name == 'push' && format('LLM Wiki {0}', github.ref_name) || '' }}
           releaseBody: 'See the assets below for download links.'
-          releaseDraft: false
+          # Tag builds stay private until every platform succeeds and the
+          # macOS app has passed strict signature/notarization verification.
+          releaseDraft: ${{ github.event_name == 'push' }}
           prerelease: false
           args: ${{ matrix.args }}
 
+      - name: Verify signed macOS app and DMG
+        if: github.event_name == 'push' && startsWith(matrix.platform, 'macos-')
+        run: .github/scripts/verify-macos-release.sh src-tauri/target
+
+      - name: Package Windows portable zip
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          .github/scripts/package-windows-portable.ps1 -Version $version
+
+      - name: Attach Windows portable zip to release
+        if: github.event_name == 'push' && matrix.platform == 'windows-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          gh release upload "${{ github.ref_name }}" dist-portable/*.zip --clobber
       # On workflow_dispatch, no release is created, so the bundles
       # would otherwise be discarded with the runner. Upload them as
       # workflow artifacts so the maintainer can `gh run download`
@@ -196,3 +216,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ github.ref_name }}" dist-extension/*.zip --clobber
+
+  publish-release:
+    name: Publish verified release
+    needs: [build, package-extension]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false

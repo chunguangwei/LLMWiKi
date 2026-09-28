@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-08-25（Round 13，上游 v0.6.10 → v0.6.11，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-09-28（Round 14，上游 v0.6.11 → v0.6.12+`48fd970`，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.11`（Round 13 追平：可配置 Ingest 推理强度 / Claude CLI Provider 测试修复 / 原始资料自然排序 / 切项目时旧资料闪现修复）|
-| **本 fork 版本** | `0.6.17`（Round 13 上游同步 v0.6.10→v0.6.11）|
+| Upstream 版本号 | `0.6.12`（Round 14 追平：跨项目后台资料监控 / 并发上限 64 / 图片资料摄取 / Ingest 中断恢复 / 校验 MCP 写入 / Deep Research 与图谱优化）|
+| **本 fork 版本** | `0.6.18`（Round 14 上游同步 v0.6.11→v0.6.12）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -105,6 +105,13 @@
 > - **6 个冲突文件**：5 个版本号类保留我方版本线并统一升 `0.6.17` > 上游 `0.6.11`；`changelog.ts` 弃上游 0.6.11/0.6.10 条目头，内容并入我方新 0.6.17 条目。功能代码全部自动合并，无需手工介入。
 > - **README 补齐**：外层 `README.md` 功能一览补「可配置 Ingest 推理强度」一行。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2512 ✅（179 文件）/ cargo check ✅ / cargo test ✅。
+
+> **Round 14 同步（2026-09-28，v0.6.11 → v0.6.12+`48fd970`）**：`git merge upstream/main`（HEAD `48fd970`）。上游本轮 36 个提交、106 文件（+5900/−732）：跨最近项目后台资料监控（`c80e802`）、文档处理/Ingest 并发上限提升至 64（`5096807`）、校验的 MCP Wiki 页面写入（`4ffe414`）、独立图片资料摄取（PNG/JPG/JPEG + 多模态描述，`b084062`+`9dacddc`）、Ingest 生成中断恢复（`cbd1717`）、截断检测与队列恢复（`6693da1`/`4d1bae0`）、Deep Research 项目语境查询/来源过滤/实体页面落地（`a799001`/`a5f8581`/`773587d`）、大型图谱性能（`66b0e83`/`ff08988`/`cc81bce`）、macOS 签名/公证验证 CI（`0c70490`/`48fd970`）、Claude CLI OAuth 诊断与慢版本探测容忍、Anthropic 兼容鉴权头加固、向量 ID 冲突/wikilink 规范化/页面合并模板残留/含空格图片路径等修复。
+> - **8 个冲突文件**：5 个版本号类（`package.json`/`package-lock.json`/`Cargo.toml`/`Cargo.lock`/`tauri.conf.json`）保留我方版本线并统一升 `0.6.18` > 上游 `0.6.12`；`changelog.ts` 弃上游 0.6.12 条目头，内容（含 it/ru 译文）并入我方新 0.6.18 条目；`App.tsx` keep-both（我方 activity 持久化/GitHub 备份导入 + 上游 `loadSourceWatchAllProjects`）；`.github/workflows/build.yml` 取上游新增的 macOS 签名验证 + Windows portable 打包步骤（我方 arm64-only 矩阵等改动已自动合并保留）。
+> - **合并后清理**：上游以 `cli_resolver.rs` 取代并删除 `cli_finder.rs`，我方合并后残留该文件成死代码（`find_cli`/`fallback_candidates` never used），已按上游删除文件与 `mod.rs` 声明，cargo 警告清零。
+> - **自动合并语义核查**：fork 的 Azure 双端点修复（`llm-providers.ts` `azureV1`/`azureClassic`/`azureAuthStyle`、`provider.rs` `is_azure_v1_endpoint`/`include_model`）与搜索聚焦导航（`wiki-store.ts` `previousView`/`requestSearchFocus`）完整保留；上游重写的全项目资料监控启动块与我方 GitHub 备份调度块在 `App.tsx` 自动合并共存。
+> - **README 补齐**：外层 `README.md` 功能一览补 4 行（跨项目资料监控+并发 64 / 图片资料摄取 / Ingest 中断恢复 / 校验 MCP 写入）。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2641 ✅（185 文件，含 i18n parity）/ cargo check ✅ 0 警告 / cargo test ✅。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局
