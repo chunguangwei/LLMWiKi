@@ -145,20 +145,6 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
-      - name: Package Windows portable zip
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
-        run: |
-          $version = node -p "require('./package.json').version"
-          .github/scripts/package-windows-portable.ps1 -Version $version
-
-      - name: Attach Windows portable zip to release
-        if: github.event_name == 'push' && matrix.platform == 'windows-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: pwsh
-        run: |
-          gh release upload "${{ github.ref_name }}" dist-portable/*.zip --clobber
       # On workflow_dispatch, no release is created, so the bundles
       # would otherwise be discarded with the runner. Upload them as
       # workflow artifacts so the maintainer can `gh run download`
