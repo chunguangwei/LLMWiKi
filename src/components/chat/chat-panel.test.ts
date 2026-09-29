@@ -15,10 +15,9 @@ const panelSource = readFileSync(
   resolve(process.cwd(), "src/components/chat/chat-panel.tsx"),
   "utf8",
 )
-
 describe("chat conversation deletion path", () => {
   it("chat-panel deletes via deleteChatConversation, never the legacy shared chats path", () => {
-    expect(panelSource).toContain("deleteChatConversation(")
-    expect(panelSource).not.toContain(".llm-wiki/chats/")
+    expect(panelSource).toMatch(/deleteChatConversation\(/)
+    expect(panelSource).not.toMatch(/\.llm-wiki\/chats/)
   })
 })
