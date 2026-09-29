@@ -22,6 +22,7 @@ import {
   loadLintItems,
   saveChatHistory,
   loadChatHistory,
+  deleteChatConversation,
   saveChatPreferences,
   loadChatPreferences,
 } from "./persist"
@@ -243,6 +244,22 @@ describe("chat persistence — round-trip (new format)", () => {
     // so compare as sets.
     expect(loaded.messages).toEqual(expect.arrayContaining(msgs))
     expect(loaded.messages).toHaveLength(2)
+  })
+
+  it("deleted conversation is not resurrected by orphan recovery on reload", async () => {
+    await saveChatHistory(tmp.path, [makeConv("c1")], [makeMsg("m1", "c1", "hello")])
+    expect(await fileExists(`${tmp.path}/.llm-wiki-local/chats/c1.json`)).toBe(true)
+
+    // Sidebar delete flow: chat-panel removes the persisted file via
+    // deleteChatConversation, the store drops the conversation in memory,
+    // then auto-save persists the emptied index.
+    await deleteChatConversation(tmp.path, "c1")
+    expect(await fileExists(`${tmp.path}/.llm-wiki-local/chats/c1.json`)).toBe(false)
+    await saveChatHistory(tmp.path, [], [])
+
+    const loaded = await loadChatHistory(tmp.path)
+    expect(loaded.conversations).toEqual([])
+    expect(loaded.messages).toEqual([])
   })
 
   it("does not persist base64 chat images into conversation JSON", async () => {

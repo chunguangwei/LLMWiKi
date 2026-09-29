@@ -12,7 +12,8 @@ import { resolveTaskLlmConfig } from "@/lib/llm-task-routing"
 import { isReasoningOnlyResponseError, streamChat } from "@/lib/llm-client"
 import { supportsImageInput } from "@/lib/llm-providers"
 import { executeIngestWrites } from "@/lib/ingest"
-import { deleteFile, openPathInProject, readFile } from "@/commands/fs"
+import { openPathInProject, readFile } from "@/commands/fs"
+import { deleteChatConversation } from "@/lib/persist"
 import { getFileName, isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { hasConfiguredAnyTxt } from "@/lib/anytxt-search"
 import type { ChatAgentEvent, ChatAgentFileChange, ChatAgentStep, ChatUserInputRequest } from "@/lib/chat-agent-types"
@@ -246,7 +247,11 @@ function ConversationSidebar({
                         // Delete persisted chat file
                         const proj = useWikiStore.getState().project
                         if (proj) {
-                          deleteFile(`${proj.path}/.llm-wiki/chats/${conv.id}.json`).catch(() => {})
+                          // Route through persist.ts: fork stores chats under
+                          // .llm-wiki-local/chats/, not upstream's .llm-wiki/chats/.
+                          // Deleting the wrong path leaves an orphan file that
+                          // loadChatHistory resurrects on next launch.
+                          deleteChatConversation(proj.path, conv.id).catch(() => {})
                         }
                       }}
                     >

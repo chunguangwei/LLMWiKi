@@ -28,6 +28,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.19",
+    date: "2026-09-29",
+    highlights: {
+      en: [
+        "Fixed deleted conversations reappearing after an app reload: the sidebar delete now removes the chat file from the correct local data directory instead of the legacy shared one.",
+        "Removed CI steps incompatible with the ad-hoc signed macOS build so tagged releases publish immediately again.",
+      ],
+      zh: [
+        "修复删除对话后重新加载应用仍会显示的问题：侧边栏删除现在会从正确的本地数据目录移除聊天文件，而不是旧的共享目录。",
+        "移除与 ad-hoc 签名 macOS 构建不兼容的 CI 步骤，tag 发版恢复即时发布。",
+      ],
+    },
+  },
+  {
     version: "0.6.18",
     date: "2026-09-28",
     highlights: {
