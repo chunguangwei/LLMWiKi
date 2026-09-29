@@ -248,7 +248,7 @@ function ConversationSidebar({
                         const proj = useWikiStore.getState().project
                         if (proj) {
                           // Route through persist.ts: fork stores chats under
-                          // .llm-wiki-local/chats/, not upstream's .llm-wiki/chats/.
+                          // .llm-wiki-local/, not upstream's legacy shared dir.
                           // Deleting the wrong path leaves an orphan file that
                           // loadChatHistory resurrects on next launch.
                           deleteChatConversation(proj.path, conv.id).catch(() => {})
