@@ -15,6 +15,7 @@ const panelSource = readFileSync(
   resolve(process.cwd(), "src/components/chat/chat-panel.tsx"),
   "utf8",
 )
+
 describe("chat conversation deletion path", () => {
   it("chat-panel deletes via deleteChatConversation, never the legacy shared chats path", () => {
     expect(panelSource).toMatch(/deleteChatConversation\(/)
