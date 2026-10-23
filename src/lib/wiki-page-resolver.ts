@@ -120,17 +120,28 @@ export function resolveRelatedSlug(
   ref: string,
   wikiRoot: string,
 ): string | null {
-  // Path-like → resolve relative to project root (one segment up
-  // from wikiRoot).
-  if (ref.includes("/")) {
-    const projectRoot = wikiRoot.replace(/\/wiki$/, "")
-    const target = `${projectRoot}/${ref}`
+  const rawTarget = unwrapWikilink(ref.trim()).slug.split("#", 1)[0].trim()
+  if (!rawTarget || /[\u0000-\u001f\u007f]/u.test(rawTarget)) return null
+  const normalizedRef = rawTarget.replace(/\\/g, "/").replace(/^\.\//, "")
+  const normalizedWikiRoot = wikiRoot.replace(/\\/g, "/").replace(/\/$/, "")
+  if (normalizedRef.startsWith("/") || /^[A-Za-z]:\//.test(normalizedRef)) return null
+  const segments = normalizedRef.split("/")
+  if (segments.some((segment) => segment === ".." || segment === "." || !segment)) return null
+
+  // Path-like refs can be project-relative (`wiki/concepts/foo`) or
+  // wiki-root-relative (`concepts/foo`). Index generation uses the latter.
+  if (normalizedRef.includes("/")) {
+    const projectRoot = normalizedWikiRoot.replace(/\/wiki$/, "")
+    const withExtension = normalizedRef.endsWith(".md") ? normalizedRef : `${normalizedRef}.md`
+    const target = withExtension.startsWith("wiki/")
+      ? `${projectRoot}/${withExtension}`
+      : `${normalizedWikiRoot}/${withExtension}`
     const found = findInTreeByPath(index, target)
-    return found && found.includes(`${wikiRoot}/`) ? found : null
+    return found && found.replace(/\\/g, "/").startsWith(`${normalizedWikiRoot}/`) ? found : null
   }
 
-  const filename = ref.endsWith(".md") ? ref : `${ref}.md`
-  return findInTreeByName(index, filename, `${wikiRoot}/`)
+  const filename = normalizedRef.endsWith(".md") ? normalizedRef : `${normalizedRef}.md`
+  return findInTreeByName(index, filename, `${normalizedWikiRoot}/`)
 }
 
 /**

@@ -3,6 +3,7 @@ import { createTempProject, realFs, writeFileRaw } from "@/test-helpers/fs-temp"
 import { findRawSourceForImage, imageUrlToAbsolute } from "./raw-source-resolver"
 import {
   legacySourceSummarySlugFromIdentity,
+  sourceSummarySlugCandidatesFromIdentity,
   sourceSummarySlugFromIdentity,
 } from "./source-identity"
 
@@ -67,5 +68,18 @@ describe("raw source image resolver", () => {
     expect(imageUrlToAbsolute("media/report/img-1.png", "/project")).toBe(
       "/project/wiki/media/report/img-1.png",
     )
+  })
+
+  it("resolves both byte-bounded and former media slugs for a long CJK source", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const identity = `${"资料".repeat(8)}/${"中文".repeat(35)}.pdf`
+    const rawPath = `${tmp.path}/raw/sources/${identity}`
+    await writeFileRaw(rawPath, "long CJK source\n")
+    const candidates = sourceSummarySlugCandidatesFromIdentity(identity)
+    expect(candidates[0]).not.toBe(candidates[1])
+
+    for (const slug of candidates.slice(0, 2)) {
+      await expect(findRawSourceForImage(`media/${slug}/img-1.png`, tmp.path)).resolves.toBe(rawPath)
+    }
   })
 })

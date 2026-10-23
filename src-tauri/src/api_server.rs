@@ -346,7 +346,10 @@ fn handle_request(
     if !is_authorized(app, query, headers) {
         return err(401, "Unauthorized");
     }
-    if !matches!(method, &Method::Get | &Method::Post | &Method::Patch) {
+    if !matches!(
+        method,
+        &Method::Get | &Method::Post | &Method::Patch | &Method::Delete
+    ) {
         return err(405, "Method not allowed");
     }
 
@@ -368,6 +371,9 @@ fn handle_request(
         }
         (&Method::Patch, ["projects", project_id, "reviews", review_id]) => {
             handle_patch_review(app, project_id, review_id, body)
+        }
+        (&Method::Delete, ["projects", project_id, "reviews", review_id]) => {
+            handle_delete_review(app, project_id, review_id)
         }
         (&Method::Post, ["projects", project_id, "search"]) => handle_search(app, project_id, body),
         (&Method::Get, ["projects", project_id, "graph"]) => handle_graph(app, project_id, query),
@@ -1601,9 +1607,45 @@ fn handle_patch_review(
 #[serde(rename_all = "camelCase")]
 struct BulkResolveRequest {
     /// Review item ids to resolve. Required, non-empty.
+    #[serde(alias = "reviewIds")]
     ids: Vec<String>,
     /// Optional label applied to every resolved item.
     action: Option<String>,
+}
+
+fn handle_delete_review(app: &AppHandle, project_id: &str, review_id: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project,
+        Err(e) => return err(404, e),
+    };
+    match delete_review_item(&project.path, review_id) {
+        Ok(true) => ok(json!({
+            "ok": true,
+            "projectId": project.id,
+            "reviewId": review_id,
+            "deleted": true,
+        })),
+        Ok(false) => err(404, format!("Review item '{review_id}' not found")),
+        Err(e) => err(500, e),
+    }
+}
+
+fn delete_review_item(project_path: &str, review_id: &str) -> Result<bool, String> {
+    let path = Path::new(project_path).join(".llm-wiki/review.json");
+    let mut parsed = match read_raw_review_array(&path)? {
+        Some(parsed) => parsed,
+        None => return Ok(false),
+    };
+    let items = parsed
+        .as_array_mut()
+        .ok_or_else(|| "Invalid review state JSON: expected an array".to_string())?;
+    let original_len = items.len();
+    items.retain(|item| !review_id_matches(item, review_id));
+    if items.len() == original_len {
+        return Ok(false);
+    }
+    write_raw_review_array(&path, &parsed)?;
+    Ok(true)
 }
 
 /// `POST /projects/{id}/reviews/resolve` — bulk-resolve many review
@@ -2367,6 +2409,7 @@ fn project_llm_config(parsed: &Value, project_id: &str) -> Option<agent::provide
             "reasoning",
             "streamingEnabled",
             "customHeaders",
+            "extraRequestBody",
         ] {
             if let Some(value) = provider.get(key) {
                 profile_object.insert(key.to_string(), value.clone());
@@ -3527,6 +3570,41 @@ mod tests {
         let found = patch_review_item(root.to_str().unwrap(), "r1", true, None).unwrap();
         assert!(!found);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delete_review_item_removes_match_and_preserves_other_fields() {
+        let root = test_project_dir();
+        write_reviews(
+            &root,
+            json!([
+                { "id": "r1", "resolved": false, "internalSecret": "remove" },
+                { "id": "r2", "resolved": false, "internalSecret": "keep" }
+            ]),
+        );
+
+        assert!(delete_review_item(root.to_str().unwrap(), "r1").unwrap());
+        let parsed = read_reviews(&root);
+        let items = parsed.as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].get("id").and_then(Value::as_str), Some("r2"));
+        assert_eq!(
+            items[0].get("internalSecret").and_then(Value::as_str),
+            Some("keep")
+        );
+        assert!(!delete_review_item(root.to_str().unwrap(), "missing").unwrap());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bulk_resolve_request_accepts_documented_review_ids_alias() {
+        let request: BulkResolveRequest = serde_json::from_value(json!({
+            "reviewIds": ["r1", "r2"],
+            "action": "API"
+        }))
+        .unwrap();
+        assert_eq!(request.ids, vec!["r1", "r2"]);
+        assert_eq!(request.action.as_deref(), Some("API"));
     }
 
     #[test]

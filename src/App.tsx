@@ -596,8 +596,11 @@ function App() {
         projectLlmOverride,
         llmState.customLlmPresets,
       ))
-      const projectOutputLang = await loadOutputLanguage(proj.id)
-      useWikiStore.getState().setOutputLanguage(projectOutputLang ?? "auto")
+      const [projectOutputLang, globalOutputLang] = await Promise.all([
+        loadOutputLanguage(proj.id),
+        loadOutputLanguage(),
+      ])
+      useWikiStore.getState().setOutputLanguage(projectOutputLang ?? globalOutputLang ?? "auto")
       setSelectedFile(null)
       setFileTree([])
       setActiveView("wiki")

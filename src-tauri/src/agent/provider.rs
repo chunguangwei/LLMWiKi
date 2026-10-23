@@ -55,6 +55,9 @@ pub struct LlmConfig {
     /// each request because app-state may be edited outside the settings UI.
     #[serde(default)]
     pub custom_headers: BTreeMap<String, String>,
+    /// Provider-specific fields for custom OpenAI-compatible request bodies.
+    #[serde(default)]
+    pub extra_request_body: BTreeMap<String, Value>,
     /// Missing keeps the historical streaming behavior for existing configs.
     #[serde(default)]
     pub streaming_enabled: Option<bool>,
@@ -316,6 +319,24 @@ impl LlmClient {
         });
         if include_model {
             body["model"] = Value::String(self.config.model.clone());
+        }
+        if self.config.provider == "custom"
+            && self.config.api_mode.as_deref() != Some("anthropic_messages")
+        {
+            for (key, value) in &self.config.extra_request_body {
+                if !matches!(
+                    key.as_str(),
+                    "messages"
+                        | "model"
+                        | "stream"
+                        | "stream_options"
+                        | "__proto__"
+                        | "constructor"
+                        | "prototype"
+                ) {
+                    body[key] = value.clone();
+                }
+            }
         }
         adapt_openai_strict_completion_body(&mut body, &self.config);
         apply_openai_reasoning(&mut body, &self.config);
@@ -980,7 +1001,7 @@ fn is_deepseek_endpoint(config: &LlmConfig) -> bool {
 
 fn supports_deepseek_thinking_param(config: &LlmConfig) -> bool {
     let model = config.model.to_ascii_lowercase().replace('_', "-");
-    model.contains("deepseek-v4")
+    model.starts_with("deepseek-v4") || model.starts_with("deepseek-flash")
 }
 
 fn apply_openai_reasoning(body: &mut Value, config: &LlmConfig) {
@@ -1014,9 +1035,15 @@ fn apply_openai_reasoning(body: &mut Value, config: &LlmConfig) {
         return;
     }
     match reasoning.mode.as_deref() {
+        Some("off") if is_openai_future_reasoning_model(config) => {
+            body["reasoning_effort"] = Value::String("none".to_string())
+        }
         Some("off") => {}
         Some("low" | "medium" | "high") => {
             body["reasoning_effort"] = Value::String(reasoning.mode.clone().unwrap_or_default());
+        }
+        Some("max") if is_openai_future_reasoning_model(config) => {
+            body["reasoning_effort"] = Value::String("xhigh".to_string())
         }
         _ => {}
     }
@@ -1107,11 +1134,25 @@ fn is_openai_reasoning_model(config: &LlmConfig) -> bool {
         return true;
     }
     let lower = config.model.to_ascii_lowercase();
-    lower.starts_with("gpt-5")
+    openai_gpt_major(&lower).is_some_and(|major| major >= 5)
         || lower
             .strip_prefix('o')
             .and_then(|tail| tail.chars().next())
             .is_some_and(|first| first.is_ascii_digit())
+}
+
+fn is_openai_future_reasoning_model(config: &LlmConfig) -> bool {
+    openai_gpt_major(&config.model.to_ascii_lowercase()).is_some_and(|major| major >= 6)
+}
+
+fn openai_gpt_major(model: &str) -> Option<u32> {
+    let tail = model.strip_prefix("gpt-")?;
+    let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
+    let delimiter = tail.chars().nth(digits.len());
+    if digits.is_empty() || delimiter.is_some_and(|value| !matches!(value, '.' | '-' | '_')) {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 fn is_gemini_3(model: &str) -> bool {
@@ -1177,6 +1218,7 @@ mod tests {
             max_tokens: None,
             max_context_size: None,
             custom_headers: BTreeMap::new(),
+            extra_request_body: BTreeMap::new(),
             streaming_enabled: None,
         }
     }
@@ -1423,6 +1465,51 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_flash_structured_tasks_disable_thinking() {
+        let mut cfg = config("custom");
+        cfg.custom_endpoint = "https://api.deepseek.com/v1".to_string();
+        cfg.model = "deepseek-flash".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("off".to_string()),
+            budget_tokens: None,
+        });
+        let body = LlmClient::new(cfg).expect("client").openai_like_body(
+            "system",
+            "user",
+            &[],
+            true,
+            false,
+            false,
+        );
+        assert_eq!(
+            body.pointer("/thinking/type").and_then(Value::as_str),
+            Some("disabled")
+        );
+    }
+
+    #[test]
+    fn custom_extra_request_body_cannot_override_core_fields() {
+        let mut cfg = config("custom");
+        cfg.extra_request_body
+            .insert("enable_thinking".into(), Value::Bool(false));
+        cfg.extra_request_body
+            .insert("model".into(), Value::String("hijacked".into()));
+        let body = LlmClient::new(cfg).expect("client").openai_like_body(
+            "system",
+            "user",
+            &[],
+            true,
+            false,
+            false,
+        );
+        assert_eq!(body.get("enable_thinking"), Some(&Value::Bool(false)));
+        assert_eq!(
+            body.get("model").and_then(Value::as_str),
+            Some("model/name")
+        );
+    }
+
+    #[test]
     fn azure_gpt5_uses_max_completion_tokens() {
         let mut cfg = config("azure");
         cfg.model = "deployment-name-does-not-identify-model".to_string();
@@ -1450,6 +1537,30 @@ mod tests {
 
         assert!(body.get("max_completion_tokens").is_some());
         assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn future_openai_models_use_strict_tokens_and_none_reasoning() {
+        let mut cfg = config("openai");
+        cfg.model = "gpt-6-luna".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("off".to_string()),
+            budget_tokens: None,
+        });
+        let body = LlmClient::new(cfg).expect("client").openai_like_body(
+            "system",
+            "user",
+            &[],
+            true,
+            false,
+            false,
+        );
+        assert!(body.get("max_tokens").is_none());
+        assert!(body.get("max_completion_tokens").is_some());
+        assert_eq!(
+            body.get("reasoning_effort").and_then(Value::as_str),
+            Some("none")
+        );
     }
 
     #[test]

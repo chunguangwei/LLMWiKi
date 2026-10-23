@@ -11,6 +11,8 @@ describe("wiki preview store actions", () => {
       previewContentPath: null,
       externalPreview: null,
       previewReturnView: null,
+      previewBackStack: [],
+      previewForwardStack: [],
     })
   })
 
@@ -170,6 +172,59 @@ describe("wiki preview store actions", () => {
     expect(state.selectedFile).toBeNull()
     expect(state.fileContent).toBe("")
     expect(state.previewReturnView).toBeNull()
+  })
+
+  it("navigates backward and forward through preview history", () => {
+    useWikiStore.setState({
+      activeView: "wiki",
+      selectedFile: null,
+      previewBackStack: [],
+      previewForwardStack: [],
+    })
+    const store = useWikiStore.getState()
+    store.openFileInPreview("/project/wiki/a.md", "A")
+    useWikiStore.getState().openFileInPreview("/project/wiki/b.md", "B")
+    useWikiStore.getState().openFileInPreview("/project/wiki/c.md", "C")
+
+    useWikiStore.getState().navigatePreviewBack()
+    expect(useWikiStore.getState().selectedFile).toBe("/project/wiki/b.md")
+    expect(useWikiStore.getState().previewForwardStack).toEqual(["/project/wiki/c.md"])
+
+    useWikiStore.getState().navigatePreviewBack()
+    expect(useWikiStore.getState().selectedFile).toBe("/project/wiki/a.md")
+
+    useWikiStore.getState().navigatePreviewForward()
+    expect(useWikiStore.getState().selectedFile).toBe("/project/wiki/b.md")
+  })
+
+  it("clears forward history after opening a different page", () => {
+    useWikiStore.setState({ selectedFile: null, previewBackStack: [], previewForwardStack: [] })
+    useWikiStore.getState().openPathInPreview("/project/wiki/a.md")
+    useWikiStore.getState().openPathInPreview("/project/wiki/b.md")
+    useWikiStore.getState().navigatePreviewBack()
+    useWikiStore.getState().openPathInPreview("/project/wiki/d.md")
+
+    expect(useWikiStore.getState().selectedFile).toBe("/project/wiki/d.md")
+    expect(useWikiStore.getState().previewForwardStack).toEqual([])
+  })
+
+  it("does not add virtual external previews to local file history", () => {
+    useWikiStore.setState({
+      selectedFile: "external://result",
+      externalPreview: {
+        title: "Search result",
+        path: "remote",
+        source: "AnyTXT",
+        url: "anytxt://remote",
+        snippet: "snippet",
+      },
+      previewBackStack: [],
+      previewForwardStack: [],
+    })
+
+    useWikiStore.getState().openPathInPreview("/project/wiki/a.md")
+
+    expect(useWikiStore.getState().previewBackStack).toEqual([])
   })
 
   it("keeps graph ui state until explicitly reset", () => {

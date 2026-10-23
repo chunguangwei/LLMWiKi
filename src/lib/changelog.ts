@@ -28,6 +28,44 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.20",
+    date: "2026-10-23",
+    highlights: {
+      en: [
+        "Synced upstream v0.6.13: MinerU 4 V1 API support while preserving compatibility with legacy MinerU deployments.",
+        "Back and forward navigation in file previews; improved path-style Wiki link navigation across platforms.",
+        "Removal of stopped Ingest tasks; improved background scanning and queue performance.",
+        "Expanded custom OpenAI-compatible provider request options; model parameters adapt to provider capabilities.",
+        "Improved Wiki overview and review lifecycle management, including cleanup and bulk operations.",
+        "Improved large-document Ingest reliability; fixed long filenames, source summaries, and CLI timeout diagnostics.",
+      ],
+      zh: [
+        "同步上游 v0.6.13：新增 MinerU 4 V1 API 支持，同时兼容旧版 MinerU 部署。",
+        "文件预览新增前进与后退导航，并完善跨平台路径式 Wiki 链接跳转。",
+        "支持移除已停止的 Ingest 任务，并优化后台扫描与队列性能。",
+        "扩展自定义 OpenAI 兼容 Provider 的请求选项，并根据模型能力适配参数。",
+        "完善 Wiki 概览与 Review 生命周期管理，包括清理和批量操作。",
+        "提升大型文档 Ingest 可靠性，并修复长文件名、来源摘要和 CLI 超时诊断问题。",
+      ],
+      it: [
+        "Aggiunto il supporto per l'API MinerU 4 V1, mantenendo la compatibilità con le installazioni MinerU precedenti.",
+        "Aggiunta la navigazione avanti e indietro nelle anteprime dei file e migliorati i collegamenti Wiki basati su percorsi multipiattaforma.",
+        "Aggiunta la rimozione delle attività Ingest arrestate e ottimizzate scansione in background e prestazioni della coda.",
+        "Ampliate le opzioni di richiesta dei provider personalizzati compatibili con OpenAI e adattati i parametri alle capacità dei modelli.",
+        "Migliorata la gestione del ciclo di vita di panoramiche Wiki e Review, incluse pulizia e operazioni in blocco.",
+        "Migliorata l'affidabilita di Ingest per documenti di grandi dimensioni e corretti nomi file lunghi, riepiloghi delle fonti e diagnostica dei timeout CLI.",
+      ],
+      ru: [
+        "Добавлена поддержка MinerU 4 V1 API с сохранением совместимости с прежними версиями MinerU.",
+        "В предпросмотр файлов добавлена навигация назад и вперёд, а переходы по Wiki-ссылкам с путями улучшены для разных платформ.",
+        "Добавлено удаление остановленных задач Ingest, оптимизированы фоновое сканирование и работа очереди.",
+        "Расширены параметры запросов для пользовательских OpenAI-совместимых провайдеров и адаптация параметров к возможностям моделей.",
+        "Улучшено управление жизненным циклом обзоров Wiki и Review, включая очистку и пакетные операции.",
+        "Повышена надёжность Ingest больших документов и исправлены длинные имена файлов, сводки источников и диагностика тайм-аутов CLI.",
+      ],
+    },
+  },
+  {
     version: "0.6.19",
     date: "2026-09-29",
     highlights: {

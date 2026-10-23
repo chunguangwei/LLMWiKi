@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-09-28（Round 14，上游 v0.6.11 → v0.6.12+`48fd970`，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-10-23（Round 15，上游 v0.6.12+`48fd970` → v0.6.13，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.12`（Round 14 追平：跨项目后台资料监控 / 并发上限 64 / 图片资料摄取 / Ingest 中断恢复 / 校验 MCP 写入 / Deep Research 与图谱优化）|
-| **本 fork 版本** | `0.6.18`（Round 14 上游同步 v0.6.11→v0.6.12）|
+| Upstream 版本号 | `0.6.13`（Round 15 追平：MinerU 4 V1 API / 预览前进后退导航 / 移除已停止 Ingest 任务 / 自定义 Provider 请求选项扩展 / 概览与 Review 生命周期 / 大文档 Ingest 可靠性）|
+| **本 fork 版本** | `0.6.20`（Round 15 上游同步 v0.6.12→v0.6.13）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -112,6 +112,12 @@
 > - **自动合并语义核查**：fork 的 Azure 双端点修复（`llm-providers.ts` `azureV1`/`azureClassic`/`azureAuthStyle`、`provider.rs` `is_azure_v1_endpoint`/`include_model`）与搜索聚焦导航（`wiki-store.ts` `previousView`/`requestSearchFocus`）完整保留；上游重写的全项目资料监控启动块与我方 GitHub 备份调度块在 `App.tsx` 自动合并共存。
 > - **README 补齐**：外层 `README.md` 功能一览补 4 行（跨项目资料监控+并发 64 / 图片资料摄取 / Ingest 中断恢复 / 校验 MCP 写入）。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2641 ✅（185 文件，含 i18n parity）/ mcp:test 25 ✅ / cargo check ✅ 0 警告 / cargo test 450 ✅（2 ignored）。
+
+> **Round 15 同步（2026-10-23，v0.6.12+`48fd970` → v0.6.13）**：`git merge upstream/main`（HEAD `e08cfce`）。上游本轮 18 个提交、47 文件（+2267/−122）：MinerU 4 V1 API 支持、文件预览前进/后退导航、路径式 wikilink 跨平台跳转、移除已停止 Ingest 任务、后台扫描与队列开销优化、自定义 OpenAI 兼容 Provider 请求选项扩展（`extra_request_body`）+ 按模型能力适配参数（`6aea0b2`）、Wiki 索引 prompt 上下文上限、概览与 Review 生命周期完善、大文档 Ingest 输出安全边界（`e380374`，review 上限 8192→16384）、长源文件名 UTF-8 字节截断、来源摘要覆盖修复、Codex CLI 超时诊断。
+> - **6 个冲突文件**：5 个版本号类保留我方版本线并统一升 `0.6.20` > 上游 `0.6.13`；`changelog.ts` 弃上游 0.6.13/0.6.12 条目头，内容并入我方新 0.6.20 条目（含上游新增的 it/ru 译文——`ChangelogEntry.highlights` 现支持可选 it/ru，UI 缺省回退 en）。
+> - **合并后修复**：`provider.rs` 上游 3 个新测试适配 fork 的 6 参 `openai_like_body`（补 `use_completion_tokens: false`，同 Round 9/10/12 模式）；fork 的 `ingest-longsource.test.ts` review 上限断言 8192→16384 跟随上游 `e380374` 的新边界。
+> - **README 补齐**：外层 `README.md` 功能一览补「文件预览前进/后退导航」，MinerU 行扩至 4 V1 API，摄取队列行补「移除已停止任务」。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2700 ✅（186 文件）/ cargo check ✅ / cargo test 459 ✅（2 ignored）。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局

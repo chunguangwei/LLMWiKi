@@ -28,7 +28,7 @@ import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { importSourceUrls, parseImportUrls, type UrlImportResult } from "@/lib/url-source-import"
 import { listIngestedSourceIdentities } from "@/lib/ingest-cache"
-import { getQueue, type IngestTask } from "@/lib/ingest-queue"
+import { getQueue, subscribeIngestQueue, type IngestTask } from "@/lib/ingest-queue"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
@@ -122,10 +122,7 @@ export function SourcesView() {
   }, [project, dataVersion])
 
   useEffect(() => {
-    const refresh = () => setQueueSnapshot([...getQueue()])
-    refresh()
-    const interval = setInterval(refresh, 1000)
-    return () => clearInterval(interval)
+    return subscribeIngestQueue((tasks) => setQueueSnapshot([...tasks]))
   }, [project])
 
   const sourceStatuses = useMemo(() => {

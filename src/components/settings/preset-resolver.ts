@@ -48,6 +48,7 @@ export function resolveConfig(
       ? Math.max(1, Math.min(1440, Math.floor(ov.requestTimeoutMinutes)))
       : fallback.requestTimeoutMinutes
   const customHeaders = ov.customHeaders
+  const extraRequestBody = ov.extraRequestBody
   // Streaming is a per-preset preference. Never inherit it from the currently
   // active fallback preset, or a newly selected provider would silently adopt
   // the previous provider's disabled state. Missing means legacy/default on.
@@ -68,6 +69,7 @@ export function resolveConfig(
       localCliIsolation: false,
       requestTimeoutMinutes,
       customHeaders,
+      extraRequestBody,
       ...streamingConfig,
     }
   }

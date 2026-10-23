@@ -36,6 +36,16 @@ export function parseLlmHeadersText(text: string): Record<string, string> {
   return headers
 }
 
+export function parseExtraRequestBody(text: string): Record<string, unknown> | undefined {
+  const trimmed = text.trim()
+  if (!trimmed) return undefined
+  const parsed: unknown = JSON.parse(trimmed)
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Extra request body must be a JSON object")
+  }
+  return parsed as Record<string, unknown>
+}
+
 export function LlmProviderSection() {
   const { t } = useTranslation()
   const providerConfigs = useWikiStore((s) => s.providerConfigs)
@@ -387,10 +397,16 @@ function PresetRow({
   const requestTimeoutMinutes = Math.max(1, Math.min(1440, ov.requestTimeoutMinutes ?? 30))
   const streamingEnabled = ov.streamingEnabled !== false
   const [headersText, setHeadersText] = useState(() => llmHeadersToText(ov.customHeaders))
+  const [extraBodyText, setExtraBodyText] = useState(() =>
+    ov.extraRequestBody ? JSON.stringify(ov.extraRequestBody, null, 2) : "",
+  )
+  const [extraBodyError, setExtraBodyError] = useState(false)
   const isLocalCliProvider = preset.provider === "claude-code" || preset.provider === "codex-cli"
   const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
   const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily
-    || Object.keys(ov.customHeaders ?? {}).length > 0 || ov.streamingEnabled === false
+    || Object.keys(ov.customHeaders ?? {}).length > 0
+    || Object.keys(ov.extraRequestBody ?? {}).length > 0
+    || ov.streamingEnabled === false
   // Local CLI providers authenticate via their own existing login state
   // (inherited by the spawned subprocess), so no API key field is shown.
   // Ollama ditto for its local-only model.
@@ -539,6 +555,35 @@ function PresetRow({
                   )
                 })}
               </div>
+            </div>
+          )}
+          {preset.provider === "custom" && apiMode === "chat_completions" && (
+            <div className="space-y-2">
+              <Label>{t("settings.sections.llm.extraRequestBody")}</Label>
+              <textarea
+                value={extraBodyText}
+                onChange={(event) => {
+                  setExtraBodyText(event.target.value)
+                  setExtraBodyError(false)
+                }}
+                onBlur={() => {
+                  try {
+                    onChange({ extraRequestBody: parseExtraRequestBody(extraBodyText) })
+                    setExtraBodyError(false)
+                  } catch {
+                    setExtraBodyError(true)
+                  }
+                }}
+                rows={4}
+                spellCheck={false}
+                placeholder={'{\n  "enable_thinking": false\n}'}
+                className={`w-full resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring ${extraBodyError ? "border-destructive" : ""}`}
+              />
+              <p className={`text-xs ${extraBodyError ? "text-destructive" : "text-muted-foreground"}`}>
+                {t(extraBodyError
+                  ? "settings.sections.llm.extraRequestBodyInvalid"
+                  : "settings.sections.llm.extraRequestBodyHint")}
+              </p>
             </div>
           )}
 

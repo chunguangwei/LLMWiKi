@@ -4219,6 +4219,7 @@ mod tests {
             max_tokens: None,
             max_context_size: Some(8_000),
             custom_headers: Default::default(),
+            extra_request_body: Default::default(),
             streaming_enabled: None,
         };
         let fitted = fit_context_to_model(context, Some(&config));
@@ -4246,6 +4247,7 @@ mod tests {
             max_tokens: None,
             max_context_size: Some(8_000),
             custom_headers: Default::default(),
+            extra_request_body: Default::default(),
             streaming_enabled: None,
         };
 

@@ -3,6 +3,9 @@ import { getFileName, normalizePath } from "@/lib/path-utils"
 const RAW_SOURCES_PREFIX = "raw/sources/"
 const RAW_SOURCES_MARKER = "/raw/sources/"
 const MAX_SOURCE_SUMMARY_SLUG_LENGTH = 120
+// Filesystem components commonly allow 255 UTF-8 bytes; reserve three for
+// the .md extension. Keep portable existing names unchanged.
+const MAX_SOURCE_SUMMARY_SLUG_BYTES = 252
 const FALLBACK_SOURCE_PART = "source"
 
 export function sourceIdentityForPath(projectPath: string, sourcePath: string): string {
@@ -37,6 +40,30 @@ export function sourceReferenceIdentity(sourceReference: string): string {
 }
 
 export function sourceSummarySlugFromIdentity(sourceIdentity: string): string {
+  const previous = previousSourceSummarySlugFromIdentity(sourceIdentity)
+  const encoder = new TextEncoder()
+  if (encoder.encode(previous).length <= MAX_SOURCE_SUMMARY_SLUG_BYTES && !/[\uD800-\uDFFF]/u.test(previous)) {
+    return previous
+  }
+
+  const suffix = `--${stableSlugHash(sourceIdentity)}`
+  const readable = (previous.endsWith(suffix) ? previous.slice(0, -suffix.length) : previous)
+    .replace(/[\uD800-\uDFFF]/gu, "")
+  const prefixBudget = MAX_SOURCE_SUMMARY_SLUG_BYTES - encoder.encode(suffix).length
+  let prefix = ""
+  let bytes = 0
+  // Iterate code points, rather than UTF-16 units, to avoid splitting a
+  // surrogate pair at the truncation boundary.
+  for (const character of readable) {
+    const size = encoder.encode(character).length
+    if (bytes + size > prefixBudget) break
+    prefix += character
+    bytes += size
+  }
+  return `${prefix.replace(/-+$/, "") || FALLBACK_SOURCE_PART}${suffix}`
+}
+
+function previousSourceSummarySlugFromIdentity(sourceIdentity: string): string {
   const withoutExt = sourceIdentity.replace(/\.[^/.]+$/, "")
   const parts = withoutExt
     .split("/")
@@ -83,9 +110,10 @@ export function legacySourceSummarySlugFromIdentity(sourceIdentity: string): str
 
 export function sourceSummarySlugCandidatesFromIdentity(sourceIdentity: string): string[] {
   const canonical = sourceSummarySlugFromIdentity(sourceIdentity)
+  const previous = previousSourceSummarySlugFromIdentity(sourceIdentity)
   const previousReadable = previousReadableSourceSummarySlugFromIdentity(sourceIdentity)
   const legacy = legacySourceSummarySlugFromIdentity(sourceIdentity)
-  return Array.from(new Set([canonical, previousReadable, legacy]))
+  return Array.from(new Set([canonical, previous, previousReadable, legacy]))
 }
 
 function previousReadableSourceSummarySlugFromIdentity(sourceIdentity: string): string {

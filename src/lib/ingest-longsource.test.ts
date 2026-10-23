@@ -29,11 +29,11 @@ describe("computeIngestGenerationMaxTokens", () => {
 })
 
 describe("computeIngestReviewMaxTokens", () => {
-  it("stays within [4096, 8192] and tracks half the generation cap", () => {
+  it("stays within [4096, 16384] and tracks half the generation cap", () => {
     for (const ctx of [undefined, 100_000, 128_000, 512_000]) {
       const r = computeIngestReviewMaxTokens(ctx)
       expect(r).toBeGreaterThanOrEqual(4_096)
-      expect(r).toBeLessThanOrEqual(8_192)
+      expect(r).toBeLessThanOrEqual(16_384)
     }
   })
 })

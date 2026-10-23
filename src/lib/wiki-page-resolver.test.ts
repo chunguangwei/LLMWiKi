@@ -205,6 +205,18 @@ describe("resolveRelatedSlug", () => {
     )
   })
 
+  it("accepts index-style paths relative to the wiki root", () => {
+    expect(resolveRelatedSlug(INDEX, "concepts/bar", WIKI)).toBe(`${WIKI}/concepts/bar.md`)
+    expect(resolveRelatedSlug(INDEX, "entities/foo.md", WIKI)).toBe(`${WIKI}/entities/foo.md`)
+  })
+
+  it("normalizes wikilink aliases, anchors, and Windows separators", () => {
+    expect(resolveRelatedSlug(INDEX, "[[concepts/bar#Details|Read more]]", WIKI)).toBe(
+      `${WIKI}/concepts/bar.md`,
+    )
+    expect(resolveRelatedSlug(INDEX, "concepts\\bar", WIKI)).toBe(`${WIKI}/concepts/bar.md`)
+  })
+
   it("returns null when slug doesn't exist", () => {
     expect(resolveRelatedSlug(INDEX, "ghost", WIKI)).toBeNull()
   })
@@ -219,6 +231,12 @@ describe("resolveRelatedSlug", () => {
 
   it("rejects path-like refs that point outside wiki/", () => {
     expect(resolveRelatedSlug(INDEX, "raw/sources/year-2025/notes.md", WIKI)).toBeNull()
+  })
+
+  it("rejects absolute and traversal paths", () => {
+    expect(resolveRelatedSlug(INDEX, "../raw/sources/notes", WIKI)).toBeNull()
+    expect(resolveRelatedSlug(INDEX, "/wiki/concepts/bar", WIKI)).toBeNull()
+    expect(resolveRelatedSlug(INDEX, "C:\\wiki\\concepts\\bar", WIKI)).toBeNull()
   })
 
   it("resolves related slugs from the project path index", () => {

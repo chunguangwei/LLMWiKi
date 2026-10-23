@@ -5,7 +5,7 @@
   },
   "common": {
     "retry": "Riprova", "cancel": "Annulla", "ignore": "Ignora", "close": "Chiudi", "ok": "OK", "confirm": "Conferma", "notice": "Avviso",
-    "dismiss": "Nascondi", "loading": "Caricamento...", "optional": "opzionale"
+    "dismiss": "Nascondi", "remove": "Rimuovi", "loading": "Caricamento...", "optional": "opzionale"
   },
   "layout": {
     "showSidebar": "Mostra la barra laterale",
@@ -659,6 +659,9 @@
         "streamingOutputOff": "Streaming disattivo: il testo della risposta compare al termine della generazione.",
         "customHeaders": "Header personalizzati",
         "customHeadersHint": "Opzionale. Inserisci un Nome-Header: valore per riga. Content-Type e gli header configurati per la chiave API hanno la precedenza.",
+        "extraRequestBody": "Corpo richiesta aggiuntivo (JSON)",
+        "extraRequestBodyHint": "Campi opzionali per API personalizzate compatibili con OpenAI, ad esempio enable_thinking. Messaggi, modello e streaming non possono essere sovrascritti.",
+        "extraRequestBodyInvalid": "Inserisci un oggetto JSON valido prima di uscire dal campo.",
         "cliStatus": "Stato della CLI",
         "checkingCli": "Controllo…",
         "recheckCli": "Ricontrolla",
@@ -1355,6 +1358,8 @@
     }
   },
   "preview": {
+    "back": "Indietro",
+    "forward": "Avanti",
     "selectFile": "Seleziona un file da visualizzare",
     "notAvailable": "Anteprima non disponibile per questo tipo di file",
     "viewAsText": "Visualizza come testo",
@@ -1391,6 +1396,7 @@
     "cancelAll": "Annulla tutto",
     "cancelAllTitle": "Annulla tutte le attività in coda e in corso",
     "cancelAllConfirm": "Annullare tutte le {{count}} attività di elaborazione in coda o in corso? I file parziali dell'attività in corso verranno rimossi. Le attività annullate restano in coda, così puoi riavviarle.",
+    "removeSelectedConfirm": "Rimuovere definitivamente dalla coda le attività di elaborazione interrotte selezionate? Selezione: {{count}}. L\u0027operazione non può essere annullata.",
     "retryFailed": "Riavvia le interrotte",
     "retryFailedTitle": "Riavvia tutte le attività di elaborazione non riuscite e annullate",
     "selectAll": "Seleziona tutto",

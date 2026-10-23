@@ -47,6 +47,13 @@ describe("reasoning capabilities", () => {
       .toEqual({ mode: "auto" })
   })
 
+  it("supports off and maximum effort for future OpenAI model families", () => {
+    expect(resolveReasoningCapabilities(config("openai", "gpt-6-luna")).modes)
+      .toEqual(["auto", "off", "low", "medium", "high", "max"])
+    expect(resolveReasoningCapabilities(config("openai", "gpt-4.1")).modes)
+      .toEqual(["auto"])
+  })
+
   it("normalizes custom budgets to positive integer values", () => {
     const cfg = config("anthropic", "claude-sonnet-4-5")
     expect(normalizeReasoningForProvider(cfg, { mode: "custom", budgetTokens: 2048.9 }))

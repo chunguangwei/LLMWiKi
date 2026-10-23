@@ -5,7 +5,7 @@
   },
   "common": {
     "retry": "Retry", "cancel": "Cancel", "ignore": "Ignore", "close": "Close", "ok": "OK", "confirm": "Confirm", "notice": "Notice",
-    "dismiss": "Dismiss", "loading": "Loading...", "optional": "optional"
+    "dismiss": "Dismiss", "remove": "Remove", "loading": "Loading...", "optional": "optional"
   },
   "layout": { "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar" },
   "errors": { "generic": "Something went wrong" },
@@ -703,6 +703,9 @@
         "streamingOutputOff": "Streaming off: response text appears after generation completes.",
         "customHeaders": "Custom request headers",
         "customHeadersHint": "Optional. Enter one Header-Name: value per line. Content-Type and configured API-key headers take precedence.",
+        "extraRequestBody": "Extra request body (JSON)",
+        "extraRequestBodyHint": "Optional fields for custom OpenAI-compatible APIs, such as enable_thinking. Core messages, model, and streaming fields cannot be overridden.",
+        "extraRequestBodyInvalid": "Enter a valid JSON object before leaving this field.",
         "cliStatus": "CLI status",
         "checkingCli": "Checking…",
         "recheckCli": "Re-check",
@@ -1357,6 +1360,8 @@
     }
   },
   "preview": {
+    "back": "Back",
+    "forward": "Forward",
     "selectFile": "Select a file to preview",
     "notAvailable": "Preview not available for this file type",
     "viewAsText": "View as text",
@@ -1403,6 +1408,7 @@
     "cancelAll": "Cancel all",
     "cancelAllTitle": "Cancel all queued and in-progress tasks",
     "cancelAllConfirm": "Cancel all {{count}} queued/processing ingest tasks? Partial files from the in-progress task will be removed. Cancelled tasks stay in the queue so you can restart them.",
+    "removeSelectedConfirm": "Permanently remove the selected stopped ingest tasks from the queue? Selected: {{count}}. Removal cannot be undone.",
     "retryFailed": "Restart stopped",
     "retryFailedTitle": "Restart all failed and cancelled ingest tasks",
     "selectAll": "Select all",

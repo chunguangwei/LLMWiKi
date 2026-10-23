@@ -605,6 +605,59 @@ describe("reasoning controls", () => {
     expect(body.reasoning).toBeUndefined()
   })
 
+  it("maps the official DeepSeek Flash model id to thinking disabled", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "deepseek-flash",
+      customEndpoint: "https://api.deepseek.com/v1",
+      apiMode: "chat_completions",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+    expect(body.thinking).toEqual({ type: "disabled" })
+  })
+
+  it("adapts future OpenAI model ids and supports none/xhigh effort", () => {
+    const cfg = mkConfig({ provider: "openai", model: "gpt-6-luna" })
+    const off = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 500, temperature: 0.1, reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+    expect(off.max_tokens).toBeUndefined()
+    expect(off.max_completion_tokens).toBe(500)
+    expect(off.temperature).toBeUndefined()
+    expect(off.reasoning_effort).toBe("none")
+
+    const max = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "max" } },
+    ) as Record<string, unknown>
+    expect(max.reasoning_effort).toBe("xhigh")
+  })
+
+  it("merges custom request fields without allowing core body overrides", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "qwen3.8-flash",
+      customEndpoint: "https://dashscope.example/v1",
+      extraRequestBody: {
+        enable_thinking: false,
+        model: "hijacked",
+        messages: [],
+        stream: false,
+      },
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+    ) as Record<string, unknown>
+    expect(body.enable_thinking).toBe(false)
+    expect(body.model).toBe("qwen3.8-flash")
+    expect(body.messages).toEqual([{ role: "user", content: "hi" }])
+    expect(body.stream).toBe(true)
+  })
+
   it("maps DeepSeek V4 high reasoning to thinking enabled plus reasoning_effort", () => {
     const cfg = mkConfig({
       provider: "custom",

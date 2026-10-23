@@ -24,7 +24,11 @@ pub fn is_allowed_browser_origin(origin: &str) -> bool {
 
 pub fn local_cors_headers(origin: Option<&str>, allow_headers: &str) -> Vec<Header> {
     let mut headers = vec![
-        Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS").unwrap(),
+        Header::from_bytes(
+            "Access-Control-Allow-Methods",
+            "GET, POST, PATCH, DELETE, OPTIONS",
+        )
+        .unwrap(),
         Header::from_bytes("Access-Control-Allow-Headers", allow_headers).unwrap(),
         Header::from_bytes("Content-Type", "application/json").unwrap(),
     ];
@@ -89,7 +93,7 @@ mod tests {
         );
         assert_eq!(
             header_value(&allowed, "Access-Control-Allow-Methods").as_deref(),
-            Some("GET, POST, PATCH, OPTIONS")
+            Some("GET, POST, PATCH, DELETE, OPTIONS")
         );
         assert_eq!(
             header_value(&allowed, "Access-Control-Allow-Headers").as_deref(),

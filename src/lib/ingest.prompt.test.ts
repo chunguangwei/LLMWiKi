@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest"
 import {
   buildReviewSuggestionPrompt,
   buildAnalysisPrompt,
+  boundWikiIndexForPrompt,
   buildChunkAnalysisSystemPrompt,
   buildGenerationPrompt,
   buildPageMergeSystemPrompt,
@@ -11,6 +12,7 @@ import {
   computeIngestSourceBudget,
   formatIngestWarningLogEntry,
   splitSourceIntoSemanticChunks,
+  updateBoundedOverviewRecentSection,
 } from "./ingest"
 import { useWikiStore } from "@/stores/wiki-store"
 
@@ -50,6 +52,8 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("## Key Concepts")
     expect(prompt).toContain("## Main Arguments & Findings")
     expect(prompt).toContain("## Recommendations")
+    expect(prompt).toContain("Key Entities: at most 25 candidates")
+    expect(prompt).toContain("Total response: at most 16,000 characters")
   })
 
   it("requires claims to stay attached to their named subject", () => {
@@ -88,6 +92,34 @@ describe("buildAnalysisPrompt language directive", () => {
   it("does not invent schema content not present in the source", () => {
     const prompt = buildAnalysisPrompt("", "", "", "| goal | wiki/goals/ | x |")
     expect(prompt).toContain("never invent")
+  })
+})
+
+describe("wiki index prompt budget", () => {
+  it("keeps small indexes unchanged", () => {
+    expect(boundWikiIndexForPrompt("# Index\n- [[a]]", 1_000)).toBe("# Index\n- [[a]]")
+  })
+
+  it("keeps the beginning and recent tail while removing the middle", () => {
+    const index = ["# Index", ...Array.from({ length: 400 }, (_, i) => `- [[page-${i}]]`)].join("\n")
+    const bounded = boundWikiIndexForPrompt(index, 1_000)
+    expect(bounded.length).toBeLessThanOrEqual(1_000)
+    expect(bounded).toContain("# Index")
+    expect(bounded).toContain("[[page-399]]")
+    expect(bounded).not.toContain("[[page-200]]")
+    expect(bounded).toContain("middle of wiki index omitted")
+  })
+
+  it("preserves both ends of an abnormal single-line index", () => {
+    const bounded = boundWikiIndexForPrompt(`START-${"x".repeat(2_000)}-END`, 1_000)
+    expect(bounded).toContain("START-")
+    expect(bounded).toContain("-END")
+  })
+
+  it("bounds index context in analysis and generation prompts", () => {
+    const index = "# Index\n" + "entry\n".repeat(20_000)
+    expect(buildAnalysisPrompt("", index, "source").length).toBeLessThan(index.length)
+    expect(buildGenerationPrompt("", "", index, "source.md").length).toBeLessThan(index.length)
   })
 })
 
@@ -184,6 +216,7 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("accumulate recurrence across chunks")
     expect(prompt).toContain("supporting chunks")
     expect(prompt).toContain("Page-worthy: yes")
+    expect(prompt).toContain("each section must stay within 60 lines")
   })
 
   it("makes project schema routing authoritative over default entity and concept folders", () => {
@@ -285,11 +318,11 @@ describe("long-source ingest planning", () => {
     expect(computeIngestGenerationMaxTokens(128_000)).toBe(16_384)
     expect(computeIngestGenerationMaxTokens(256_000)).toBe(24_576)
     expect(computeIngestGenerationMaxTokens(1_000_000)).toBe(32_768)
-    expect(computeIngestAnalysisMaxTokens(64_000)).toBe(4_096)
-    expect(computeIngestAnalysisMaxTokens(128_000)).toBe(4_800)
-    expect(computeIngestAnalysisMaxTokens(256_000)).toBe(8_192)
-    expect(computeIngestAnalysisMaxTokens(1_000_000)).toBe(8_192)
-    expect(computeIngestReviewMaxTokens(1_000_000)).toBe(8_192)
+    expect(computeIngestAnalysisMaxTokens(64_000)).toBe(4_800)
+    expect(computeIngestAnalysisMaxTokens(128_000)).toBe(9_600)
+    expect(computeIngestAnalysisMaxTokens(256_000)).toBe(19_200)
+    expect(computeIngestAnalysisMaxTokens(1_000_000)).toBe(32_768)
+    expect(computeIngestReviewMaxTokens(1_000_000)).toBe(16_384)
   })
 
   it("scales source budget from the configured context window instead of a fixed 50k cap", () => {
@@ -323,5 +356,23 @@ describe("long-source ingest planning", () => {
     expect(chunks.some((chunk) => chunk.headingPath.includes("Section Two"))).toBe(true)
     expect(chunks[1].overlapBefore.length).toBeGreaterThan(0)
     expect(chunks[1].main.startsWith(chunks[0].main.slice(-200))).toBe(false)
+  })
+})
+
+describe("overview maintenance", () => {
+  it("adds a bounded managed section without replacing user content", () => {
+    const original = "# Overview\n\nUser-maintained summary.\n"
+    const updated = updateBoundedOverviewRecentSection(original, ["- [[entities/a]] — A"])
+    expect(updated).toContain("User-maintained summary.")
+    expect(updated).toContain("<!-- llm-wiki:recent-start -->")
+    expect(updated).toContain("- [[entities/a]] — A")
+  })
+
+  it("updates the managed section idempotently and limits it to 50 entries", () => {
+    const additions = Array.from({ length: 60 }, (_, index) => `- [[p-${index}]] — P ${index}`)
+    const once = updateBoundedOverviewRecentSection("# Overview\n", additions)
+    const twice = updateBoundedOverviewRecentSection(once, [additions[0]])
+    expect(twice).toBe(once)
+    expect(twice.match(/^- \[\[/gm)).toHaveLength(50)
   })
 })
