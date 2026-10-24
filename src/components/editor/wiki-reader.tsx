@@ -12,6 +12,7 @@ import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { useWikiStore } from "@/stores/wiki-store"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
+import { openUrl } from "@tauri-apps/plugin-opener"
 
 interface WikiReaderProps {
   body: string
@@ -88,6 +89,11 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
   }, [filePath])
 
   function handleAnchorClick(e: React.MouseEvent<HTMLAnchorElement>, href: string) {
+    if (/^https?:\/\//i.test(href)) {
+      e.preventDefault()
+      void openUrl(href).catch((error) => console.error("Failed to open external link:", error))
+      return
+    }
     if (!href.startsWith("#")) return
     e.preventDefault()
     if (!wikiRoot) return
@@ -104,7 +110,7 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
 
   return (
     <div
-      className="prose prose-invert min-w-0 max-w-none"
+      className="markdown-body wiki-markdown min-w-0"
       dir={direction}
       lang={htmlLang}
       style={{ textAlign: "start" }}
@@ -118,48 +124,20 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
           blockquote: ({ node, children, ...props }) => <blockquote {...sourceAttrs(node)} {...props}>{children}</blockquote>,
           a: ({ href, children, ...props }) => {
             const h = typeof href === "string" ? href : ""
-            const isWikilink = h.startsWith("#")
             return (
-              <a
-                href={h || undefined}
-                onClick={(e) => isWikilink && handleAnchorClick(e, h)}
-                className={
-                  isWikilink
-                    ? "cursor-pointer text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
-                    : "text-primary underline underline-offset-2"
-                }
-                {...props}
-              >
+              <a href={h || undefined} onClick={(e) => handleAnchorClick(e, h)} {...props}>
                 {children}
               </a>
             )
           },
           h1: ({ node, children, ...props }) => (
-            <h1
-              {...sourceAttrs(node)}
-              className="mb-4 mt-0 border-b border-border/60 pb-3 text-3xl font-semibold leading-tight tracking-normal text-foreground"
-              {...props}
-            >
-              {children}
-            </h1>
+            <h1 {...sourceAttrs(node)} {...props}>{children}</h1>
           ),
           h2: ({ node, children, ...props }) => (
-            <h2
-              {...sourceAttrs(node)}
-              className="mb-3 mt-8 border-b border-border/40 pb-2 text-2xl font-semibold leading-tight tracking-normal text-foreground"
-              {...props}
-            >
-              {children}
-            </h2>
+            <h2 {...sourceAttrs(node)} {...props}>{children}</h2>
           ),
           h3: ({ node, children, ...props }) => (
-            <h3
-              {...sourceAttrs(node)}
-              className="mb-2 mt-6 text-xl font-semibold leading-snug tracking-normal text-foreground"
-              {...props}
-            >
-              {children}
-            </h3>
+            <h3 {...sourceAttrs(node)} {...props}>{children}</h3>
           ),
           img: ({ src, alt, ...props }) => (
             <img

@@ -3,6 +3,7 @@ mod api_server;
 mod clip_server;
 mod commands;
 mod cors;
+mod markdown_save_exit;
 mod panic_guard;
 mod proxy;
 mod server_bind;
@@ -680,6 +681,7 @@ pub fn run() {
             // from the persisted generalConfig on startup.
             app.manage(CloseBehaviorState(Mutex::new("ask".to_string())));
             app.manage(TrayAvailabilityState(Mutex::new(false)));
+            app.manage(markdown_save_exit::MarkdownSaveExitState::default());
             // Start the API before optional desktop integrations so the
             // backend is reachable if tray setup or another integration fails.
             clip_server::start_clip_server(app.handle().clone());
@@ -797,6 +799,8 @@ pub fn run() {
             commands::github_backup::github_clear_token,
             set_proxy_env,
             set_close_behavior,
+            markdown_save_exit::finish_markdown_save_exit,
+            markdown_save_exit::cancel_markdown_save_exit,
         ])
         .on_window_event(|window, event| {
             // Close-to-tray, ported from upstream 0e292ee. The fork
@@ -804,7 +808,7 @@ pub fn run() {
             // others: confirm-then-quit). That branching is now driven
             // by the user's `closeBehavior` preference cached in
             // CloseBehaviorState, identical across platforms:
-            //   - "exit":     destroy the window and quit the process.
+            //   - "exit":     flush Markdown drafts, then quit the process.
             //   - "minimize": hide to the tray, keep running.
             //   - "ask":      confirm; OK quits, Cancel hides to tray.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -815,8 +819,7 @@ pub fn run() {
                 match behavior.as_str() {
                     "exit" => {
                         tauri::async_runtime::spawn(async move {
-                            let _ = win.destroy();
-                            app.exit(0);
+                            markdown_save_exit::request_exit(&app);
                         });
                     }
                     "minimize" => {
@@ -843,8 +846,7 @@ pub fn run() {
                                 .blocking_show();
 
                             if confirmed {
-                                let _ = win.destroy();
-                                app.exit(0);
+                                markdown_save_exit::request_exit(&app);
                             } else {
                                 let _ = win.hide();
                             }
@@ -856,13 +858,19 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                if !markdown_save_exit::exit_allowed(app) {
+                    api.prevent_exit();
+                    markdown_save_exit::request_exit(app);
+                }
+            }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
                 has_visible_windows,
                 ..
-            } = event
+            } = &event
             {
-                if !has_visible_windows {
+                if !*has_visible_windows {
                     use tauri::Manager;
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.show();

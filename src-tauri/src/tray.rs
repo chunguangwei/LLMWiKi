@@ -23,12 +23,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main_window(app),
-            "quit" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.destroy();
-                }
-                app.exit(0);
-            }
+            "quit" => crate::markdown_save_exit::request_exit(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

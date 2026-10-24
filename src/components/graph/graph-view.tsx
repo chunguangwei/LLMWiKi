@@ -10,9 +10,12 @@ import { ErrorBoundary } from "@/components/error-boundary"
 import { useResearchStore } from "@/stores/research-store"
 import { Button } from "@/components/ui/button"
 import { useWikiStore, type GraphColorMode } from "@/stores/wiki-store"
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile } from "@/commands/fs"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
+import { MarkdownSaveStatusIndicator } from "@/components/editor/markdown-save-status"
+import { useMarkdownAutoSave } from "@/hooks/use-markdown-auto-save"
+import { markdownFileSaver } from "@/lib/markdown-file-saver"
 import { buildWikiGraph, type GraphNode, type GraphEdge, type CommunityInfo } from "@/lib/wiki-graph"
 import { findSurprisingConnections, detectKnowledgeGaps, researchSeedForKnowledgeGap, type SurprisingConnection, type KnowledgeGap } from "@/lib/graph-insights"
 import { queueResearch } from "@/lib/deep-research"
@@ -842,7 +845,10 @@ export function GraphView() {
       const node = nodes.find((n) => n.id === nodeId)
       if (!node) return
       try {
-        const content = await readFile(node.path)
+        await markdownFileSaver.waitFor(node.path)
+        const diskContents = await readFile(node.path)
+        const snapshot = markdownFileSaver.getSnapshot(node.path)
+        const content = snapshot?.dirty ? snapshot.contents : diskContents
         setGraphPreview({
           path: node.path,
           title: node.label || getFileName(node.path),
@@ -1705,7 +1711,7 @@ export function GraphView() {
           <GraphPreviewPanel
             preview={graphPreview}
             onClose={() => setGraphPreview(null)}
-            onContentChange={(content) => setGraphPreview((prev) => prev ? { ...prev, content } : prev)}
+            onContentChange={(path, content) => setGraphPreview((prev) => prev?.path === path ? { ...prev, content } : prev)}
           />
         )}
       </div>
@@ -1809,59 +1815,43 @@ function GraphPreviewPanel({
 }: {
   preview: GraphPreview
   onClose: () => void
-  onContentChange: (content: string) => void
+  onContentChange: (path: string, content: string) => void
 }) {
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastSavedRef = useRef(preview.content)
+  const { t } = useTranslation()
   const category = getFileCategory(preview.path)
-
-  useEffect(() => {
-    lastSavedRef.current = preview.content
-  }, [preview.path, preview.content])
-
-  useEffect(() => {
-    return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    }
-  }, [])
-
-  const writeNow = useCallback((markdown: string) => {
-    writeFile(preview.path, markdown)
-      .then(() => {
-        lastSavedRef.current = markdown
-        onContentChange(markdown)
-      })
-      .catch((err) => console.error("Failed to save graph preview:", err))
-  }, [onContentChange, preview.path])
-
+  const save = useMarkdownAutoSave(preview.path, onContentChange)
   const handleSave = useCallback((markdown: string, options?: { immediate?: boolean }) => {
-    if (markdown === lastSavedRef.current) return
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    if (options?.immediate) {
-      onContentChange(markdown)
-      writeNow(markdown)
-      return
-    }
-    saveTimerRef.current = setTimeout(() => {
-      writeNow(markdown)
-    }, 1000)
-  }, [onContentChange, writeNow])
+    onContentChange(preview.path, markdown)
+    return save.handleSave(markdown, options)
+  }, [onContentChange, preview.path, save.handleSave])
+
+  useEffect(() => {
+    const restored = save.markLoaded(preview.path, preview.content)
+    if (restored !== preview.content) onContentChange(preview.path, restored)
+  }, [preview.path, save.markLoaded])
 
   return (
     <div className="flex w-[420px] min-w-[320px] max-w-[50vw] shrink-0 flex-col border-l bg-background">
-      <div className="flex items-center justify-between border-b px-3 py-1.5">
-        <span className="truncate text-xs text-muted-foreground" title={preview.path}>
+      <div className="flex min-h-10 items-center justify-between gap-2 border-b px-3 py-1.5">
+        <span className="truncate text-xs font-medium text-foreground/75" title={preview.path}>
           {preview.title}
         </span>
-        <button
-          type="button"
-          onClick={onClose}
-          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {category === "markdown" && (
+            <MarkdownSaveStatusIndicator status={save.status} error={save.error} onRetry={save.retry} />
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={t("common.close")}
+            title={t("common.close")}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
-      <div className="min-w-0 flex-1 overflow-auto">
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         {category === "markdown" ? (
           <WikiEditor
             key={preview.path}

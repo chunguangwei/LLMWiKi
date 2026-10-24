@@ -93,7 +93,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
   }
 
   return (
-    <div className="not-prose mb-5 overflow-hidden rounded-xl border border-border/60 bg-gradient-to-br from-muted/40 to-muted/10 shadow-sm">
+    <div className="mb-5 overflow-hidden rounded-lg border border-border/60 bg-muted/20">
       {/* Identity strip ─────────────────────────────────────────── */}
       <div className="flex items-start gap-3 px-4 pt-4">
         <div

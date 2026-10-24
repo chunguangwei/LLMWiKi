@@ -1,12 +1,23 @@
-import { useEffect, useCallback, useRef } from "react"
-import { ArrowLeft, ArrowRight, X } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { AlertCircle, ArrowLeft, ArrowRight, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useWikiStore } from "@/stores/wiki-store"
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile } from "@/commands/fs"
 import { getFileCategory, isBinary, isExtractedTextPreviewFile } from "@/lib/file-types"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
+import { FindInPage } from "@/components/editor/find-in-page"
+import { MarkdownSaveStatusIndicator } from "@/components/editor/markdown-save-status"
+import { Button } from "@/components/ui/button"
+import { useMarkdownAutoSave } from "@/hooks/use-markdown-auto-save"
+import { markdownFileSaver } from "@/lib/markdown-file-saver"
 import { getFileName } from "@/lib/path-utils"
+
+type LoadState = {
+  path: string | null
+  status: "idle" | "loading" | "loaded" | "error"
+  error: string | null
+}
 
 export function PreviewPanel() {
   const { t } = useTranslation()
@@ -20,93 +31,67 @@ export function PreviewPanel() {
   const previewForwardStack = useWikiStore((s) => s.previewForwardStack)
   const navigatePreviewBack = useWikiStore((s) => s.navigatePreviewBack)
   const navigatePreviewForward = useWikiStore((s) => s.navigatePreviewForward)
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Snapshot of what was most recently loaded from disk. Milkdown re-emits
-  // `markdownUpdated` on initial parse (before the user types anything),
-  // which used to trigger an auto-save that could write back a placeholder
-  // marker if read_file had returned one for a missing/locked file. We
-  // skip save when the incoming markdown equals the last-loaded content.
-  const lastLoadedRef = useRef<string>("")
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [loadState, setLoadState] = useState<LoadState>({ path: null, status: "idle", error: null })
+  const [reloadToken, setReloadToken] = useState(0)
+  const save = useMarkdownAutoSave(selectedFile, (path, contents) => {
+    if (useWikiStore.getState().selectedFile === path) setFileContent(contents)
+  })
+  const handleSave = useCallback((markdown: string, options?: { immediate?: boolean }) => {
+    if (useWikiStore.getState().selectedFile === selectedFile) setFileContent(markdown)
+    return save.handleSave(markdown, options)
+  }, [selectedFile, setFileContent, save.handleSave])
 
   useEffect(() => {
     let cancelled = false
-    if (!selectedFile) {
+    const path = selectedFile
+    if (!path) {
       setFileContent("")
-      lastLoadedRef.current = ""
-      return
-    }
-    if (previewContentPath === selectedFile) {
-      lastLoadedRef.current = fileContent
-      return
-    }
-    if (externalPreview?.path === selectedFile) {
-      lastLoadedRef.current = fileContent
+      setLoadState({ path: null, status: "idle", error: null })
       return
     }
 
-    const category = getFileCategory(selectedFile)
+    const restore = (diskContents: string, cached = false) => {
+      const restored = save.markLoaded(path, diskContents, { cached })
+      if (cancelled) return
+      setFileContent(restored)
+      setLoadState({ path, status: "loaded", error: null })
+    }
 
-    if (isBinary(category) && !isExtractedTextPreviewFile(selectedFile)) {
+    if (externalPreview?.path === path) {
+      restore(fileContent)
+      return
+    }
+
+    const cached = previewContentPath === path
+    const category = getFileCategory(path)
+    if (!cached && isBinary(category) && !isExtractedTextPreviewFile(path)) {
       setFileContent("")
-      lastLoadedRef.current = ""
+      setLoadState({ path, status: "loaded", error: null })
       return
     }
 
-    readFile(selectedFile)
-      .then((content) => {
+    setLoadState({ path, status: "loading", error: null })
+    void (async () => {
+      try {
+        await markdownFileSaver.waitFor(path)
+        const diskContents = cached ? fileContent : await readFile(path)
+        if (!cancelled) restore(diskContents, cached)
+      } catch (error) {
         if (cancelled) return
-        lastLoadedRef.current = content
-        setFileContent(content)
-      })
-      .catch((err) => {
-        if (cancelled) return
-        lastLoadedRef.current = ""
-        setFileContent(`Error loading file: ${err}`)
-      })
+        setFileContent("")
+        setLoadState({ path, status: "error", error: String(error) })
+      }
+    })()
     return () => {
       cancelled = true
     }
-  }, [selectedFile, previewContentPath, externalPreview, setFileContent])
-
-  const writeNow = useCallback((path: string, markdown: string, syncStore = false) => {
-    writeFile(path, markdown)
-      .then(() => {
-        lastLoadedRef.current = markdown
-        if (syncStore) setFileContent(markdown)
-      })
-      .catch((err) => console.error("Failed to save:", err))
-  }, [setFileContent])
-
-  const handleSave = useCallback(
-    (markdown: string, options?: { immediate?: boolean }) => {
-      if (!selectedFile) return
-      // Ignore no-op saves from the editor's initial re-emit. Only write
-      // when the user has actually changed the content relative to the
-      // last disk read.
-      if (markdown === lastLoadedRef.current) return
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-      if (options?.immediate) {
-        setFileContent(markdown)
-        writeNow(selectedFile, markdown, true)
-        return
-      }
-      saveTimerRef.current = setTimeout(() => {
-        writeNow(selectedFile, markdown, true)
-      }, 1000)
-    },
-    [selectedFile, setFileContent, writeNow]
-  )
-
-  useEffect(() => {
-    return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    }
-  }, [])
+  }, [selectedFile, previewContentPath, externalPreview, reloadToken, save.markLoaded, setFileContent])
 
   if (!selectedFile) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Select a file to preview
+        {t("preview.selectFile")}
       </div>
     )
   }
@@ -115,45 +100,79 @@ export function PreviewPanel() {
   const fileName = externalPreview?.path === selectedFile
     ? externalPreview.title
     : getFileName(selectedFile)
+  const loading = loadState.path !== selectedFile || loadState.status === "loading"
+  const loadError = loadState.path === selectedFile && loadState.status === "error"
+    ? loadState.error
+    : null
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b px-3 py-1.5">
+      <div className="flex min-h-10 items-center justify-between gap-2 border-b bg-background px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-1">
-          <button type="button" onClick={navigatePreviewBack} disabled={previewBackStack.length === 0} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent disabled:opacity-30" title={t("preview.back")} aria-label={t("preview.back")}>
+          <button type="button" onClick={navigatePreviewBack} disabled={previewBackStack.length === 0} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-30" title={t("preview.back")} aria-label={t("preview.back")}>
             <ArrowLeft className="h-3.5 w-3.5" />
           </button>
-          <button type="button" onClick={navigatePreviewForward} disabled={previewForwardStack.length === 0} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent disabled:opacity-30" title={t("preview.forward")} aria-label={t("preview.forward")}>
+          <button type="button" onClick={navigatePreviewForward} disabled={previewForwardStack.length === 0} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-30" title={t("preview.forward")} aria-label={t("preview.forward")}>
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
-          <span className="truncate text-xs text-muted-foreground" title={selectedFile}>{fileName}</span>
+          <span className="truncate text-xs font-medium text-foreground/75" title={selectedFile}>{fileName}</span>
         </div>
-        <button onClick={closePreview} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent" title={t("common.close")} aria-label={t("common.close")}>
-          <X className="h-3.5 w-3.5" />
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {category === "markdown" && !loading && !loadError && (
+            <MarkdownSaveStatusIndicator status={save.status} error={save.error} onRetry={save.retry} />
+          )}
+          <button type="button" onClick={closePreview} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={t("common.close")} aria-label={t("common.close")}>
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
-      <div className="flex-1 min-w-0 overflow-auto">
-        {externalPreview?.path === selectedFile ? (
-          <ExternalReferencePreview
-            source={externalPreview.source}
-            title={externalPreview.title}
-            path={externalPreview.url}
-            snippet={externalPreview.snippet || fileContent}
-          />
-        ) : category === "markdown" ? (
-          <WikiEditor
-            key={selectedFile}
-            content={fileContent}
-            onSave={handleSave}
-            filePath={selectedFile}
-          />
-        ) : (
-          <FilePreview
-            key={selectedFile}
-            filePath={selectedFile}
-            textContent={fileContent}
-          />
-        )}
+      <div className="relative min-h-0 flex-1">
+        {!loading && !loadError && <FindInPage containerRef={contentRef} resetKey={selectedFile} />}
+        <div ref={contentRef} className="h-full min-w-0 overflow-hidden">
+          {loading ? (
+            <div className="mx-auto w-full max-w-3xl p-6" role="status">
+              <span className="sr-only">{t("preview.loadingText")}</span>
+              <div className="animate-pulse space-y-5" aria-hidden="true">
+                <div className="h-8 w-2/5 rounded-md bg-muted" />
+                <div className="h-3 w-full rounded bg-muted/80" />
+                <div className="h-3 w-11/12 rounded bg-muted/80" />
+                <div className="h-3 w-4/5 rounded bg-muted/80" />
+                <div className="h-40 w-full rounded-lg bg-muted/60" />
+              </div>
+            </div>
+          ) : loadError ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center" role="alert">
+              <AlertCircle className="h-7 w-7 text-destructive" />
+              <div className="space-y-1">
+                <p className="text-sm font-medium">{t("preview.loadFailed", { defaultValue: "Could not load this file" })}</p>
+                <p className="max-w-lg break-words text-xs leading-5 text-muted-foreground">{loadError}</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => setReloadToken((value) => value + 1)}>
+                {t("common.retry")}
+              </Button>
+            </div>
+          ) : externalPreview?.path === selectedFile ? (
+            <ExternalReferencePreview
+              source={externalPreview.source}
+              title={externalPreview.title}
+              path={externalPreview.url}
+              snippet={externalPreview.snippet || fileContent}
+            />
+          ) : category === "markdown" ? (
+            <WikiEditor
+              key={selectedFile}
+              content={fileContent}
+              onSave={handleSave}
+              filePath={selectedFile}
+            />
+          ) : (
+            <FilePreview
+              key={selectedFile}
+              filePath={selectedFile}
+              textContent={fileContent}
+            />
+          )}
+        </div>
       </div>
     </div>
   )

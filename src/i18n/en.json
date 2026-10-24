@@ -7,7 +7,7 @@
     "retry": "Retry", "cancel": "Cancel", "ignore": "Ignore", "close": "Close", "ok": "OK", "confirm": "Confirm", "notice": "Notice",
     "dismiss": "Dismiss", "remove": "Remove", "loading": "Loading...", "optional": "optional"
   },
-  "layout": { "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar" },
+  "layout": { "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar", "resizeLeftPanel": "Resize left panel", "resizeResearchPanel": "Resize research panel" },
   "errors": { "generic": "Something went wrong" },
   "mermaid": {
     "renderFailed": "Mermaid diagram could not be rendered",
@@ -131,8 +131,11 @@
       "applyFailed": "The selected text could not be updated.",
       "sourceChanged": "The file changed after this text was selected. Select the text again before applying the edit.",
       "referenceFailed": "The referenced page could not be opened.",
-      "emptyResponse": "The model returned no answer. Please try again."
+      "emptyResponse": "The model returned no answer. Please try again.",
+      "saveFailed": "The latest draft could not be saved. Retry before continuing."
     },
+    "saveExitTitle": "Some changes could not be saved",
+    "saveExitMessage": "The app will stay open so you can retry saving. Your drafts have not been discarded.\n\n{{details}}",
     "pageLinks": {
       "button": "Links",
       "title": "Page links",
@@ -476,6 +479,7 @@
     "placeholderWithShortcut": "Search wiki pages... (Enter to search)",
     "searching": "Searching...",
     "pressEnter": "Press Enter to search",
+    "failed": "Search failed. Please try again.",
     "pageCount": "{{count}} page",
     "pageCount_other": "{{count}} pages",
     "imageMatchCount": "{{count}} image match",
@@ -1380,7 +1384,12 @@
     "pdfPage": "Page",
     "pdfLoading": "Loading PDF...",
     "pdfLoadError": "The PDF could not be rendered. You can retry or open it with the system app.",
-    "pdfTooLarge": "This PDF is too large for the in-app preview. Open it with the system app."
+    "pdfTooLarge": "This PDF is too large for the in-app preview. Open it with the system app.",
+    "loadFailed": "Could not load this file",
+    "unsaved": "Unsaved",
+    "saving": "Saving...",
+    "saved": "Saved",
+    "saveFailed": "Save failed. Retry."
   },
   "find": {
     "placeholder": "Find in page",

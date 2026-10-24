@@ -8,6 +8,7 @@ import {
   readFile,
   writeFile,
 } from "@/commands/fs"
+import { markdownFileSaver } from "@/lib/markdown-file-saver"
 import type { WikiProject, FileNode } from "@/types/wiki"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { enqueueBatch } from "@/lib/ingest-queue"
@@ -483,9 +484,13 @@ export async function deleteSourceFiles(
     sourceInfos.map((info) => sourceReferenceIdentity(info.identity).toLowerCase()),
   )
 
-  if (!options.fileAlreadyDeleted) {
-    for (const info of sourceInfos) {
-      await deleteFile(info.source)
+  for (const info of sourceInfos) {
+    const invalidated = await markdownFileSaver.invalidate(info.source)
+    try {
+      if (!options.fileAlreadyDeleted) await deleteFile(info.source)
+    } catch (error) {
+      markdownFileSaver.restoreInvalidated(info.source, invalidated)
+      throw error
     }
   }
 
@@ -583,6 +588,7 @@ export async function deleteSourceFolder(
   options: { folderAlreadyDeleted?: boolean } = {},
 ): Promise<DeleteSourceFolderResult> {
   const deletedWikiPaths: string[] = []
+  await markdownFileSaver.invalidatePrefix(folder.path)
   const files = collectAllFilesIncludingDot(folder).map((file) => file.path)
   if (files.length > 0) {
     const result = await deleteSourceFiles(projectPath, files, {

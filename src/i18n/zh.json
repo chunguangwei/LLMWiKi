@@ -7,7 +7,7 @@
     "retry": "重试", "cancel": "取消", "ignore": "忽略", "close": "关闭", "ok": "确定", "confirm": "确认", "notice": "提示",
     "dismiss": "关闭", "remove": "移除", "loading": "加载中……", "optional": "可选"
   },
-  "layout": { "showSidebar": "展开侧栏", "hideSidebar": "收起侧栏" },
+  "layout": { "showSidebar": "展开侧栏", "hideSidebar": "收起侧栏", "resizeLeftPanel": "调整左侧面板宽度", "resizeResearchPanel": "调整研究面板宽度" },
   "errors": { "generic": "出现错误" },
   "mermaid": {
     "renderFailed": "无法渲染 Mermaid 图表",
@@ -131,8 +131,11 @@
       "applyFailed": "无法更新选中的文本。",
       "sourceChanged": "选中文本后文件已经发生变化。请重新选择文本，再应用修改。",
       "referenceFailed": "无法打开引用页面。",
-      "emptyResponse": "模型没有返回回答，请重试。"
+      "emptyResponse": "模型没有返回回答，请重试。",
+      "saveFailed": "无法保存最新草稿，请重试后再继续。"
     },
+    "saveExitTitle": "部分修改尚未保存",
+    "saveExitMessage": "应用将保持打开，你可以修复问题后重试保存。草稿尚未丢弃。\n\n{{details}}",
     "pageLinks": {
       "button": "链接",
       "title": "页面链接",
@@ -476,6 +479,7 @@
     "placeholderWithShortcut": "搜索 Wiki 页面……（按 Enter 搜索）",
     "searching": "正在搜索……",
     "pressEnter": "按 Enter 开始搜索",
+    "failed": "搜索失败，请重试。",
     "pageCount": "{{count}} 个页面",
     "pageCount_other": "{{count}} 个页面",
     "imageMatchCount": "{{count}} 个图片匹配",
@@ -1380,7 +1384,12 @@
     "pdfPage": "页码",
     "pdfLoading": "正在加载 PDF...",
     "pdfLoadError": "无法渲染此 PDF。你可以重试或使用系统应用打开。",
-    "pdfTooLarge": "此 PDF 文件过大，无法在应用内预览。请使用系统应用打开。"
+    "pdfTooLarge": "此 PDF 文件过大，无法在应用内预览。请使用系统应用打开。",
+    "loadFailed": "无法读取此文件",
+    "unsaved": "未保存",
+    "saving": "保存中...",
+    "saved": "已保存",
+    "saveFailed": "保存失败，点击重试"
   },
   "find": {
     "placeholder": "在本页查找",

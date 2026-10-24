@@ -20,6 +20,7 @@
  * next file in a batch, or surface to the user via toast).
  */
 import { deleteFile, listDirectory, readFile, writeFile } from "@/commands/fs"
+import { markdownFileSaver } from "@/lib/markdown-file-saver"
 import { getFileStem, normalizePath } from "@/lib/path-utils"
 import { removePageEmbedding, wikiPageIdFromPath } from "@/lib/embedding"
 import {
@@ -71,7 +72,13 @@ export async function cascadeDeleteWikiPage(
   projectPath: string,
   pagePath: string,
 ): Promise<void> {
-  await deleteFile(pagePath)
+  const invalidated = await markdownFileSaver.invalidate(pagePath)
+  try {
+    await deleteFile(pagePath)
+  } catch (error) {
+    markdownFileSaver.restoreInvalidated(pagePath, invalidated)
+    throw error
+  }
   const slug = getFileStem(pagePath)
   const pageId = wikiPageIdFromPath(projectPath, pagePath)
   if (pageId.length > 0) {
@@ -238,6 +245,7 @@ export async function cascadeDeleteWikiPagesWithRefs(
   if (infos.length === 0) return result
 
   // 3. Sweep surviving wiki/*.md.
+  await markdownFileSaver.waitForPrefix(`${pp}/wiki/`)
   const deletedKeys = buildDeletedKeys(infos)
   const wikiTree = await listDirectory(`${pp}/wiki`)
   const allMd = flattenMd(wikiTree)
@@ -252,29 +260,30 @@ export async function cascadeDeleteWikiPagesWithRefs(
       continue
     }
 
-    let updated = content
-    if (file.path === indexAbs || file.name === "index.md") {
-      updated = cleanIndexListing(updated, deletedKeys)
-    }
-    updated = stripDeletedWikilinks(updated, deletedKeys)
-
-    // `related:` frontmatter — drop entries that point at a deleted
-    // page. parseFrontmatterArray returns the parsed string list;
-    // writeFrontmatterArray rewrites only that field, preserving
-    // every other line.
-    const related = parseFrontmatterArray(updated, "related")
-    if (related.length > 0) {
-      const filtered = related.filter(
-        (s) => !deletedKeys.has(normalizeWikiRefKey(s)),
-      )
-      if (filtered.length !== related.length) {
-        updated = writeFrontmatterArray(updated, "related", filtered)
+    const removeDeletedReferences = (source: string) => {
+      let updated = source
+      if (file.path === indexAbs || file.name === "index.md") {
+        updated = cleanIndexListing(updated, deletedKeys)
       }
+      updated = stripDeletedWikilinks(updated, deletedKeys)
+      const related = parseFrontmatterArray(updated, "related")
+      if (related.length > 0) {
+        const filtered = related.filter((s) => !deletedKeys.has(normalizeWikiRefKey(s)))
+        if (filtered.length !== related.length) {
+          updated = writeFrontmatterArray(updated, "related", filtered)
+        }
+      }
+      return updated
     }
 
-    if (updated !== content) {
+    if (removeDeletedReferences(content) !== content) {
       try {
-        await writeFile(file.path, updated)
+        await markdownFileSaver.writeExternal(file.path, content, async () => {
+          const current = await readFile(file.path)
+          const updated = removeDeletedReferences(current)
+          if (updated !== current) await writeFile(file.path, updated)
+          return updated
+        })
         result.rewrittenFiles++
       } catch (err) {
         console.warn(`[wiki-delete] failed to rewrite ${file.path}:`, err)

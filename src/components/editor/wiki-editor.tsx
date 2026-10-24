@@ -13,6 +13,7 @@ import { streamChat } from "@/lib/llm-client"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { searchWiki, type SearchResult } from "@/lib/search"
 import { normalizePath } from "@/lib/path-utils"
+import { markdownFileSaver } from "@/lib/markdown-file-saver"
 
 interface EditorSelectionRequest {
   id: string
@@ -31,7 +32,7 @@ interface SelectionConversationTurn {
 
 interface WikiEditorProps {
   content: string
-  onSave: (markdown: string, options?: { immediate?: boolean }) => void
+  onSave: (markdown: string, options?: { immediate?: boolean }) => Promise<void>
   /** Absolute path of the file, threaded to WikiReader so relative
    *  image references resolve against the file's own directory. */
   filePath?: string
@@ -60,6 +61,7 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
   const [citationPreview, setCitationPreview] = useState<{ path: string; title: string; content: string } | null>(null)
   const [selectionError, setSelectionError] = useState("")
   const [selectionRunning, setSelectionRunning] = useState(false)
+  const [selectionApplying, setSelectionApplying] = useState(false)
   const readerRef = useRef<HTMLDivElement>(null)
   const selectionAbortRef = useRef<AbortController | null>(null)
   const selectionRunIdRef = useRef(0)
@@ -88,7 +90,7 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
   }, [editableMarkdown, mode])
 
   const saveLatestNow = useCallback(() => {
-    onSave(latestMarkdownRef.current, { immediate: true })
+    return onSave(latestMarkdownRef.current, { immediate: true })
   }, [onSave])
 
   const captureSelection = useCallback((markdown: string, start: number, end: number) => {
@@ -170,11 +172,20 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
     if (selectionMode && selectionMode !== intent) return
     if (intent === "edit" && !selectionRequest.sourceMapped) return
     setSelectionMode(intent)
-    if (selectionRequest.sourceMapped) {
-      onSave(`${selectionRequest.prefix}${selectionRequest.selectedText}${selectionRequest.suffix}`, { immediate: true })
-    }
     const runId = ++selectionRunIdRef.current
     setSelectionRunning(true)
+    if (selectionRequest.sourceMapped) {
+      try {
+        await onSave(`${selectionRequest.prefix}${selectionRequest.selectedText}${selectionRequest.suffix}`, { immediate: true })
+      } catch (error) {
+        if (runId !== selectionRunIdRef.current) return
+        console.error("Failed to save before selection request", error)
+        setSelectionError(t("editor.selection.saveFailed", { defaultValue: "Could not save the latest draft. Retry before continuing." }))
+        setSelectionRunning(false)
+        return
+      }
+    }
+    if (runId !== selectionRunIdRef.current) return
     const instruction = selectionInstruction.trim()
     const projectRoot = project ? normalizePath(project.path).replace(/\/+$/, "") : ""
     const relativeFilePath = projectRoot && normalizePath(selectionRequest.filePath).startsWith(`${projectRoot}/`)
@@ -258,34 +269,50 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
   }, [llmConfig, onSave, project, selectionInstruction, selectionMode, selectionRequest, selectionRunning, selectionTurns, t])
 
   const acceptSelectionEdit = useCallback(async () => {
-    if (!project || !selectionRequest?.sourceMapped || selectionResult?.intent !== "edit") return
+    if (!project || !selectionRequest?.sourceMapped || selectionResult?.intent !== "edit" || selectionApplying) return
+    const request = selectionRequest
+    const runId = selectionRunIdRef.current
     const replacement = normalizeSelectionReplacement(selectionResult.content)
+    setSelectionApplying(true)
     try {
       setSelectionError("")
-      const updated = await applyTextSelectionEdit({
-        projectPath: project.path,
-        filePath: selectionRequest.filePath,
-        prefix: selectionRequest.prefix,
-        selectedText: selectionRequest.selectedText,
-        suffix: selectionRequest.suffix,
-        replacement,
-      })
-      if (useWikiStore.getState().selectedFile === selectionRequest.filePath) {
+      await onSave(latestMarkdownRef.current, { immediate: true })
+      const updated = await markdownFileSaver.writeExternal(
+        request.filePath,
+        `${request.prefix}${request.selectedText}${request.suffix}`,
+        () => applyTextSelectionEdit({
+          projectPath: project.path,
+          filePath: request.filePath,
+          prefix: request.prefix,
+          selectedText: request.selectedText,
+          suffix: request.suffix,
+          replacement,
+        }),
+      )
+      if (useWikiStore.getState().selectedFile === request.filePath) {
         useWikiStore.getState().setFileContent(updated)
       }
-      setSelectionRequest(null)
-      setSelectionResult(null)
-      setSelectionInstruction("")
+      if (runId === selectionRunIdRef.current) {
+        setDraftMarkdown(updated)
+        latestMarkdownRef.current = updated
+        setMode("read")
+        setSelectionRequest(null)
+        setSelectionResult(null)
+        setSelectionInstruction("")
+      }
       await refreshProjectFileTree(project.path, { bumpDataVersion: true })
     } catch (error) {
+      if (runId !== selectionRunIdRef.current) return
       console.error("Failed to apply selection edit", error)
       setSelectionError(
         error instanceof Error && error.message.includes("changed after the selection")
           ? t("editor.selection.sourceChanged")
           : t("editor.selection.applyFailed"),
       )
+    } finally {
+      if (runId === selectionRunIdRef.current) setSelectionApplying(false)
     }
-  }, [project, selectionRequest, selectionResult, t])
+  }, [onSave, project, selectionRequest, selectionResult, selectionApplying, t])
 
   const closeSelectionPanel = useCallback(() => {
     selectionRunIdRef.current += 1
@@ -328,76 +355,91 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
         if (mode !== "edit") return
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
           event.preventDefault()
-          saveLatestNow()
+          void saveLatestNow().catch(() => {})
         }
       }}
     >
-      <div className="relative min-w-0 flex-1 overflow-hidden">
-      <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
-        {filePath && (
-          <button type="button" onClick={() => { setSelectionRequest(null); setShowPageLinks((shown) => !shown) }} title={t("editor.pageLinks.title")} className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground">
-            <Link2 className="h-3.5 w-3.5" />
-            {t("editor.pageLinks.button")}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-11 shrink-0 items-center justify-end gap-1.5 border-b bg-muted/20 px-3 py-1.5">
+          {filePath && (
+            <button
+              type="button"
+              aria-expanded={showPageLinks}
+              onClick={() => { setSelectionRequest(null); setShowPageLinks((shown) => !shown) }}
+              title={t("editor.pageLinks.title")}
+              className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px ${
+                showPageLinks
+                  ? "border-sidebar-primary/20 bg-sidebar-accent text-sidebar-primary"
+                  : "border-border/60 bg-background text-muted-foreground"
+              }`}
+            >
+              <Link2 className="h-3.5 w-3.5" />
+              {t("editor.pageLinks.button")}
+            </button>
+          )}
+          <button
+            type="button"
+            aria-pressed={mode === "edit"}
+            disabled={selectionApplying}
+            onClick={() => {
+              if (mode === "edit") void saveLatestNow().catch(() => {})
+              if (mode === "read") {
+                const normalized = normalizeEditableMarkdown(editableMarkdown)
+                setDraftMarkdown(normalized)
+                latestMarkdownRef.current = normalized
+              }
+              setMode((current) => (current === "read" ? "edit" : "read"))
+            }}
+            title={mode === "read" ? t("editor.editRaw") : t("editor.doneEditing")}
+            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 bg-background px-2.5 text-xs text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px"
+          >
+            {mode === "read" ? <Pencil className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            {mode === "read" ? t("editor.edit") : t("editor.done")}
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => {
-            if (mode === "edit") saveLatestNow()
-            if (mode === "read") {
-              // Seed edit mode from the latest raw file content before switching;
-              // the sync effect intentionally does not reset drafts while editing.
-              const normalized = normalizeEditableMarkdown(editableMarkdown)
-              setDraftMarkdown(normalized)
-              latestMarkdownRef.current = normalized
-            }
-            setMode((m) => (m === "read" ? "edit" : "read"))
-          }}
-          title={mode === "read" ? t("editor.editRaw") : t("editor.doneEditing")}
-          className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
-        >
-          {mode === "read" ? <Pencil className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-          {mode === "read" ? t("editor.edit") : t("editor.done")}
-        </button>
-      </div>
+        </div>
 
-      {mode === "read" ? (
-        <div ref={readerRef} className="h-full overflow-auto px-6 py-6" onMouseUp={captureRenderedSelection}>
-          {frontmatter && <StableFrontmatterPanel data={frontmatter} />}
-          <StableWikiReader
-            body={body}
-            sourceBody={bodySourceOffset >= 0 ? body : undefined}
-            sourceOffset={bodySourceOffset >= 0 ? bodySourceOffset : undefined}
-            filePath={filePath}
-          />
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          {mode === "read" ? (
+            <div ref={readerRef} className="h-full overflow-auto px-4 py-6 sm:px-6 lg:px-8" onMouseUp={captureRenderedSelection}>
+              <div className="mx-auto w-full max-w-[74ch]">
+                {frontmatter && <StableFrontmatterPanel data={frontmatter} />}
+                <StableWikiReader
+                  body={body}
+                  sourceBody={bodySourceOffset >= 0 ? body : undefined}
+                  sourceOffset={bodySourceOffset >= 0 ? bodySourceOffset : undefined}
+                  filePath={filePath}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="h-full overflow-auto p-4 sm:p-6">
+              <textarea
+                aria-label={t("editor.rawMarkdownEditor")}
+                value={draftMarkdown}
+                onChange={(event) => {
+                  const next = event.currentTarget.value
+                  setDraftMarkdown(next)
+                  latestMarkdownRef.current = next
+                  void onSave(next)
+                }}
+                onSelect={(event) => {
+                  captureSelection(
+                    draftMarkdown,
+                    event.currentTarget.selectionStart,
+                    event.currentTarget.selectionEnd,
+                  )
+                }}
+                readOnly={selectionApplying}
+                spellCheck={false}
+                className="mx-auto block h-full min-h-[60vh] w-full max-w-[86ch] resize-none rounded-lg border border-border/70 bg-background p-4 font-mono text-[0.84rem] leading-6 text-foreground outline-none transition-shadow focus:border-sidebar-primary/50 focus:ring-2 focus:ring-sidebar-primary/15"
+              />
+            </div>
+          )}
+          {showPageLinks && filePath && <PageLinksPanel filePath={filePath} onClose={() => setShowPageLinks(false)} />}
         </div>
-      ) : (
-        <div className="h-full overflow-auto p-6">
-          <textarea
-            aria-label={t("editor.rawMarkdownEditor")}
-            value={draftMarkdown}
-            onChange={(event) => {
-              const next = event.currentTarget.value
-              setDraftMarkdown(next)
-              latestMarkdownRef.current = next
-              onSave(next)
-            }}
-            onSelect={(event) => {
-              captureSelection(
-                draftMarkdown,
-                event.currentTarget.selectionStart,
-                event.currentTarget.selectionEnd,
-              )
-            }}
-            spellCheck={false}
-            className="h-full min-h-[60vh] w-full resize-none rounded-md border border-border/60 bg-background/70 p-4 font-mono text-sm leading-6 text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
-          />
-        </div>
-      )}
-      {showPageLinks && filePath && <PageLinksPanel filePath={filePath} onClose={() => setShowPageLinks(false)} />}
       </div>
       {selectionRequest && (
-        <aside className="flex h-full w-[360px] max-w-[45%] shrink-0 flex-col border-l border-border bg-background" aria-label={t("editor.selection.askAgent")}>
+        <aside className="flex h-full w-[360px] max-w-[45%] shrink-0 flex-col border-l border-border bg-background" aria-label={t("editor.selection.askAgent")} aria-busy={selectionApplying}>
           <header className="flex min-h-11 items-center gap-2 border-b border-border px-3 py-2">
             <Sparkles className="h-4 w-4 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate text-sm font-medium">{t("editor.selection.askAgent")}</span>

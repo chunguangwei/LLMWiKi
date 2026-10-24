@@ -106,14 +106,9 @@ function ChatMessageImpl({
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   const isAssistant = message.role === "assistant"
-  const [hovered, setHovered] = useState(false)
 
   return (
-    <div
-      className={`flex gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
+    <div className={`group/message flex gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       <div
         className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
           isSystem
@@ -193,10 +188,10 @@ function ChatMessageImpl({
             onSubmit={onSubmitUserInput}
           />
         )}
-        {isAssistant && hovered && (
-          <div className="flex items-center gap-1">
+        {isAssistant && (
+          <div className="pointer-events-none flex items-center gap-1 opacity-0 transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/message:pointer-events-auto group-hover/message:opacity-100 group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100">
             <CopyButton content={message.content} />
-            <SaveToWikiButton content={message.content} visible={true} />
+            <SaveToWikiButton content={message.content} />
             {isLastAssistant && onRegenerate && (
               <button
                 type="button"
@@ -544,7 +539,7 @@ function CopyButton({ content }: { content: string }) {
   )
 }
 
-function SaveToWikiButton({ content, visible }: { content: string; visible: boolean }) {
+function SaveToWikiButton({ content }: { content: string }) {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const [saved, setSaved] = useState(false)
@@ -630,8 +625,6 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       setSaving(false)
     }
   }, [project, content, saving])
-
-  if (!visible && !saved) return null
 
   return (
     <button
@@ -1418,7 +1411,7 @@ function agentStageIcon(stage: ChatAgentEventStage) {
   }
 }
 
-function MarkdownContent({ content }: { content: string }) {
+export function MarkdownContent({ content }: { content: string }) {
   // Strip hidden comments
   const cleaned = content.replace(/<!--.*?-->/gs, "").trimEnd()
 
@@ -1439,7 +1432,7 @@ function MarkdownContent({ content }: { content: string }) {
     <div>
       {thinking && <ThinkingBlock content={thinking} />}
       <div
-        className="chat-markdown prose max-w-none dark:prose-invert prose-code:before:content-none prose-code:after:content-none"
+        className="markdown-body chat-markdown min-w-0"
         dir={direction}
         lang={htmlLang}
         style={{ textAlign: "start" }}
@@ -1448,10 +1441,27 @@ function MarkdownContent({ content }: { content: string }) {
           remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex]}
           components={{
-            a: ({ href, children }) => {
+            a: ({ href, children, ...props }) => {
               if (href?.startsWith("wikilink:")) {
                 const pageName = href.slice("wikilink:".length)
                 return <WikiLink pageName={pageName}>{children}</WikiLink>
+              }
+              if (href && /^https?:\/\//i.test(href)) {
+                return (
+                  <a
+                    {...props}
+                    href={href}
+                    className="text-primary underline cursor-pointer"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      void openUrl(href).catch((err) => {
+                        console.warn("[chat markdown] failed to open external link:", err)
+                      })
+                    }}
+                  >
+                    {children}
+                  </a>
+                )
               }
               return (
                 <span className="text-primary underline cursor-default" title={href}>

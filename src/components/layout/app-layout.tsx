@@ -9,6 +9,11 @@ import { ResearchPanel } from "./research-panel"
 import { ActivityPanel } from "./activity-panel"
 import { useResearchStore } from "@/stores/research-store"
 import { ErrorBoundary } from "@/components/error-boundary"
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable"
 import { getAppLayoutVisibility } from "./app-layout-visibility"
 import { PanelLeftOpen } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -24,14 +29,10 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   const project = useWikiStore((s) => s.project)
   const activeView = useWikiStore((s) => s.activeView)
   const researchPanelOpen = useResearchStore((s) => s.panelOpen)
-  const [leftWidth, setLeftWidth] = useState(220)
-  const [rightWidth, setRightWidth] = useState(400)
   const [leftCollapsed, setLeftCollapsed] = useState(
     () => localStorage.getItem(LEFT_PANEL_COLLAPSED_KEY) === "true",
   )
-  const isDraggingLeft = useRef(false)
-  const isDraggingRight = useRef(false)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const resizeCleanupRef = useRef<number | null>(null)
 
   const loadFileTree = useCallback(async () => {
     if (!project) return
@@ -45,50 +46,25 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
     loadFileTree()
   }, [loadFileTree])
 
-  const startDrag = useCallback(
-    (side: "left" | "right") => (e: React.MouseEvent) => {
-      e.preventDefault()
-      if (side === "left") isDraggingLeft.current = true
-      else isDraggingRight.current = true
-      document.body.style.cursor = "col-resize"
-      document.body.style.userSelect = "none"
-      document.body.dataset.panelResizing = "true"
+  // GraphView uses this signal to keep WebGL canvases unmounted during resize.
+  const handlePanelLayoutChange = useCallback(() => {
+    window.clearTimeout(resizeCleanupRef.current ?? undefined)
+    resizeCleanupRef.current = null
+    document.body.dataset.panelResizing = "true"
+  }, [])
+  const handlePanelLayoutChanged = useCallback(() => {
+    window.clearTimeout(resizeCleanupRef.current ?? undefined)
+    resizeCleanupRef.current = window.setTimeout(() => {
+      resizeCleanupRef.current = null
+      delete document.body.dataset.panelResizing
+    }, 0)
+  }, [])
 
-      const handleMouseMove = (e: MouseEvent) => {
-        if (!containerRef.current) return
-        const rect = containerRef.current.getBoundingClientRect()
+  useEffect(() => () => {
+    window.clearTimeout(resizeCleanupRef.current ?? undefined)
+    delete document.body.dataset.panelResizing
+  }, [])
 
-        if (isDraggingLeft.current) {
-          const newWidth = e.clientX - rect.left
-          // Hard cap: 150 to 400px
-          setLeftWidth(Math.max(150, Math.min(400, newWidth)))
-        }
-        if (isDraggingRight.current) {
-          const newWidth = rect.right - e.clientX
-          // Hard cap: 250 to 50% of container
-          setRightWidth(Math.max(250, Math.min(rect.width * 0.5, newWidth)))
-        }
-      }
-
-      const handleMouseUp = () => {
-        isDraggingLeft.current = false
-        isDraggingRight.current = false
-        document.body.style.cursor = ""
-        document.body.style.userSelect = ""
-        delete document.body.dataset.panelResizing
-        document.removeEventListener("mousemove", handleMouseMove)
-        document.removeEventListener("mouseup", handleMouseUp)
-      }
-
-      document.addEventListener("mousemove", handleMouseMove)
-      document.addEventListener("mouseup", handleMouseUp)
-    },
-    []
-  )
-
-  // Settings and Chat are standalone views. Hide the project file tree,
-  // activity strip, and optional right research panel there so those
-  // screens use the whole work area.
   const { showLeftPanel, hasRightPanel } = getAppLayoutVisibility(activeView, researchPanelOpen)
   const toggleLeftPanel = () => {
     setLeftCollapsed((value) => {
@@ -99,37 +75,51 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   }
 
   return (
-    // Outer column layout: full-width update banner on top (when an
-    // update is available AND not dismissed for this version), the
-    // existing IconSidebar + content row below. Banner is shrink-0
-    // so it doesn't compress the work area; main row is flex-1 so
-    // it fills the rest of the viewport.
     <div className="flex h-full flex-col bg-background text-foreground">
       <UpdateBanner />
       <div className="flex min-h-0 flex-1">
         <IconSidebar onSwitchProject={onSwitchProject} />
-        <div ref={containerRef} className="relative flex min-w-0 flex-1 overflow-hidden">
+        <ResizablePanelGroup
+          id="app-layout-panels"
+          direction="horizontal"
+          onLayoutChange={handlePanelLayoutChange}
+          onLayoutChanged={handlePanelLayoutChanged}
+          className="min-h-0 min-w-0 flex-1 overflow-hidden"
+        >
           {showLeftPanel && !leftCollapsed && (
             <>
-              {/* Left: File tree + Activity */}
-              <div
-                className="flex shrink-0 flex-col overflow-hidden border-r"
-                style={{ width: leftWidth }}
+              <ResizablePanel
+                id="left-panel"
+                defaultSize="20%"
+                minSize="15%"
+                maxSize="25%"
+                className="flex flex-col border-r"
+                style={{ overflow: "hidden" }}
               >
-                <div className="flex-1 overflow-hidden">
+                <div className="min-h-0 flex-1 overflow-hidden">
                   <SidebarPanel onCollapse={toggleLeftPanel} />
                 </div>
                 <ActivityPanel />
-              </div>
-              <div
-                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
-                onMouseDown={startDrag("left")}
+              </ResizablePanel>
+              <ResizableHandle
+                id="left-panel-resize-handle"
+                withHandle
+                aria-label={t("layout.resizeLeftPanel", "Resize left panel")}
               />
             </>
           )}
 
           {showLeftPanel && leftCollapsed && (
-            <div className="flex w-9 shrink-0 justify-center border-r bg-muted/20 pt-2">
+            <ResizablePanel
+              id="collapsed-left-panel"
+              defaultSize={36}
+              minSize={36}
+              maxSize={36}
+              disabled
+              groupResizeBehavior="preserve-pixel-size"
+              className="flex justify-center border-r bg-muted/20 pt-2"
+              style={{ overflow: "hidden" }}
+            >
               <button
                 type="button"
                 onClick={toggleLeftPanel}
@@ -139,34 +129,47 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
               >
                 <PanelLeftOpen className="h-4 w-4" />
               </button>
-            </div>
+            </ResizablePanel>
           )}
 
-          {/* Center: Chat, wiki preview, or tool view */}
-          <div className="min-w-0 flex-1 overflow-hidden">
-            <ErrorBoundary>
-              <ContentArea />
-            </ErrorBoundary>
-          </div>
+          <ResizablePanel
+            id="content-panel"
+            minSize="40%"
+            className="min-w-0"
+            style={{ overflow: "hidden" }}
+          >
+            <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+              <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                <ErrorBoundary>
+                  <ContentArea />
+                </ErrorBoundary>
+              </div>
+              {!showLeftPanel && <ActivityPanel />}
+            </div>
+          </ResizablePanel>
 
-          {/* Right panels */}
           {hasRightPanel && (
             <>
-              <div
-                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
-                onMouseDown={startDrag("right")}
+              <ResizableHandle
+                id="research-panel-resize-handle"
+                withHandle
+                aria-label={t("layout.resizeResearchPanel", "Resize research panel")}
               />
-              <div
-                className="flex shrink-0 flex-col overflow-hidden border-l"
-                style={{ width: rightWidth }}
+              <ResizablePanel
+                id="research-panel"
+                defaultSize="30%"
+                minSize="20%"
+                maxSize="35%"
+                className="flex flex-col border-l"
+                style={{ overflow: "hidden" }}
               >
                 <ErrorBoundary>
                   <ResearchPanel />
                 </ErrorBoundary>
-              </div>
+              </ResizablePanel>
             </>
           )}
-        </div>
+        </ResizablePanelGroup>
       </div>
     </div>
   )

@@ -529,7 +529,7 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
       </div>
       {frontmatter && <FrontmatterPanel data={frontmatter} />}
       <div
-        className="prose prose-sm max-w-none dark:prose-invert"
+        className="markdown-body compact-markdown min-w-0"
         dir={direction}
         lang={htmlLang}
         style={{ textAlign: "start" }}

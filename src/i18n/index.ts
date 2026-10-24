@@ -17,4 +17,11 @@ i18n.use(initReactI18next).init({
   interpolation: { escapeValue: false },
 })
 
+function syncDocumentLanguage(language: string): void {
+  if (typeof document !== "undefined") document.documentElement.lang = language || "en"
+}
+
+syncDocumentLanguage(i18n.resolvedLanguage || i18n.language)
+i18n.on("languageChanged", syncDocumentLanguage)
+
 export default i18n

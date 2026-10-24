@@ -179,7 +179,7 @@ function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStrea
       <div className="mb-1 font-medium text-muted-foreground">{t("research.synthesis")}</div>
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto rounded bg-muted/30 p-2 prose prose-xs prose-invert max-w-none"
+        className="markdown-body compact-markdown min-w-0 flex-1 overflow-y-auto rounded-md border border-border/50 bg-muted/20 p-3"
         dir={direction}
         lang={htmlLang}
         style={{ maxHeight: "calc(100vh - 400px)", minHeight: "120px", textAlign: "start" }}

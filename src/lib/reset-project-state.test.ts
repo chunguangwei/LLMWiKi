@@ -33,7 +33,7 @@ beforeEach(() => {
 })
 
 describe("resetProjectState — Zustand stores", () => {
-  it("clears chat store conversations and messages", async () => {
+  it("clears chat store conversations, messages, and selected context files", async () => {
     useChatStore.setState({
       conversations: [{ id: "c1", title: "x", createdAt: 0, updatedAt: 0 }],
       messages: [
@@ -44,6 +44,7 @@ describe("resetProjectState — Zustand stores", () => {
       streamingContent: "partial",
       mode: "ingest",
       ingestSource: "/some/file",
+      selectedContextFiles: ["/old-project/raw/sources/old-context.pdf"],
     })
 
     await resetProjectState()
@@ -56,6 +57,7 @@ describe("resetProjectState — Zustand stores", () => {
     expect(chat.streamingContent).toBe("")
     expect(chat.mode).toBe("chat")
     expect(chat.ingestSource).toBeNull()
+    expect(chat.selectedContextFiles).toEqual([])
   })
 
   it("clears review store items", async () => {

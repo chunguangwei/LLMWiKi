@@ -13,6 +13,7 @@ import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, load
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
+import { installMarkdownSaveExitHandler } from "@/lib/markdown-save-exit"
 import { startClipWatcher } from "@/lib/clip-watcher"
 import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
 import { useGlobalShortcut } from "@/hooks/use-global-shortcut"
@@ -181,6 +182,31 @@ function App() {
     setupAutoSave()
     startClipWatcher()
   }, [])
+
+  useEffect(() => {
+    let active = true
+    let unlisten: (() => void) | undefined
+    void installMarkdownSaveExitHandler(async (failures) => {
+      const details = failures.map((failure) => {
+        const error = failure.error instanceof Error ? failure.error.message : String(failure.error)
+        return failure.path ? `${failure.path}: ${error}` : error
+      }).join("\n")
+      await appDialog.alert({
+        title: i18n.t("editor.saveExitTitle", { defaultValue: "Some changes could not be saved" }),
+        message: i18n.t("editor.saveExitMessage", {
+          defaultValue: "The app will stay open so you can retry saving. Your drafts have not been discarded.\n\n{{details}}",
+          details,
+        }),
+      })
+    }).then((dispose) => {
+      if (active) unlisten = dispose
+      else dispose()
+    }).catch((error) => console.error("Failed to install Markdown exit handler", error))
+    return () => {
+      active = false
+      unlisten?.()
+    }
+  }, [appDialog])
 
   // Register global keyboard shortcuts
   // Cmd+, on macOS or Ctrl+, on Windows/Linux opens settings

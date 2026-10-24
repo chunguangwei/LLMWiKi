@@ -35,6 +35,7 @@ export async function resetProjectState(): Promise<void> {
     agentMode: "standard",
     retrievalMode: "standard",
     selectedSkills: [],
+    selectedContextFiles: [],
     disabledSkills: [],
   })
 

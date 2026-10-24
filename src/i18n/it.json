@@ -9,7 +9,9 @@
   },
   "layout": {
     "showSidebar": "Mostra la barra laterale",
-    "hideSidebar": "Nascondi la barra laterale"
+    "hideSidebar": "Nascondi la barra laterale",
+    "resizeLeftPanel": "Ridimensiona il pannello sinistro",
+    "resizeResearchPanel": "Ridimensiona il pannello di ricerca"
   },
   "errors": {
     "generic": "Qualcosa è andato storto"
@@ -93,8 +95,11 @@
       "applyFailed": "Non è stato possibile aggiornare il testo selezionato.",
       "sourceChanged": "Il file è cambiato dopo la selezione del testo. Seleziona di nuovo il testo prima di applicare la modifica.",
       "referenceFailed": "Non è stato possibile aprire la pagina citata.",
-      "emptyResponse": "Il modello non ha restituito alcuna risposta. Riprova."
+      "emptyResponse": "Il modello non ha restituito alcuna risposta. Riprova.",
+      "saveFailed": "Impossibile salvare l'ultima bozza. Riprova prima di continuare."
     },
+    "saveExitTitle": "Impossibile salvare alcune modifiche",
+    "saveExitMessage": "L'app rimarrà aperta per consentirti di riprovare il salvataggio. Le bozze non sono state eliminate.\n\n{{details}}",
     "pageLinks": {
       "button": "Link",
       "title": "Link della pagina",
@@ -432,6 +437,7 @@
     "placeholderWithShortcut": "Cerca nelle pagine wiki... (Invio per cercare)",
     "searching": "Ricerca in corso...",
     "pressEnter": "Premi Invio per cercare",
+    "failed": "Ricerca non riuscita. Riprova.",
     "pageCount": "{{count}} pagina",
     "pageCount_other": "{{count}} pagine",
     "imageMatchCount": "{{count}} immagine trovata",
@@ -1378,7 +1384,12 @@
     "pdfPage": "Pagina",
     "pdfLoading": "Caricamento del PDF...",
     "pdfLoadError": "Impossibile visualizzare il PDF. Puoi riprovare oppure aprirlo con l'app di sistema.",
-    "pdfTooLarge": "Questo PDF è troppo grande per l'anteprima integrata. Aprilo con l'app di sistema."
+    "pdfTooLarge": "Questo PDF è troppo grande per l'anteprima integrata. Aprilo con l'app di sistema.",
+    "loadFailed": "Impossibile caricare il file",
+    "unsaved": "Non salvato",
+    "saving": "Salvataggio...",
+    "saved": "Salvato",
+    "saveFailed": "Salvataggio non riuscito. Riprova."
   },
   "activity": {
     "processing": "Elaborazione: {{title}}",

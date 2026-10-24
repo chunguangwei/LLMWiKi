@@ -34,11 +34,15 @@ export function SearchView() {
   const setActiveView = useWikiStore((s) => s.setActiveView)
   const previousView = useWikiStore((s) => s.previousView)
   const inputRef = useRef<HTMLInputElement>(null)
+  const latestRequestId = useRef(0)
+  const projectPath = project?.path ?? null
 
   const [query, setQuery] = useState("")
+  const [submittedQuery, setSubmittedQuery] = useState("")
   const [results, setResults] = useState<SearchResult[]>([])
   const [searching, setSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
+  const [searchError, setSearchError] = useState(false)
   // Lightbox state — null when closed. Held inline rather than via
   // a global store: nothing else needs to know which image is in
   // the lightbox, and search-view-local state means the modal
@@ -55,24 +59,43 @@ export function SearchView() {
 
   const doSearch = useCallback(
     async (q: string) => {
+      const requestId = ++latestRequestId.current
+      setSubmittedQuery(q)
+      setSearchError(false)
       if (!project || !q.trim()) {
         setResults([])
+        setSearching(false)
         return
       }
       setSearching(true)
       setHasSearched(true)
       try {
         const found = await searchWiki(normalizePath(project.path), q)
+        if (requestId !== latestRequestId.current) return
         setResults(found)
       } catch (err) {
+        if (requestId !== latestRequestId.current) return
         console.error("Search failed:", err)
         setResults([])
+        setSearchError(true)
       } finally {
-        setSearching(false)
+        if (requestId === latestRequestId.current) setSearching(false)
       }
     },
     [project],
   )
+
+  useEffect(() => {
+    latestRequestId.current += 1
+    setResults([])
+    setSearching(false)
+    setHasSearched(false)
+    setSubmittedQuery("")
+    setSearchError(false)
+    return () => {
+      latestRequestId.current += 1
+    }
+  }, [projectPath])
 
   // Flatten + dedupe images across results. Two results referencing
   // the same image (e.g. the source-summary AND a concept page that
@@ -89,9 +112,9 @@ export function SearchView() {
   // returns nothing (e.g. user typed only punctuation), so the
   // filter never silently goes empty when the user expected hits.
   const imageHits = useMemo(() => {
-    if (!query.trim()) return [] as ImageHit[]
-    const tokens = tokenizeQuery(query)
-    const fallback = query.trim().toLowerCase()
+    if (!submittedQuery.trim()) return [] as ImageHit[]
+    const tokens = tokenizeQuery(submittedQuery)
+    const fallback = submittedQuery.trim().toLowerCase()
     const seen = new Set<string>()
     const out: ImageHit[] = []
     for (const r of results) {
@@ -113,7 +136,7 @@ export function SearchView() {
     }
     // Caption-matches first, then preserve RRF order.
     return out.sort((a, b) => Number(b.altMatchesQuery) - Number(a.altMatchesQuery))
-  }, [results, query])
+  }, [results, submittedQuery])
 
   // Image hits whose CAPTION matches the query are the ones we
   // confidently surface. Hits from matched pages whose alt text
@@ -275,9 +298,20 @@ export function SearchView() {
           <Search className="h-8 w-8 text-muted-foreground/30" />
           <p>{t("search.pressEnter")}</p>
         </div>
+      ) : searchError ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-sm text-muted-foreground">
+          <p>{t("search.failed", { defaultValue: "Search failed. Please try again." })}</p>
+          <button
+            type="button"
+            onClick={() => doSearch(submittedQuery)}
+            className="rounded-md border px-3 py-1.5 hover:bg-accent"
+          >
+            {t("common.retry")}
+          </button>
+        </div>
       ) : results.length === 0 ? (
         <div className="flex-1 p-4 text-center text-sm text-muted-foreground">
-          {t("search.noResults")} <span className="font-medium">"{query}"</span>
+          {t("search.noResults")} <span className="font-medium">"{submittedQuery}"</span>
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -332,7 +366,7 @@ export function SearchView() {
                     <ImageHitCard
                       key={img.url}
                       hit={img}
-                      query={query}
+                      query={submittedQuery}
                       onClick={() => setLightbox(img)}
                     />
                   ))}
@@ -355,7 +389,7 @@ export function SearchView() {
                 <SearchResultCard
                   key={result.path}
                   result={result}
-                  query={query}
+                  query={submittedQuery}
                   onClick={() => handleOpen(result.path)}
                 />
               ))}
@@ -606,12 +640,13 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   const tokens = tokenizeQuery(query)
   const patterns = tokens.length > 0 ? tokens : [query.trim()]
   const regex = new RegExp(`(${patterns.map(escapeRegex).join("|")})`, "gi")
+  const matchRegex = new RegExp(regex.source, "i")
   const parts = text.split(regex)
 
   return (
     <>
       {parts.map((part, i) =>
-        regex.test(part) ? (
+        matchRegex.test(part) ? (
           <mark key={i} className="bg-yellow-200 dark:bg-yellow-800 rounded px-0.5">
             {part}
           </mark>

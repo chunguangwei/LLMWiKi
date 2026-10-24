@@ -164,7 +164,7 @@ function formatDate(timestamp: number): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" })
 }
 
-function ConversationSidebar({
+export function ConversationSidebar({
   onNewConversation,
   onSelectConversation,
 }: {
@@ -179,13 +179,17 @@ function ConversationSidebar({
   const deleteConversation = useChatStore((s) => s.deleteConversation)
   const setActiveConversation = useChatStore((s) => s.setActiveConversation)
 
-  const [hoveredId, setHoveredId] = useState<string | null>(null)
-
-  const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
-
-  function getMessageCount(convId: string): number {
-    return messages.filter((m) => m.conversationId === convId).length
-  }
+  const messageCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const message of messages) {
+      counts.set(message.conversationId, (counts.get(message.conversationId) ?? 0) + 1)
+    }
+    return counts
+  }, [messages])
+  const sorted = useMemo(
+    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
+    [conversations],
+  )
 
   return (
     <div className="flex h-full w-[200px] flex-shrink-0 flex-col border-r bg-muted/30">
@@ -215,59 +219,65 @@ function ConversationSidebar({
         ) : (
           sorted.map((conv) => {
             const isActive = conv.id === activeConversationId
-            const msgCount = getMessageCount(conv.id)
+            const msgCount = messageCounts.get(conv.id) ?? 0
+            const deleteLabel = `${t("chat.deleteConversationTooltip")}: ${conv.title}`
             return (
               <div
                 key={conv.id}
-                className={`group relative mx-1 my-0.5 flex cursor-pointer flex-col rounded-md px-2 py-1.5 text-sm transition-colors ${
+                className={`group relative mx-1 my-0.5 flex rounded-md text-sm transition-colors ${
                   isActive
                     ? "bg-primary/10 text-primary"
-                    : "hover:bg-accent text-foreground"
+                    : "text-foreground hover:bg-accent focus-within:bg-accent"
                 }`}
-                onClick={() => {
-                  if (onSelectConversation) {
-                    onSelectConversation(conv.id)
-                  } else {
-                    setActiveConversation(conv.id)
-                  }
-                }}
-                onMouseEnter={() => setHoveredId(conv.id)}
-                onMouseLeave={() => setHoveredId(null)}
               >
-                <div className="flex items-start justify-between gap-1">
-                  <span className="line-clamp-2 flex-1 text-xs font-medium leading-snug">
-                    {conv.title}
-                  </span>
-                  {hoveredId === conv.id && (
-                    <button
-                      className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteConversation(conv.id)
-                        // Delete persisted chat file
-                        const proj = useWikiStore.getState().project
-                        if (proj) {
-                          // Route through persist.ts: fork stores chats under
-                          // .llm-wiki-local/, not upstream's legacy shared dir.
-                          // Deleting the wrong path leaves an orphan file that
-                          // loadChatHistory resurrects on next launch.
-                          deleteChatConversation(proj.path, conv.id).catch(() => {})
-                        }
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-                <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                  <span>{formatDate(conv.updatedAt)}</span>
-                  {msgCount > 0 && (
-                    <>
-                      <span>·</span>
-                      <span>{msgCount} {t("chat.msgCount")}</span>
-                    </>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  aria-current={isActive ? "page" : undefined}
+                  className="min-w-0 flex-1 cursor-pointer rounded-md px-2 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  onClick={() => {
+                    if (onSelectConversation) {
+                      onSelectConversation(conv.id)
+                    } else {
+                      setActiveConversation(conv.id)
+                    }
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-1 pr-5">
+                    <span className="line-clamp-2 flex-1 text-xs font-medium leading-snug">
+                      {conv.title}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <span>{formatDate(conv.updatedAt)}</span>
+                    {msgCount > 0 && (
+                      <>
+                        <span>·</span>
+                        <span>{msgCount} {t("chat.msgCount")}</span>
+                      </>
+                    )}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  aria-label={deleteLabel}
+                  title={deleteLabel}
+                  className="pointer-events-none absolute right-1.5 top-1.5 flex-shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    deleteConversation(conv.id)
+                    // Delete persisted chat file
+                    const proj = useWikiStore.getState().project
+                    if (proj) {
+                      // Route through persist.ts: fork stores chats under
+                      // .llm-wiki-local/, not upstream's legacy shared dir.
+                      // Deleting the wrong path leaves an orphan file that
+                      // loadChatHistory resurrects on next launch.
+                      deleteChatConversation(proj.path, conv.id).catch(() => {})
+                    }
+                  }}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
               </div>
             )
           })

@@ -18,10 +18,7 @@ function ResizablePanelGroup({
     <Group
       data-slot="resizable-panel-group"
       orientation={direction ?? "horizontal"}
-      className={cn(
-        "flex h-full w-full data-[orientation=vertical]:flex-col",
-        className
-      )}
+      className={cn("flex h-full w-full", className)}
       {...props}
     />
   )
@@ -42,13 +39,13 @@ function ResizableHandle({
     <Separator
       data-slot="resizable-handle"
       className={cn(
-        "relative flex w-1.5 cursor-col-resize items-center justify-center bg-border/40 transition-colors hover:bg-primary/20 data-[orientation=horizontal]:h-1.5 data-[orientation=horizontal]:w-full data-[orientation=horizontal]:cursor-row-resize",
+        "relative flex w-1.5 shrink-0 cursor-col-resize items-center justify-center bg-border/40 transition-colors outline-none hover:bg-primary/30 focus-visible:ring-2 focus-visible:ring-ring/50 data-[separator=active]:bg-primary/40 aria-[orientation=horizontal]:h-1.5 aria-[orientation=horizontal]:w-full aria-[orientation=horizontal]:cursor-row-resize [&[aria-orientation=horizontal]>div]:h-1.5 [&[aria-orientation=horizontal]>div]:w-8",
         className
       )}
       {...props}
     >
       {withHandle && (
-        <div className="z-10 flex h-8 w-1.5 shrink-0 rounded-full bg-border data-[orientation=horizontal]:h-1.5 data-[orientation=horizontal]:w-8" />
+        <div className="z-10 flex h-8 w-1.5 shrink-0 rounded-full bg-border" />
       )}
     </Separator>
   )

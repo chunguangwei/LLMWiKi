@@ -27,6 +27,14 @@ const NAV_ITEMS: { view: NavView; icon: typeof FileText; labelKey: string }[] = 
   { view: "review", icon: ClipboardList, labelKey: "nav.review" },
 ]
 
+function navigationButtonClass(active: boolean): string {
+  return `relative flex h-10 w-10 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring ${
+    active
+      ? "bg-sidebar-accent text-sidebar-primary ring-1 ring-inset ring-sidebar-primary/15"
+      : "text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+  }`
+}
+
 interface IconSidebarProps {
   onSwitchProject: () => void
 }
@@ -39,17 +47,9 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
   const researchPanelOpen = useResearchStore((s) => s.panelOpen)
   const researchActiveCount = useResearchStore((s) => s.tasks.filter((t) => t.status !== "done" && t.status !== "error").length)
   const toggleResearchPanel = useResearchStore((s) => s.setPanelOpen)
-  // Use `hasAvailableUpdate` (ignores dismiss state) rather than
-  // `shouldShowUpdateBanner`. The dot is a passive signpost — it
-  // should keep marking the gear as long as the update exists, even
-  // after the user closes the more aggressive top banner. Without
-  // this split, dismissing the banner would silently lose the only
-  // remaining indicator that an update is available, so the user
-  // never finds their way back to it.
   const updateAvailable = useUpdateStore((s) => hasAvailableUpdate(s))
-
-  // Daemon health check
   const [daemonStatus, setDaemonStatus] = useState<string>("starting")
+
   useEffect(() => {
     const check = async () => {
       try {
@@ -71,32 +71,33 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
     toggleResearchPanel(next.researchPanelOpen)
   }
 
+  const daemonStatusText = daemonStatus === "running"
+    ? "Clip server running"
+    : daemonStatus === "starting"
+      ? "Clip server starting..."
+      : daemonStatus === "port_conflict"
+        ? "Port 19827 is occupied. Web Clipper unavailable."
+        : "Clip server error. Restarting..."
+
   return (
     <TooltipProvider delay={300}>
-      <div className="flex h-full w-12 flex-col items-center border-r bg-muted/50 py-2">
-        {/* Logo */}
+      <nav aria-label="LLM Wiki" className="flex h-full w-12 flex-col items-center border-r border-sidebar-border bg-sidebar py-2 text-sidebar-foreground">
         <div className="mb-2 flex items-center justify-center">
-          <img
-            src={logoImg}
-            alt="LLM Wiki"
-            className="h-8 w-8 rounded-[22%]"
-          />
+          <img src={logoImg} alt="LLM Wiki" className="h-8 w-8 rounded-[22%]" />
         </div>
-        {/* Top: main nav items + Deep Research */}
         <div className="flex flex-1 flex-col items-center gap-1">
           {NAV_ITEMS.map(({ view, icon: Icon, labelKey }) => (
             <Tooltip key={view}>
               <TooltipTrigger
+                type="button"
+                aria-label={t(labelKey)}
+                aria-current={activeView === view ? "page" : undefined}
                 onClick={() => setActiveView(view)}
-                className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
-                  activeView === view
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
-                }`}
+                className={navigationButtonClass(activeView === view)}
               >
-                <Icon className="h-5 w-5" />
+                <Icon className="h-5 w-5" strokeWidth={1.8} />
                 {view === "review" && pendingCount > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-sidebar-primary px-1 text-[10px] font-bold text-sidebar-primary-foreground ring-2 ring-sidebar">
                     {pendingCount > 99 ? "99+" : pendingCount}
                   </span>
                 )}
@@ -107,19 +108,17 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
               </TooltipContent>
             </Tooltip>
           ))}
-          {/* Deep Research — same row as other nav items */}
           <Tooltip>
             <TooltipTrigger
+              type="button"
+              aria-label={t("research.title")}
+              aria-pressed={isResearchPanelVisible(activeView, researchPanelOpen)}
               onClick={handleResearchPanelToggle}
-              className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
-                isResearchPanelVisible(activeView, researchPanelOpen)
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
-              }`}
+              className={navigationButtonClass(isResearchPanelVisible(activeView, researchPanelOpen))}
             >
-              <Globe className="h-5 w-5" />
+              <Globe className="h-5 w-5" strokeWidth={1.8} />
               {researchActiveCount > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white">
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-sidebar-primary px-1 text-[10px] font-bold text-sidebar-primary-foreground ring-2 ring-sidebar">
                   {researchActiveCount}
                 </span>
               )}
@@ -128,24 +127,22 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
+              type="button"
+              aria-label={t("nav.skills")}
+              aria-current={activeView === "skills" ? "page" : undefined}
               onClick={() => setActiveView("skills")}
-              className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
-                activeView === "skills"
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
-              }`}
+              className={navigationButtonClass(activeView === "skills")}
             >
-              <Sparkles className="h-5 w-5" />
+              <Sparkles className="h-5 w-5" strokeWidth={1.8} />
             </TooltipTrigger>
             <TooltipContent side="right">{t("nav.skills")}</TooltipContent>
           </Tooltip>
         </div>
-        {/* Bottom: daemon status + settings + switch project */}
         <div className="flex flex-col items-center gap-1 pb-1">
-          {/* Daemon status indicator */}
           <Tooltip>
-            <TooltipTrigger className="flex h-6 w-6 items-center justify-center">
+            <TooltipTrigger aria-label={daemonStatusText} className="flex h-7 w-7 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring">
               <span
+                aria-hidden="true"
                 className={`h-2.5 w-2.5 rounded-full ${
                   daemonStatus === "running" ? "bg-emerald-500" :
                   daemonStatus === "starting" ? "bg-amber-400 animate-pulse" :
@@ -154,35 +151,20 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
                 }`}
               />
             </TooltipTrigger>
-            <TooltipContent side="right">
-              {daemonStatus === "running" && "Clip server running"}
-              {daemonStatus === "starting" && "Clip server starting..."}
-              {daemonStatus === "port_conflict" && "Port 19827 is occupied. Web Clipper unavailable."}
-              {daemonStatus === "error" && "Clip server error. Restarting..."}
-            </TooltipContent>
+            <TooltipContent side="right">{daemonStatusText}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
+              type="button"
+              aria-label={t("nav.settings")}
+              aria-current={activeView === "settings" ? "page" : undefined}
               onClick={() => setActiveView("settings")}
-              className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
-                activeView === "settings"
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
-              }`}
+              className={navigationButtonClass(activeView === "settings")}
             >
-              <Settings className="h-5 w-5" />
+              <Settings className="h-5 w-5" strokeWidth={1.8} />
               {updateAvailable && (
-                // Update-available indicator on the Settings gear.
-                // Smaller (8px / `h-2 w-2`) so it doesn't shout —
-                // the top banner is already the loud surface; this
-                // dot is just a quiet "where to go" signpost. Red
-                // (vs. previous primary-blue) gives it enough
-                // visual contrast that it's still noticeable
-                // against the gear icon despite the small size.
-                // Dismissed versions clear it automatically via
-                // shouldShowUpdateBanner.
                 <span
-                  className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-muted/50"
+                  className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-sidebar"
                   title={t("nav.updateAvailable")}
                 />
               )}
@@ -195,15 +177,17 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
+              type="button"
+              aria-label={t("nav.switchProject")}
               onClick={onSwitchProject}
-              className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground"
+              className={navigationButtonClass(false)}
             >
-              <ArrowLeftRight className="h-5 w-5" />
+              <ArrowLeftRight className="h-5 w-5" strokeWidth={1.8} />
             </TooltipTrigger>
             <TooltipContent side="right">{t("nav.switchProject")}</TooltipContent>
           </Tooltip>
         </div>
-      </div>
+      </nav>
     </TooltipProvider>
   )
 }
