@@ -886,6 +886,7 @@ fn process_queue_inner(
 ) -> Result<Vec<FileChangeTask>, String> {
     let mut changed_tasks = Vec::<FileChangeTask>::new();
     let mut all_changed_tasks = Vec::<FileChangeTask>::new();
+    let mut snapshot_updates = BTreeMap::<String, (FileChangeTask, Option<FileMeta>)>::new();
     let mut processed_since_emit = 0_usize;
     let mut emitted_processing = false;
     loop {
@@ -906,11 +907,19 @@ fn process_queue_inner(
         let picked = match pick_result {
             Ok(result) => result,
             Err(err) => {
+                if let Err(snapshot_error) = flush_snapshot_batch(root, &mut snapshot_updates) {
+                    on_changed(changed_tasks);
+                    return Err(snapshot_error);
+                }
                 on_changed(changed_tasks);
                 return Err(err);
             }
         };
         let Some((task, queue)) = picked else {
+            if let Err(error) = flush_snapshot_batch(root, &mut snapshot_updates) {
+                on_changed(changed_tasks);
+                return Err(error);
+            }
             let queue = match with_queue_lock(root, || read_queue(root)) {
                 Ok(queue) => queue,
                 Err(err) => {
@@ -943,7 +952,7 @@ fn process_queue_inner(
                 } else {
                     match meta_result {
                         Ok(meta) => {
-                            write_task_meta_to_snapshot(root, &task, meta)?;
+                            snapshot_updates.insert(task.path.clone(), (task.clone(), meta));
                             if current.needs_rerun {
                                 current.status = FileChangeStatus::Pending;
                                 current.needs_rerun = false;
@@ -977,14 +986,79 @@ fn process_queue_inner(
         let queue = match update_result {
             Ok(queue) => queue,
             Err(err) => {
+                if let Err(snapshot_error) = flush_snapshot_batch(root, &mut snapshot_updates) {
+                    on_changed(changed_tasks);
+                    return Err(snapshot_error);
+                }
                 on_changed(changed_tasks);
                 return Err(err);
             }
         };
         if emit_after_update {
+            if let Err(error) = flush_snapshot_batch(root, &mut snapshot_updates) {
+                on_changed(changed_tasks);
+                return Err(error);
+            }
             on_queue(&queue);
         }
     }
+}
+
+fn flush_snapshot_batch(
+    root: &Path,
+    pending: &mut BTreeMap<String, (FileChangeTask, Option<FileMeta>)>,
+) -> Result<(), String> {
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let updates = std::mem::take(pending);
+    let result = with_queue_lock(root, || {
+        let mut snapshot = read_snapshot(root)?;
+        for (path, (_, meta)) in &updates {
+            match meta {
+                Some(meta) => {
+                    snapshot.files.insert(path.clone(), meta.clone());
+                }
+                None => {
+                    snapshot.files.remove(path);
+                }
+            }
+        }
+        snapshot.version = 1;
+        snapshot.updated_at = now_ms();
+        write_snapshot(root, &snapshot)
+    });
+    if let Err(error) = result {
+        restore_snapshot_batch(root, &updates, &error)?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn restore_snapshot_batch(
+    root: &Path,
+    updates: &BTreeMap<String, (FileChangeTask, Option<FileMeta>)>,
+    error: &str,
+) -> Result<(), String> {
+    with_queue_lock(root, || {
+        let mut queue = read_queue(root)?;
+        for (_, (task, _)) in updates {
+            if let Some(current) = queue.tasks.iter_mut().find(|item| item.id == task.id) {
+                if current.updated_at == task.updated_at {
+                    current.status = FileChangeStatus::Pending;
+                    current.error = Some(error.to_string());
+                    current.updated_at = now_ms();
+                }
+            } else {
+                let mut restored = task.clone();
+                restored.status = FileChangeStatus::Pending;
+                restored.error = Some(error.to_string());
+                restored.updated_at = now_ms();
+                queue.tasks.push(restored);
+            }
+        }
+        write_queue(root, &queue)
+    })
 }
 
 #[cfg(test)]
@@ -993,6 +1067,7 @@ fn apply_task_to_snapshot(root: &Path, task: &FileChangeTask) -> Result<(), Stri
     with_queue_lock(root, || write_task_meta_to_snapshot(root, task, meta))
 }
 
+#[cfg(test)]
 fn write_task_meta_to_snapshot(
     root: &Path,
     task: &FileChangeTask,
@@ -1315,7 +1390,24 @@ fn read_snapshot(root: &Path) -> Result<FileSnapshot, String> {
     })
 }
 
+#[cfg(test)]
+thread_local! {
+    static SNAPSHOT_WRITE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_snapshot_write_count() {
+    SNAPSHOT_WRITE_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn snapshot_write_count() -> usize {
+    SNAPSHOT_WRITE_COUNT.with(|count| count.get())
+}
+
 fn write_snapshot(root: &Path, snapshot: &FileSnapshot) -> Result<(), String> {
+    #[cfg(test)]
+    SNAPSHOT_WRITE_COUNT.with(|count| count.set(count.get() + 1));
     write_json(root.join(SNAPSHOT_FILE), snapshot)
 }
 
@@ -1995,23 +2087,43 @@ mod tests {
         enqueue_paths(&root, "p1", rels).unwrap();
 
         let snapshot_path = root.join(SNAPSHOT_FILE);
-        let mut queue_emits = 0;
+        let _ = fs::remove_file(&snapshot_path);
+        fs::create_dir_all(&snapshot_path).unwrap();
         let mut changed_count = 0;
         let result = process_queue_inner(
             &root,
             "p1",
-            |_| {
-                queue_emits += 1;
-                if queue_emits == 2 {
-                    fs::remove_file(&snapshot_path).unwrap();
-                    fs::create_dir_all(&snapshot_path).unwrap();
-                }
-            },
+            |_| {},
             |tasks| changed_count += tasks.len(),
         );
 
         assert!(result.is_err());
         assert_eq!(changed_count, QUEUE_EMIT_EVERY);
+        let queue = read_queue(&root).unwrap();
+        assert_eq!(queue.tasks.len(), 26);
+        assert!(queue.tasks.iter().all(|task| task.status == FileChangeStatus::Pending));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn process_queue_coalesces_snapshot_writes() {
+        let root = temp_root("coalesced-snapshot-writes");
+        ensure_sync_dir(&root).unwrap();
+        let rels = (0..10)
+            .map(|i| {
+                let rel = format!("raw/sources/{i}.md");
+                fs::write(root.join(&rel), format!("content {i}")).unwrap();
+                rel
+            })
+            .collect::<BTreeSet<_>>();
+        enqueue_paths(&root, "p1", rels).unwrap();
+        reset_snapshot_write_count();
+
+        process_queue_inner(&root, "p1", |_| {}, |_| {}).unwrap();
+        assert_eq!(snapshot_write_count(), 1);
+        let snapshot = read_snapshot(&root).unwrap();
+        assert_eq!(snapshot.files.len(), 10);
 
         let _ = fs::remove_dir_all(root);
     }
