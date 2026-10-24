@@ -1331,6 +1331,37 @@ fn web_search_result_limit(provider: &str, requested: usize) -> usize {
     requested.clamp(1, provider_max)
 }
 
+fn anytxt_request_limit(config: &AnyTxtConfig, top_k: usize) -> usize {
+    top_k
+        .clamp(1, 100)
+        .min(config.limit.unwrap_or(DEFAULT_ANYTXT_LIMIT).clamp(1, 100))
+}
+
+fn anytxt_request_input(config: &AnyTxtConfig, query: &str, top_k: usize) -> Value {
+    // AnyTXT has its own query syntax. The caller may already have rewritten
+    // natural language into keyword form, so do not run the source-search
+    // tokenizer here; pass the pattern through unchanged.
+    let filter_ext = config
+        .filter_ext
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("*");
+    let mut input = json!({
+        "pattern": query,
+        "filterExt": filter_ext,
+        "lastModifyBegin": 0,
+        "lastModifyEnd": ANYTXT_LAST_MODIFY_END,
+        "limit": anytxt_request_limit(config, top_k),
+        "offset": 0,
+        "order": 0
+    });
+    let filter_dir = config.filter_dir.as_deref().unwrap_or_default();
+    if !filter_dir.trim().is_empty() {
+        input["filterDir"] = Value::String(filter_dir.to_string());
+    }
+    input
+}
+
 pub async fn run_anytxt_search(
     query: &str,
     config: Option<AnyTxtConfig>,
@@ -1352,34 +1383,13 @@ pub async fn run_anytxt_search(
         .trim()
         .trim_end_matches('/');
     let endpoint = normalize_anytxt_endpoint(endpoint);
-    let limit = top_k
-        .clamp(1, 100)
-        .min(config.limit.unwrap_or(DEFAULT_ANYTXT_LIMIT).clamp(1, 100));
-    // AnyTXT has its own query syntax. The caller may already have rewritten
-    // natural language into keyword form, so do not run the source-search
-    // tokenizer here; pass the pattern through unchanged.
+    let limit = anytxt_request_limit(&config, top_k);
     let pattern = query.to_string();
-    let filter_dir = config.filter_dir.unwrap_or_default();
-    let filter_ext = config
-        .filter_ext
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "*".to_string());
     let client = crate::proxy::configure_http_client(reqwest::Client::builder())
         .timeout(std::time::Duration::from_secs(WEB_SEARCH_TIMEOUT_SECS))
         .build()
         .map_err(|err| format!("Failed to build AnyTXT client: {err}"))?;
-    let mut input = json!({
-        "pattern": pattern,
-        "filterExt": filter_ext,
-        "lastModifyBegin": 0,
-        "lastModifyEnd": ANYTXT_LAST_MODIFY_END,
-        "limit": limit.to_string(),
-        "offset": 0,
-        "order": 0
-    });
-    if !filter_dir.trim().is_empty() {
-        input["filterDir"] = Value::String(filter_dir);
-    }
+    let input = anytxt_request_input(&config, query, top_k);
     let response = client
         .post(&endpoint)
         .header("Accept", "application/json")
@@ -4050,6 +4060,30 @@ mod tests {
             cfg.sear_xng_url.as_deref(),
             Some("https://search.example.com")
         );
+    }
+
+    #[test]
+    fn anytxt_limit_is_numeric_and_bounded() {
+        let input = anytxt_request_input(
+            &AnyTxtConfig {
+                limit: Some(500),
+                ..Default::default()
+            },
+            "alpha",
+            1_000,
+        );
+        assert!(input["limit"].is_number());
+        assert_eq!(input["limit"], json!(100));
+
+        let custom = anytxt_request_input(
+            &AnyTxtConfig {
+                limit: Some(5),
+                ..Default::default()
+            },
+            "alpha",
+            2,
+        );
+        assert_eq!(custom["limit"], json!(2));
     }
 
     #[test]
