@@ -134,6 +134,7 @@
 > - **近期 closed issue 回归**：#809（来源摘要覆盖）、#799（分析截断）、#793（长文件名）、#790（UI）、#783-#779（合并模板、实体、研究来源与 wikilink）、#770（同 stem 向量 ID）、#768（图片路径空格）、#765（MiniMax header）、#763（图谱别名性能）、#758（Ingest 恢复）、#756（截断）、#754（校验 MCP 写入）、#736（Excel 日期）、#735（图片摄取）、#734（related 图谱边）、#733（lint stub）。相关上游实现已包含，按现有单元/集成测试复核，不重复 cherry-pick。
 > - **安全与运行时**：PDF.js 6.4.299、MCP SDK 1.32.2、KaTeX 0.19.1、Milkdown 7.22.3，CI Node 22（最低 22.13）；主应用与 MCP `npm audit` 均为 0。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2752 ✅（199 文件）/ cargo check ✅ / cargo test 468 ✅（2 ignored）/ mcp:test 25 ✅ / npm audit 0。真实 DeepSeek/Ollama/AnyTXT 服务、Intel Mac、Windows/Linux 桌面、特定 PDF 与大型语料实测未在本机覆盖；跨平台产物以 CI 为准。
+> - **原生构建与 UI 验收边界**：本机无图形会话，Finder AppleScript 返回 `-600`；使用 Tauri 的 `CI=true` 模式进行本地打包（只跳过 Finder 图标排版），更新签名由 GitHub 仓库密钥完成，不在本机生成或替换私钥。浏览器 UI 验收使用 Tauri mock，不代替原生桌面端到端测试。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局
