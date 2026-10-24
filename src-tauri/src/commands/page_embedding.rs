@@ -7,8 +7,8 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use super::search::{
-    fetch_embedding_batch, fetch_embedding_with_retry, supports_embedding_batch,
-    SearchEmbeddingConfig,
+    SearchEmbeddingConfig, embedding_batch_size, fetch_embedding_batch, fetch_embedding_with_retry,
+    supports_embedding_batch,
 };
 use super::vectorstore::{self, ChunkUpsertInput};
 
@@ -18,7 +18,6 @@ const MIN_CHUNK_CHARS: usize = 64;
 const MAX_CHUNK_CHARS: usize = 32_000;
 const MAX_PAGE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_PAGE_CHUNKS: usize = 512;
-const EMBEDDING_BATCH_SIZE: usize = 64;
 const PROVIDER_PHASE_TIMEOUT: Duration = Duration::from_secs(300);
 const REVISION_DIR: &str = ".llm-wiki/embedding-revisions";
 
@@ -162,7 +161,8 @@ pub async fn embed_wiki_page(
             PageEmbeddingErrorKind::InvalidRequest,
             format!(
                 "Wiki page produces {} chunks, exceeding the {} chunk limit; increase maxChunkChars or split the page",
-                chunks.len(), MAX_PAGE_CHUNKS
+                chunks.len(),
+                MAX_PAGE_CHUNKS
             ),
         ));
     }
@@ -224,7 +224,7 @@ async fn prepare_embedding_rows(
     // failure therefore leaves the previous, known-good page index intact.
     let mut rows = Vec::with_capacity(chunks.len());
     if supports_embedding_batch(&config) {
-        for batch in chunks.chunks(EMBEDDING_BATCH_SIZE) {
+        for batch in chunks.chunks(embedding_batch_size(config)) {
             let texts = batch
                 .iter()
                 .map(|chunk| enrich_chunk(&title, chunk))
@@ -724,6 +724,8 @@ mod tests {
             extra_headers: Some(BTreeMap::from([("X-Route".to_string(), "a".to_string())])),
             max_chunk_chars: Some(1_000),
             overlap_chunk_chars: Some(200),
+            batch_size: None,
+            request_timeout_secs: None,
         }
     }
 
@@ -749,12 +751,16 @@ mod tests {
         let chunks = chunk_markdown(input, 64, 8);
         assert_eq!(extract_title(input, "fallback"), "测试页面");
         assert!(chunks.iter().all(|chunk| !chunk.text.contains("title:")));
-        assert!(chunks
-            .iter()
-            .any(|chunk| chunk.heading_path.contains("# 第一章")));
-        assert!(chunks
-            .iter()
-            .any(|chunk| chunk.heading_path.contains("## 第二节")));
+        assert!(
+            chunks
+                .iter()
+                .any(|chunk| chunk.heading_path.contains("# 第一章"))
+        );
+        assert!(
+            chunks
+                .iter()
+                .any(|chunk| chunk.heading_path.contains("## 第二节"))
+        );
     }
 
     #[test]
@@ -852,9 +858,11 @@ mod tests {
         let chunks = chunk_markdown(&input, 1_000, 200);
 
         assert!(chunks.len() > 1);
-        assert!(chunks
-            .iter()
-            .all(|chunk| chunk.text.chars().count() <= MAX_CHUNK_CHARS));
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| chunk.text.chars().count() <= MAX_CHUNK_CHARS)
+        );
     }
 
     #[test]

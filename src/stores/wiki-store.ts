@@ -69,6 +69,7 @@ export type SearchProvider =
   | "ollama"
   | "brave"
   | "bocha"
+  | "deepseek"
   | "firecrawl"
   | "none"
 export type DeepResearchSource = "web" | "anytxt" | "both"
@@ -151,8 +152,10 @@ interface EmbeddingConfig {
   overlapChunkChars?: number
   /** Maximum embedding HTTP requests in flight. Defaults to 1 for compatibility. */
   concurrency?: number
-  /** Texts per OpenAI-compatible embedding request. Defaults to 1. */
+  /** Texts per OpenAI-compatible embedding request. Bulk indexing defaults to 1; single-page indexing chooses a provider-aware default. */
   batchSize?: number
+  /** Per-request timeout. Undefined selects 8 seconds for cloud endpoints and 60 seconds for local/private endpoints. */
+  requestTimeoutSecs?: number
   /**
    * Extra HTTP headers to send with every embedding request, e.g.
    *   { "X-Model-Provider-Id": "siliconflow" }

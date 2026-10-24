@@ -73,6 +73,13 @@ const SEARCH_PROVIDERS = [
     keyPlaceholder: "Enter your Bocha API key (open.bocha.cn)",
     configKind: "key",
   },
+  {
+    id: "deepseek",
+    label: "DeepSeek",
+    hint: "Search & Fetch with your DeepSeek API key",
+    keyPlaceholder: "Enter your DeepSeek API key",
+    configKind: "key",
+  },
 ] as const
 
 export function WebSearchSection() {

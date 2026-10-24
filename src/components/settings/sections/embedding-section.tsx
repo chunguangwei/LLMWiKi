@@ -150,6 +150,7 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
     overlapChunkChars: draft.embeddingOverlapChunkChars,
     concurrency: draft.embeddingConcurrency,
     batchSize: draft.embeddingBatchSize,
+    requestTimeoutSecs: draft.embeddingRequestTimeoutSecs,
     extraHeaders: draft.embeddingExtraHeaders,
   }
 
@@ -358,6 +359,24 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
                 />
                 <p className="text-xs text-muted-foreground">
                   {t("settings.sections.embedding.batchSizeHint")}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>{t("settings.sections.embedding.requestTimeoutSecs")}</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={300}
+                  step={1}
+                  value={draft.embeddingRequestTimeoutSecs ?? ""}
+                  onChange={(e) => {
+                    const value = parsePositiveInteger(e.target.value)
+                    setDraft("embeddingRequestTimeoutSecs", value === undefined ? undefined : Math.min(value, 300))
+                  }}
+                  placeholder={t("settings.sections.embedding.requestTimeoutAuto")}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.sections.embedding.requestTimeoutSecsHint")}
                 </p>
               </div>
             </div>

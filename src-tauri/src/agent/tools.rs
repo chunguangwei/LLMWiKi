@@ -12,18 +12,18 @@ use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::task::JoinHandle;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use walkdir::WalkDir;
 
 use crate::commands::external_search::file_url_for_path;
 use crate::commands::search::{self, SearchEmbeddingConfig};
 
 use super::types::{AgentKnowledgeContext, AgentReference, AgentVersionSummary};
-use super::workspace::{agent_workspace_path, AGENT_WORKSPACE_DIR};
+use super::workspace::{AGENT_WORKSPACE_DIR, agent_workspace_path};
 
 // Tool I/O limits are backend security boundaries. Do not relax them only in
 // the UI: API and MCP callers can invoke the same tools without going through
@@ -1309,20 +1309,25 @@ pub async fn run_web_search(
         "ollama" => ollama_search(&client, query, &config, max_results).await?,
         "brave" => brave_search(&client, query, &config, max_results).await?,
         "bocha" => bocha_search(&client, query, &config, max_results).await?,
+        "deepseek" => deepseek_search(&client, query, &config, max_results).await?,
         "serpapi" => serpapi_search(&client, query, &config, max_results).await?,
         other => {
             return Err(format!(
                 "Web search provider '{other}' is not supported by the Rust Agent yet"
-            ))
+            ));
         }
     };
     Ok(web_items_to_references(raw, max_results))
 }
 
 fn web_search_result_limit(provider: &str, requested: usize) -> usize {
-    // Bocha documents a 1-50 range. Existing providers retain the historical
-    // 20-result ceiling so adding Bocha cannot increase their request cost.
-    let provider_max = if provider == "bocha" { 50 } else { 20 };
+    // Bocha and DeepSeek document a 1-50 range. Other providers retain the
+    // historical 20-result ceiling so adding providers cannot increase their cost.
+    let provider_max = if matches!(provider, "bocha" | "deepseek") {
+        50
+    } else {
+        20
+    };
     requested.clamp(1, provider_max)
 }
 
@@ -1978,6 +1983,175 @@ fn parse_bocha_results(value: Value) -> Vec<WebSearchItem> {
                 .to_string(),
         })
         .collect()
+}
+
+async fn deepseek_search(
+    client: &reqwest::Client,
+    query: &str,
+    config: &WebSearchConfig,
+    max_results: usize,
+) -> Result<Vec<WebSearchItem>, String> {
+    if query.chars().count() > 128 {
+        return Err("DeepSeek Search queries must contain at most 128 characters".to_string());
+    }
+    let key = required_api_key(config, "DeepSeek")?;
+    let response = deepseek_post(
+        client,
+        "https://api.deepseek.com/v1/tools/search",
+        key,
+        &json!({
+            "query": query,
+            "count": max_results.clamp(1, 50),
+            "need_content": false
+        }),
+    )
+    .await?;
+    parse_web_json_response(response, "DeepSeek Search", parse_deepseek_results).await
+}
+
+fn parse_deepseek_results(value: Value) -> Vec<WebSearchItem> {
+    value
+        .get("results")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|item| WebSearchItem {
+            title: item
+                .get("title")
+                .and_then(Value::as_str)
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or("Untitled")
+                .to_string(),
+            url: item
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            snippet: item
+                .get("summary")
+                .and_then(Value::as_str)
+                .filter(|summary| !summary.trim().is_empty())
+                .or_else(|| item.get("snippet").and_then(Value::as_str))
+                .or_else(|| item.get("content").and_then(Value::as_str))
+                .unwrap_or("")
+                .to_string(),
+        })
+        .collect()
+}
+
+fn deepseek_retryable(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::REQUEST_TIMEOUT
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+}
+
+async fn deepseek_post(
+    client: &reqwest::Client,
+    endpoint: &str,
+    key: &str,
+    body: &Value,
+) -> Result<reqwest::Response, String> {
+    let mut retried = false;
+    loop {
+        let response = client
+            .post(endpoint)
+            .bearer_auth(key)
+            .json(body)
+            .send()
+            .await
+            .map_err(|error| format!("Network error reaching DeepSeek: {error}"))?;
+        if retried || !deepseek_retryable(response.status()) {
+            return Ok(response);
+        }
+        retried = true;
+        let delay_ms = response
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(|seconds| seconds.saturating_mul(1_000).min(2_000))
+            .unwrap_or(200);
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeepSeekFetchResult {
+    pub title: String,
+    pub content: String,
+}
+
+fn validate_deepseek_fetch_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.len() > 8_192 {
+        return Err("DeepSeek Fetch URLs must contain at most 8192 characters".to_string());
+    }
+    let parsed = reqwest::Url::parse(trimmed)
+        .map_err(|error| format!("Invalid DeepSeek Fetch URL: {error}"))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err(
+            "DeepSeek Fetch requires an HTTP(S) URL with a host and no credentials".to_string(),
+        );
+    }
+    Ok(trimmed.to_string())
+}
+
+pub async fn run_deepseek_fetch(
+    url: &str,
+    config: Option<WebSearchConfig>,
+) -> Result<DeepSeekFetchResult, String> {
+    let url = validate_deepseek_fetch_url(url)?;
+    let config = config
+        .map(|config| config.resolved())
+        .ok_or_else(|| "DeepSeek Fetch requires a search configuration".to_string())?;
+    let key = required_api_key(&config, "DeepSeek")?;
+    let client = crate::proxy::configure_http_client(reqwest::Client::builder())
+        .timeout(std::time::Duration::from_secs(WEB_SEARCH_TIMEOUT_SECS))
+        .build()
+        .map_err(|error| format!("Failed to build DeepSeek Fetch client: {error}"))?;
+    let response = deepseek_post(
+        &client,
+        "https://api.deepseek.com/v1/tools/fetch",
+        key,
+        &json!({ "url": url }),
+    )
+    .await?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read DeepSeek Fetch response: {error}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "DeepSeek Fetch failed ({status}): {}",
+            trim_text(&text, 300)
+        ));
+    }
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|error| format!("DeepSeek Fetch returned invalid JSON: {error}"))?;
+    if let Some(error) = value.get("error").and_then(Value::as_str) {
+        return Err(format!("DeepSeek Fetch failed: {error}"));
+    }
+    let content = value
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if content.trim().is_empty() {
+        return Err("DeepSeek Fetch returned no page content".to_string());
+    }
+    Ok(DeepSeekFetchResult {
+        title: value
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        content,
+    })
 }
 
 async fn serpapi_search(
@@ -3090,9 +3264,11 @@ mod tests {
             .await
             .unwrap();
         std::env::remove_var("LLM_WIKI_SECRET_TEST_SENTINEL");
-        assert!(output
-            .stdout
-            .contains(&format!("LLM_WIKI_PROJECT={}", root.to_string_lossy())));
+        assert!(
+            output
+                .stdout
+                .contains(&format!("LLM_WIKI_PROJECT={}", root.to_string_lossy()))
+        );
         assert!(output.stdout.contains(&format!(
             "LLM_WIKI_AGENT_WORKSPACE={}",
             root.join(AGENT_WORKSPACE_DIR).to_string_lossy()
@@ -3124,14 +3300,18 @@ mod tests {
             "hello"
         );
         assert!(!root.join("generated.txt").exists());
-        assert!(output
-            .stdout
-            .replace('\\', "/")
-            .contains(&workspace.to_string_lossy().replace('\\', "/")));
-        assert!(output
-            .generated_files
-            .iter()
-            .any(|file| file.path == "agent-workspace/generated.txt"));
+        assert!(
+            output
+                .stdout
+                .replace('\\', "/")
+                .contains(&workspace.to_string_lossy().replace('\\', "/"))
+        );
+        assert!(
+            output
+                .generated_files
+                .iter()
+                .any(|file| file.path == "agent-workspace/generated.txt")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3149,10 +3329,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(output
-            .generated_files
-            .iter()
-            .any(|file| { file.path == "agent-workspace/images/cover.png" && file.bytes > 0 }));
+        assert!(
+            output
+                .generated_files
+                .iter()
+                .any(|file| { file.path == "agent-workspace/images/cover.png" && file.bytes > 0 })
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3193,9 +3375,11 @@ mod tests {
         fs::write(&file, "after!").unwrap();
         let changed = changed_workspace_files(&workspace, before);
 
-        assert!(changed
-            .iter()
-            .any(|file| file.path == "agent-workspace/artifact.html"));
+        assert!(
+            changed
+                .iter()
+                .any(|file| file.path == "agent-workspace/artifact.html")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3220,13 +3404,15 @@ mod tests {
         assert!(write_workspace_file(root.to_str().unwrap(), ".hidden/file.txt", "x").is_err());
         assert!(write_workspace_file(root.to_str().unwrap(), "cover./file.txt", "x").is_err());
         assert!(write_workspace_file(root.to_str().unwrap(), "cover /file.txt", "x").is_err());
-        assert!(write_workspace_file(
-            root.to_str().unwrap(),
-            "large.txt",
-            &"x".repeat(MAX_WORKSPACE_WRITE_BYTES + 1)
-        )
-        .unwrap_err()
-        .contains("too large"));
+        assert!(
+            write_workspace_file(
+                root.to_str().unwrap(),
+                "large.txt",
+                &"x".repeat(MAX_WORKSPACE_WRITE_BYTES + 1)
+            )
+            .unwrap_err()
+            .contains("too large")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3293,23 +3479,29 @@ mod tests {
     async fn shell_exec_rejects_invalid_inputs() {
         let root = std::env::temp_dir().join(format!("llm-wiki-shell-invalid-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        assert!(run_shell_exec(root.to_str().unwrap(), "", 1)
+        assert!(
+            run_shell_exec(root.to_str().unwrap(), "", 1)
+                .await
+                .unwrap_err()
+                .contains("empty")
+        );
+        assert!(
+            run_shell_exec(
+                root.to_str().unwrap(),
+                &"x".repeat(MAX_SHELL_COMMAND_CHARS + 1),
+                1
+            )
             .await
             .unwrap_err()
-            .contains("empty"));
-        assert!(run_shell_exec(
-            root.to_str().unwrap(),
-            &"x".repeat(MAX_SHELL_COMMAND_CHARS + 1),
-            1
-        )
-        .await
-        .unwrap_err()
-        .contains("too long"));
+            .contains("too long")
+        );
         let missing = root.join("missing");
-        assert!(run_shell_exec(missing.to_str().unwrap(), "echo no", 1)
-            .await
-            .unwrap_err()
-            .contains("not available"));
+        assert!(
+            run_shell_exec(missing.to_str().unwrap(), "echo no", 1)
+                .await
+                .unwrap_err()
+                .contains("not available")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3318,13 +3510,10 @@ mod tests {
         let root = std::env::temp_dir().join(format!("llm-wiki-agent-write-{}", Uuid::new_v4()));
         fs::create_dir_all(root.join("wiki")).unwrap();
 
-        assert!(write_wiki_page_with_options(
-            root.to_str().unwrap(),
-            "../secret.md",
-            "# Secret",
-            false
-        )
-        .is_err());
+        assert!(
+            write_wiki_page_with_options(root.to_str().unwrap(), "../secret.md", "# Secret", false)
+                .is_err()
+        );
         let absolute_error = write_wiki_page_with_options(
             root.to_str().unwrap(),
             "/wiki/absolute.md",
@@ -3333,20 +3522,14 @@ mod tests {
         )
         .unwrap_err();
         assert!(absolute_error.contains("must stay inside the project"));
-        assert!(write_wiki_page_with_options(
-            root.to_str().unwrap(),
-            "raw/sources/a.md",
-            "# A",
-            false
-        )
-        .is_err());
-        assert!(write_wiki_page_with_options(
-            root.to_str().unwrap(),
-            "wiki/.hidden/a.md",
-            "# A",
-            false
-        )
-        .is_err());
+        assert!(
+            write_wiki_page_with_options(root.to_str().unwrap(), "raw/sources/a.md", "# A", false)
+                .is_err()
+        );
+        assert!(
+            write_wiki_page_with_options(root.to_str().unwrap(), "wiki/.hidden/a.md", "# A", false)
+                .is_err()
+        );
         assert!(
             write_wiki_page_with_options(root.to_str().unwrap(), "wiki/aux.md", "# A", false)
                 .is_err()
@@ -3363,27 +3546,23 @@ mod tests {
             write_wiki_page_with_options(root.to_str().unwrap(), "wiki/a?b.md", "# A", false)
                 .is_err()
         );
-        assert!(write_wiki_page_with_options(
-            root.to_str().unwrap(),
-            "wiki/topic./a.md",
-            "# A",
-            false
-        )
-        .is_err());
-        assert!(write_wiki_page_with_options(
-            root.to_str().unwrap(),
-            "wiki/topic /a.md",
-            "# A",
-            false
-        )
-        .is_err());
-        assert!(write_wiki_page_with_options(
-            root.to_str().unwrap(),
-            "wiki/queries/huge.md",
-            &"x".repeat(MAX_WRITE_PAGE_BYTES + 1),
-            false,
-        )
-        .is_err());
+        assert!(
+            write_wiki_page_with_options(root.to_str().unwrap(), "wiki/topic./a.md", "# A", false)
+                .is_err()
+        );
+        assert!(
+            write_wiki_page_with_options(root.to_str().unwrap(), "wiki/topic /a.md", "# A", false)
+                .is_err()
+        );
+        assert!(
+            write_wiki_page_with_options(
+                root.to_str().unwrap(),
+                "wiki/queries/huge.md",
+                &"x".repeat(MAX_WRITE_PAGE_BYTES + 1),
+                false,
+            )
+            .is_err()
+        );
 
         let reference = write_wiki_page_with_options(
             root.to_str().unwrap(),
@@ -3536,18 +3715,22 @@ mod tests {
         let org_refs = search_sources(root.to_str().unwrap(), "org wording", 5).unwrap();
         let pdf_refs = search_sources(root.to_str().unwrap(), "cached regulation", 5).unwrap();
 
-        assert!(org_refs
-            .iter()
-            .any(|reference| reference.path == "raw/sources/notes.org"));
+        assert!(
+            org_refs
+                .iter()
+                .any(|reference| reference.path == "raw/sources/notes.org")
+        );
         let pdf_ref = pdf_refs
             .iter()
             .find(|reference| reference.path == "raw/sources/regulation.pdf")
             .unwrap();
-        assert!(pdf_ref
-            .snippet
-            .as_deref()
-            .unwrap()
-            .contains("cached regulation"));
+        assert!(
+            pdf_ref
+                .snippet
+                .as_deref()
+                .unwrap()
+                .contains("cached regulation")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3563,12 +3746,16 @@ mod tests {
         )
         .unwrap();
 
-        assert!(search_sources(root.to_str().unwrap(), "needle", 5)
-            .unwrap()
-            .is_empty());
-        assert!(search_graph(root.to_str().unwrap(), "needle", 5)
-            .unwrap()
-            .is_empty());
+        assert!(
+            search_sources(root.to_str().unwrap(), "needle", 5)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            search_graph(root.to_str().unwrap(), "needle", 5)
+                .unwrap()
+                .is_empty()
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3614,29 +3801,34 @@ mod tests {
         let refs = search_graph(root.to_str().unwrap(), "Agent Graph", 5).unwrap();
         assert_eq!(refs.len(), 3);
         assert_eq!(refs[0].title, "Agent Graph");
-        assert!(refs[0]
-            .snippet
-            .as_deref()
-            .unwrap()
-            .contains("matched entity"));
-        assert!(refs
-            .iter()
-            .skip(1)
-            .all(|reference| reference.kind == "graph"
+        assert!(
+            refs[0]
+                .snippet
+                .as_deref()
+                .unwrap()
+                .contains("matched entity")
+        );
+        assert!(refs.iter().skip(1).all(|reference| {
+            reference.kind == "graph"
                 && reference
                     .snippet
                     .as_deref()
                     .unwrap()
-                    .contains("direct neighbor")));
-        assert!(refs
-            .iter()
-            .any(|reference| reference.title == "Tool Registry"));
-        assert!(refs
-            .iter()
-            .any(|reference| reference.title == "Context Builder"));
-        assert!(!refs
-            .iter()
-            .any(|reference| reference.title == "Unrelated Hub"));
+                    .contains("direct neighbor")
+        }));
+        assert!(
+            refs.iter()
+                .any(|reference| reference.title == "Tool Registry")
+        );
+        assert!(
+            refs.iter()
+                .any(|reference| reference.title == "Context Builder")
+        );
+        assert!(
+            !refs
+                .iter()
+                .any(|reference| reference.title == "Unrelated Hub")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3756,6 +3948,50 @@ mod tests {
         assert_eq!(web_search_result_limit("bocha", 100), 50);
         assert_eq!(web_search_result_limit("tavily", 100), 20);
         assert_eq!(web_search_result_limit("bocha", 0), 1);
+    }
+
+    #[test]
+    fn deepseek_results_prefer_model_summaries_and_accept_fifty_results() {
+        let items = parse_deepseek_results(json!({
+            "results": [
+                {
+                    "title": "DeepSeek result",
+                    "url": "https://example.com/deepseek",
+                    "snippet": "short",
+                    "summary": "model-ready summary"
+                },
+                {
+                    "title": "Fallback result",
+                    "url": "https://example.com/fallback",
+                    "summary": "",
+                    "snippet": "fallback snippet"
+                }
+            ]
+        }));
+        assert_eq!(items[0].snippet, "model-ready summary");
+        assert_eq!(items[1].snippet, "fallback snippet");
+        assert_eq!(web_search_result_limit("deepseek", 100), 50);
+        assert_eq!(web_search_result_limit("tavily", 100), 20);
+    }
+
+    #[test]
+    fn deepseek_fetch_urls_require_http_hosts_without_credentials() {
+        assert!(validate_deepseek_fetch_url("https://example.com/article").is_ok());
+        assert!(validate_deepseek_fetch_url("ftp://example.com/article").is_err());
+        assert!(validate_deepseek_fetch_url("https://user:secret@example.com").is_err());
+        assert!(
+            validate_deepseek_fetch_url(&format!("https://example.com/{}", "x".repeat(8_200)))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn deepseek_retries_only_transient_http_statuses() {
+        assert!(deepseek_retryable(reqwest::StatusCode::REQUEST_TIMEOUT));
+        assert!(deepseek_retryable(reqwest::StatusCode::TOO_MANY_REQUESTS));
+        assert!(deepseek_retryable(reqwest::StatusCode::BAD_GATEWAY));
+        assert!(!deepseek_retryable(reqwest::StatusCode::UNAUTHORIZED));
+        assert!(!deepseek_retryable(reqwest::StatusCode::NOT_FOUND));
     }
 
     #[test]

@@ -37,6 +37,8 @@ export interface SettingsDraft {
   embeddingConcurrency: number
   /** Inputs per request for OpenAI-compatible batch endpoints. */
   embeddingBatchSize: number
+  /** Per-request timeout in seconds. Empty selects a provider-aware default. */
+  embeddingRequestTimeoutSecs: number | undefined
   /** Extra HTTP headers to send on every embedding request. Empty = none. */
   embeddingExtraHeaders: Record<string, string>
 

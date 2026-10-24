@@ -1,6 +1,9 @@
 import { fetch } from "@tauri-apps/plugin-http"
+import { invoke } from "@tauri-apps/api/core"
 import { Readability } from "@mozilla/readability"
 import TurndownService from "turndown"
+import type { SearchApiConfig } from "@/stores/wiki-store"
+import { resolveSearchConfig } from "@/lib/web-search"
 
 export interface WebFetchResult {
   url: string
@@ -17,6 +20,7 @@ export interface FetchAndExtractOptions {
   signal?: AbortSignal
   userAgent?: string
   timeoutMs?: number
+  searchConfig?: SearchApiConfig
 }
 
 const DEFAULT_USER_AGENT =
@@ -92,6 +96,22 @@ export async function fetchAndExtract(
   url: string,
   options: FetchAndExtractOptions = {},
 ): Promise<WebFetchResult> {
+  const searchConfig = options.searchConfig ? resolveSearchConfig(options.searchConfig) : null
+  if (searchConfig?.provider === "deepseek") {
+    const page = await invoke<{ title: string; markdown: string }>("deepseek_fetch", {
+      url,
+      config: searchConfig,
+    })
+    return {
+      url,
+      finalUrl: url,
+      title: page.title.trim() || deriveTitleFromUrl(url),
+      markdown: page.markdown,
+      contentType: "text/markdown",
+      fetchedAt: new Date().toISOString(),
+    }
+  }
+
   const ac = options.timeoutMs
     ? AbortSignal.timeout(options.timeoutMs)
     : undefined

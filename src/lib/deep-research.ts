@@ -12,6 +12,7 @@ import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { useReviewStore } from "@/stores/review-store"
 import { stripBodyWikilinkPathPrefixes } from "./page-merge"
 import { normalizeMalformedWikilinks } from "./ingest-sanitize"
+import { fetchAndExtract } from "./web-fetch"
 
 const MAX_RESEARCH_SOURCES = 20
 const MIN_RESEARCH_CONTENT_CHARS = 120
@@ -85,6 +86,7 @@ export function researchPageIdFromPath(filePath: string): string {
 interface ResearchSourceDeps {
   webSearch: typeof webSearch
   anyTxtSearch: typeof anyTxtSearchSmart
+  fetchPage?: typeof fetchAndExtract
 }
 
 interface CollectResearchSourceOptions {
@@ -474,12 +476,34 @@ export async function collectResearchSources(
   if (filteredResults.length < allResults.length) {
     console.info(`[DeepResearch] relevance gate removed ${allResults.length - filteredResults.length} of ${allResults.length} candidate source(s).`)
   }
+  const enrichedResults = resolvedSearchConfig.provider === "deepseek"
+    ? await enrichDeepSeekResults(filteredResults, resolvedSearchConfig, deps.fetchPage ?? fetchAndExtract)
+    : filteredResults
   return {
-    results: filteredResults,
+    results: enrichedResults,
     errors,
     candidateCount: allResults.length,
     rejectedCount: allResults.length - filteredResults.length,
   }
+}
+
+async function enrichDeepSeekResults(
+  results: import("./web-search").WebSearchResult[],
+  config: SearchApiConfig,
+  fetchPage: typeof fetchAndExtract,
+): Promise<import("./web-search").WebSearchResult[]> {
+  const pageCap = Math.min(12_000, Math.floor(120_000 / Math.max(1, results.length)))
+  return Promise.all(results.map(async (result) => {
+    if (!/^https?:\/\//i.test(result.url)) return result
+    try {
+      const page = await fetchPage(result.url, { searchConfig: config })
+      const markdown = page.markdown.trim()
+      return markdown ? { ...result, snippet: markdown.slice(0, pageCap) } : result
+    } catch (error) {
+      console.warn("[DeepResearch] DeepSeek Fetch failed; using search summary:", error)
+      return result
+    }
+  }))
 }
 
 function hasAnyTxtSource(searchConfig: SearchApiConfig): boolean {

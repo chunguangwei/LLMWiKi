@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::agent::tools::{run_anytxt_search, run_web_search, AnyTxtConfig, WebSearchConfig};
+use crate::agent::tools::{AnyTxtConfig, WebSearchConfig, run_anytxt_search, run_web_search};
 use crate::panic_guard::run_guarded_async;
 
 /// Frontend-facing search result shape. The Rust Agent uses
@@ -33,6 +33,28 @@ pub async fn web_search(
                 snippet: item.snippet.unwrap_or_default(),
             })
             .collect())
+    })
+    .await
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalFetchResult {
+    pub title: String,
+    pub markdown: String,
+}
+
+#[tauri::command]
+pub async fn deepseek_fetch(
+    url: String,
+    config: WebSearchConfig,
+) -> Result<ExternalFetchResult, String> {
+    run_guarded_async("deepseek_fetch", async move {
+        let page = crate::agent::tools::run_deepseek_fetch(&url, Some(config)).await?;
+        Ok(ExternalFetchResult {
+            title: page.title,
+            markdown: page.content,
+        })
     })
     .await
 }

@@ -744,6 +744,7 @@ pub fn run() {
             commands::search::embedding_fetch_batch,
             commands::search::get_page_links,
             commands::external_search::web_search,
+            commands::external_search::deepseek_fetch,
             commands::external_search::anytxt_search,
             clip_server_status,
             api_server_status,

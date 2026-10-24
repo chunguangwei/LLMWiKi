@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use walkdir::WalkDir;
 
 use crate::commands::vectorstore;
@@ -102,6 +102,28 @@ pub struct SearchEmbeddingConfig {
     pub max_chunk_chars: Option<usize>,
     #[serde(default)]
     pub overlap_chunk_chars: Option<usize>,
+    #[serde(default)]
+    pub batch_size: Option<usize>,
+    #[serde(default)]
+    pub request_timeout_secs: Option<u64>,
+}
+
+pub(crate) fn embedding_batch_size(cfg: &SearchEmbeddingConfig) -> usize {
+    let default = if is_local_or_private_http_endpoint(&cfg.endpoint) {
+        8
+    } else {
+        64
+    };
+    cfg.batch_size.unwrap_or(default).clamp(1, 64)
+}
+
+pub(crate) fn embedding_request_timeout_secs(cfg: &SearchEmbeddingConfig) -> u64 {
+    let default = if is_local_or_private_http_endpoint(&cfg.endpoint) {
+        60
+    } else {
+        SEARCH_EMBEDDING_TIMEOUT_SECS
+    };
+    cfg.request_timeout_secs.unwrap_or(default).clamp(1, 300)
 }
 
 #[tauri::command]
@@ -1220,13 +1242,71 @@ pub(crate) async fn fetch_embedding_batch(
         );
     }
 
+    match fetch_embedding_batch_once(texts, cfg).await {
+        Ok(vectors) => Ok(vectors),
+        Err(error) => {
+            let can_split = texts.len() > 1
+                && matches!(
+                    &error,
+                    EmbeddingBatchError::Timeout(_) | EmbeddingBatchError::Oversize(_)
+                );
+            if can_split {
+                let midpoint = texts.len() / 2;
+                eprintln!(
+                    "[Embedding] splitting batch of {} inputs after a timeout or provider size error",
+                    texts.len()
+                );
+                let mut left = Box::pin(fetch_embedding_batch(&texts[..midpoint], cfg)).await?;
+                let right = Box::pin(fetch_embedding_batch(&texts[midpoint..], cfg)).await?;
+                left.extend(right);
+                return Ok(left);
+            }
+            if texts.len() == 1 && matches!(&error, EmbeddingBatchError::Oversize(_)) {
+                return fetch_embedding_with_retry(&texts[0], cfg, 3)
+                    .await
+                    .map(|embedding| vec![embedding]);
+            }
+            Err(match error {
+                EmbeddingBatchError::Timeout(message)
+                | EmbeddingBatchError::Oversize(message)
+                | EmbeddingBatchError::Other(message) => message,
+            })
+        }
+    }
+}
+
+enum EmbeddingBatchError {
+    Timeout(String),
+    Oversize(String),
+    Other(String),
+}
+
+fn embedding_batch_transport_error(
+    error: reqwest::Error,
+    texts: &[String],
+    timeout_secs: u64,
+    stage: &str,
+) -> EmbeddingBatchError {
+    if error.is_timeout() {
+        let chars = texts.iter().map(|text| text.chars().count()).sum::<usize>();
+        return EmbeddingBatchError::Timeout(format!(
+            "Embedding batch of {} chunks / {chars} chars exceeded the {timeout_secs}s request timeout: {error}",
+            texts.len()
+        ));
+    }
+    EmbeddingBatchError::Other(format!("Embedding batch {stage} failed: {error}"))
+}
+
+async fn fetch_embedding_batch_once(
+    texts: &[String],
+    cfg: &SearchEmbeddingConfig,
+) -> Result<Vec<Vec<f32>>, EmbeddingBatchError> {
     let endpoint = volcengine_embedding_endpoint(cfg);
+    let timeout_secs = embedding_request_timeout_secs(cfg);
     let mut req = crate::proxy::configure_http_client(reqwest::Client::builder())
-        .timeout(std::time::Duration::from_secs(
-            SEARCH_EMBEDDING_TIMEOUT_SECS,
-        ))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
-        .map_err(|e| format!("Embedding HTTP client error: {e}"))?
+        .map_err(|e| EmbeddingBatchError::Other(format!("Embedding HTTP client error: {e}")))?
         .post(&endpoint)
         .header("Content-Type", "application/json");
     if is_local_or_private_http_endpoint(&endpoint) {
@@ -1252,25 +1332,29 @@ pub(crate) async fn fetch_embedding_batch(
         .json(&json!({ "model": cfg.model, "input": texts }))
         .send()
         .await
-        .map_err(|e| format!("Embedding batch request failed: {e}"))?;
+        .map_err(|error| embedding_batch_transport_error(error, texts, timeout_secs, "request"))?;
     let status = response.status();
-    let response_text = response
-        .text()
-        .await
-        .map_err(|e| format!("Embedding batch response read failed: {e}"))?;
+    let response_text = response.text().await.map_err(|error| {
+        embedding_batch_transport_error(error, texts, timeout_secs, "response read")
+    })?;
     if !status.is_success() {
-        return Err(format!(
-            "Embedding batch API HTTP {status}: {}",
-            response_text.chars().take(200).collect::<String>()
-        ));
+        let preview = response_text.chars().take(200).collect::<String>();
+        if looks_like_oversize_error(status.as_u16(), &response_text) {
+            return Err(EmbeddingBatchError::Oversize(format!(
+                "Embedding batch API HTTP {status}: {preview}"
+            )));
+        }
+        return Err(EmbeddingBatchError::Other(format!(
+            "Embedding batch API HTTP {status}: {preview}"
+        )));
     }
     let data: Value = serde_json::from_str(&response_text).map_err(|e| {
-        format!(
+        EmbeddingBatchError::Other(format!(
             "Embedding batch response parse failed: {e}: {}",
             response_text.chars().take(200).collect::<String>()
-        )
+        ))
     })?;
-    parse_embedding_batch_values(&data, texts.len())
+    parse_embedding_batch_values(&data, texts.len()).map_err(EmbeddingBatchError::Other)
 }
 
 pub(crate) fn supports_embedding_batch(cfg: &SearchEmbeddingConfig) -> bool {
@@ -1354,10 +1438,9 @@ async fn fetch_embedding_once(
     } else {
         volcengine_embedding_endpoint(cfg)
     };
+    let timeout_secs = embedding_request_timeout_secs(cfg);
     let mut req = crate::proxy::configure_http_client(reqwest::Client::builder())
-        .timeout(std::time::Duration::from_secs(
-            SEARCH_EMBEDDING_TIMEOUT_SECS,
-        ))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| EmbeddingFetchError::Other(format!("Embedding HTTP client error: {e}")))?
         .post(&endpoint)
@@ -1877,6 +1960,8 @@ mod tests {
             extra_headers: None,
             max_chunk_chars: None,
             overlap_chunk_chars: None,
+            batch_size: None,
+            request_timeout_secs: None,
         };
 
         let endpoint = google_embedding_endpoint(&cfg);
@@ -1901,6 +1986,8 @@ mod tests {
             extra_headers: None,
             max_chunk_chars: None,
             overlap_chunk_chars: None,
+            batch_size: None,
+            request_timeout_secs: None,
         };
         assert_eq!(
             volcengine_embedding_endpoint(&cfg),
@@ -1929,6 +2016,8 @@ mod tests {
             extra_headers: None,
             max_chunk_chars: None,
             overlap_chunk_chars: None,
+            batch_size: None,
+            request_timeout_secs: None,
         };
 
         assert_eq!(
@@ -1954,6 +2043,8 @@ mod tests {
             extra_headers: None,
             max_chunk_chars: None,
             overlap_chunk_chars: None,
+            batch_size: None,
+            request_timeout_secs: None,
         };
         assert_eq!(
             volcengine_embedding_endpoint(&cfg),
@@ -1991,6 +2082,8 @@ mod tests {
             extra_headers: None,
             max_chunk_chars: None,
             overlap_chunk_chars: None,
+            batch_size: None,
+            request_timeout_secs: None,
         };
 
         assert!(is_doubao_multimodal_embedding_config(&cfg));
@@ -2163,7 +2256,11 @@ mod tests {
     #[test]
     fn vector_only_materialization_prefers_qualified_rows_over_legacy_rows() {
         let root = tmp_project();
-        write_page(&root, "wiki/entities/topic.md", "# Topic\n\nCurrent content.");
+        write_page(
+            &root,
+            "wiki/entities/topic.md",
+            "# Topic\n\nCurrent content.",
+        );
         let vector_results = vec![
             PageVectorResult {
                 id: "topic".to_string(),
@@ -2182,10 +2279,7 @@ mod tests {
             "entities/topic".to_string(),
             "wiki/entities/topic.md".to_string(),
         )]);
-        let legacy = BTreeMap::from([(
-            "topic".to_string(),
-            "wiki/entities/topic.md".to_string(),
-        )]);
+        let legacy = BTreeMap::from([("topic".to_string(), "wiki/entities/topic.md".to_string())]);
         let mut results = Vec::new();
 
         materialize_vector_only_results(
@@ -2277,10 +2371,11 @@ mod tests {
 
         assert_eq!(out.mode, "hybrid");
         assert_eq!(out.graph_hits, 1);
-        assert!(out
-            .results
-            .iter()
-            .any(|result| result.title == "Agent Runtime"));
+        assert!(
+            out.results
+                .iter()
+                .any(|result| result.title == "Agent Runtime")
+        );
         assert!(out.results.iter().any(|result| {
             result.title == "Tool Registry"
                 && result.snippet.contains("Graph neighbor")
@@ -2323,20 +2418,26 @@ mod tests {
         assert_eq!(links.outgoing[0].title, "Beta");
         assert_eq!(links.backlinks.len(), 1);
         assert_eq!(links.backlinks[0].title, "Gamma");
-        assert!(links.backlinks[0]
-            .snippet
-            .as_deref()
-            .unwrap()
-            .contains("Alpha"));
+        assert!(
+            links.backlinks[0]
+                .snippet
+                .as_deref()
+                .unwrap()
+                .contains("Alpha")
+        );
         assert_eq!(links.missing.len(), 2);
-        assert!(links
-            .missing
-            .iter()
-            .any(|entry| entry.title == "Missing Page"));
-        assert!(links
-            .missing
-            .iter()
-            .any(|entry| entry.title == "Title Only"));
+        assert!(
+            links
+                .missing
+                .iter()
+                .any(|entry| entry.title == "Missing Page")
+        );
+        assert!(
+            links
+                .missing
+                .iter()
+                .any(|entry| entry.title == "Title Only")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -2446,8 +2547,92 @@ mod tests {
                 { "index": 0, "embedding": [2.0] }
             ]
         });
-        assert!(parse_embedding_batch_values(&response, 2)
-            .unwrap_err()
-            .contains("duplicate"));
+        assert!(
+            parse_embedding_batch_values(&response, 2)
+                .unwrap_err()
+                .contains("duplicate")
+        );
+    }
+
+    fn openai_embedding_config(endpoint: &str) -> SearchEmbeddingConfig {
+        SearchEmbeddingConfig {
+            enabled: true,
+            endpoint: endpoint.to_string(),
+            api_key: String::new(),
+            model: "test-embedding".to_string(),
+            output_dimensionality: None,
+            extra_headers: None,
+            max_chunk_chars: None,
+            overlap_chunk_chars: None,
+            batch_size: None,
+            request_timeout_secs: None,
+        }
+    }
+
+    #[test]
+    fn embedding_limits_respect_endpoint_defaults_and_explicit_values() {
+        let local = openai_embedding_config("http://localhost:11434/v1/embeddings");
+        assert_eq!(embedding_batch_size(&local), 8);
+        assert_eq!(embedding_request_timeout_secs(&local), 60);
+
+        let cloud = openai_embedding_config("https://api.example.com/v1/embeddings");
+        assert_eq!(embedding_batch_size(&cloud), 64);
+        assert_eq!(embedding_request_timeout_secs(&cloud), 8);
+
+        let custom = SearchEmbeddingConfig {
+            batch_size: Some(2),
+            request_timeout_secs: Some(45),
+            ..cloud
+        };
+        assert_eq!(embedding_batch_size(&custom), 2);
+        assert_eq!(embedding_request_timeout_secs(&custom), 45);
+
+        let clamped = SearchEmbeddingConfig {
+            batch_size: Some(0),
+            request_timeout_secs: Some(0),
+            ..custom
+        };
+        assert_eq!(embedding_batch_size(&clamped), 1);
+        assert_eq!(embedding_request_timeout_secs(&clamped), 1);
+    }
+
+    #[tokio::test]
+    async fn timed_out_batches_split_without_dropping_or_reordering_inputs() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for request_index in 0..3 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = [0_u8; 8192];
+                let count = stream.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..count]).to_string();
+                if request_index == 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+                }
+                let value = if request.contains("\"two\"") {
+                    2.0
+                } else {
+                    1.0
+                };
+                let body = format!("{{\"data\":[{{\"index\":0,\"embedding\":[{value}]}}]}}");
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let mut config = openai_embedding_config(&format!("http://{address}/v1/embeddings"));
+        config.batch_size = Some(2);
+        config.request_timeout_secs = Some(1);
+        let vectors = fetch_embedding_batch(&["one".to_string(), "two".to_string()], &config)
+            .await
+            .unwrap();
+        assert_eq!(vectors, vec![vec![1.0], vec![2.0]]);
+        server.await.unwrap();
     }
 }

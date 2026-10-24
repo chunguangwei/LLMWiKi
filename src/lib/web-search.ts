@@ -141,7 +141,8 @@ export async function webSearch(
       resolved.provider === "tavily" ||
       resolved.provider === "serpapi" ||
       resolved.provider === "brave" ||
-      resolved.provider === "bocha"
+      resolved.provider === "bocha" ||
+      resolved.provider === "deepseek"
     ) &&
     !resolved.apiKey
   ) {
