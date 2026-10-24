@@ -28,6 +28,40 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.7.0",
+    date: "2026-10-24",
+    highlights: {
+      en: [
+        "Protected Markdown drafts with per-path autosave, retry, coordinated AI edits, safe deletion, and a native exit handshake that waits for writes.",
+        "Added internal Wiki research with affected-page retrieval, linked evidence, bounded context, and explicit unresolved handling that keeps Reviews pending.",
+        "Added DeepSeek Search & Fetch with native Markdown retrieval and bounded content in Deep Research.",
+        "Unified embedding batch and timeout settings, added local/private endpoint defaults, and split timed-out batches without dropping chunks.",
+        "Batched file-snapshot writes with failure recovery, fixed AnyTXT numeric limits, and refined reading, panels, keyboard access, and light/dark themes.",
+      ],
+      zh: [
+        "按路径自动保存 Markdown 草稿，支持失败重试、AI 选区写入协调、删除保护与退出前保存确认。",
+        "新增内部 Wiki 研究：读取受影响页面与关联证据，限制上下文，证据不足时保留 Review 待处理。",
+        "新增 DeepSeek Search & Fetch，抓取原生 Markdown 并以有界上下文用于深度研究。",
+        "统一嵌入批量与超时设置，适配本地/私有端点默认值，批量超时自动拆分且不丢 chunk。",
+        "文件快照批量写入并支持失败恢复，修复 AnyTXT 数值 limit，优化阅读、面板、键盘交互与明暗主题。",
+      ],
+      it: [
+        "Bozze Markdown protette con salvataggio per percorso, retry, modifiche AI coordinate, eliminazione sicura e uscita che attende la scrittura.",
+        "Ricerca nel Wiki interno con pagine interessate, prove collegate, contesto limitato e stato non risolto che mantiene le Review in sospeso.",
+        "Aggiunti DeepSeek Search & Fetch con Markdown nativo e contenuto limitato nella Deep Research.",
+        "Impostazioni di batch e timeout embedding unificate, default per endpoint locali/privati e batch in timeout divisi senza perdere chunk.",
+        "Snapshot dei file scritti in batch con recupero degli errori, limiti AnyTXT numerici e miglioramenti a lettura, pannelli, tastiera e temi.",
+      ],
+      ru: [
+        "Защита черновиков Markdown: автосохранение по путям, повтор попытки, согласованные AI-правки, безопасное удаление и выход после завершения записи.",
+        "Исследование внутренней Wiki: связанные страницы и доказательства, ограниченный контекст и статус «не решено» с сохранением Review в ожидании.",
+        "Добавлены DeepSeek Search & Fetch с получением Markdown и ограниченным контентом в Deep Research.",
+        "Единые настройки пакета и тайм-аута эмбеддинга, значения по умолчанию для локальных/частных эндпоинтов и разделение пакетов по тайм-ауту без потери фрагментов.",
+        "Пакетная запись снимков файлов с восстановлением после ошибок, числовой limit AnyTXT, улучшенные чтение, панели, клавиатура и темы.",
+      ],
+    },
+  },
+  {
     version: "0.6.20",
     date: "2026-10-23",
     highlights: {

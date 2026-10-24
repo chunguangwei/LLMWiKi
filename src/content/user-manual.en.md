@@ -149,7 +149,7 @@ You accept / reject without interrupting the LLM's workflow.
 
 ---
 
-## 5. Five new features (LLMWiKi fork only)
+## 5. LLMWiKi fork feature guides
 
 ### 5.1 `.llmwiki` one-click import / export
 
@@ -269,7 +269,7 @@ Updates now come from your own GitHub (`chunguangwei/LLMWiKi`) and install **in 
 
 **Releasing a new version** (so all your devices can update):
 1. Bump `version` in both `app/package.json` and `app/src-tauri/tauri.conf.json` (keep them equal).
-2. `git push origin main`, then tag: `git tag v0.6.4 && git push origin v0.6.4`.
+2. `git push origin main`, then tag: `git tag v0.7.0 && git push origin v0.7.0`.
 3. GitHub Actions builds + signs + publishes the release. Devices update on next launch.
 > Full release steps + required GitHub Secrets: [`features.md §6.3`](features.md#63-发版流程你怎么发布新版本让所有端更新).
 > ⚠️ Back up `~/.tauri/llmwiki_updater.key` and `.password` — losing the private key means you can never sign new releases again.
@@ -279,6 +279,14 @@ Updates now come from your own GitHub (`chunguangwei/LLMWiKi`) and install **in 
 - **Auto-backup** (same-machine reinstall): on every launch the app writes an encrypted backup to `~/Documents/LLMWiki/`, key held in the OS keychain; it auto-restores after a reinstall, no action needed.
 
 Full details in [`features.md §6`](features.md#6-自己-github-自动更新就地更新--加密配置备份).
+
+### 5.6 v0.7.0 editing, retrieval, and research
+
+- **Editing**: the editor shows save status and retry. Page switches queue saves, and quitting from the window or tray waits for writes. Failed saves keep drafts and leave the app open; failed deletes also restore drafts.
+- **Internal Wiki research**: choose **Wiki / Internal Knowledge** under **Settings → External Sources → Deep Research source mode**. Research starts with `affectedPages`, follows wikilinks and Wiki search results, and uses bounded context instead of the full `index.md`. Insufficient evidence stays **Unresolved** and pending; only valid content, citations, and a successful save resolve a Review item.
+- **DeepSeek**: add your API key under **Settings → External Sources → DeepSeek**. Search and native Markdown fetching share that key. Deep Research uses bounded fetched content and keeps the search summary when an individual fetch fails.
+- **Embedding**: *Inputs per request* applies to single-page and bulk indexing. Lower the batch for slower local models. Leave *Request timeout* empty for 60 seconds on local/private endpoints or 8 seconds on cloud endpoints; explicit values range from 1-300 seconds. Timed-out batches split without dropping chunks.
+- **AnyTXT**: `limit` is sent as a numeric JSON value from 1-100, avoiding the old `-32602` type error.
 
 ---
 

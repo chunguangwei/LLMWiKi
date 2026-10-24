@@ -268,6 +268,8 @@ CI 自动：跨平台构建 → 用 updater 私钥签名 → 生成 `latest.json
 
 **设置 → Embeddings** 打开开关后，wiki 在 100+ 页规模下检索质量会显著提升。OpenAI text-embedding-3-small、智谱 embedding-2、bge-m3 都好用。可以暂时跳过。
 
+*Inputs per request* 同时控制单页和全量索引。本地模型可用较小批量（如 8）；*Request timeout* 留空时本地/私有 endpoint 默认 60 秒、云端默认 8 秒，也可显式设为 1-300 秒。批量超时后会自动拆分重试，不会丢弃 chunk。
+
 ### 2.3 可选：配 Web Search（用于「定时联网刷新」与「深度研究」）
 
 **设置 → Web Search** 选一个：
@@ -277,6 +279,9 @@ CI 自动：跨平台构建 → 用 updater 私钥签名 → 生成 `latest.json
 | Tavily | 个人首选 | 免费额度足够个人使用，对 LLM 友好 |
 | SerpApi | 商用 | 多搜索引擎（Google / Bing / DuckDuckGo / Scholar / Patents …） |
 | SearXNG | 隐私敏感 | 完全私有，需要您自己跑 SearXNG 实例 |
+| DeepSeek | 已有 DeepSeek Key | 同一 Key 搜索并抓取原生 Markdown，正文可进入 Deep Research |
+
+若资料本身就在 Wiki 中，**Deep Research 来源模式 → Wiki / 内部知识** 不需要任何外部搜索 Provider。审核研究会从 `affectedPages` 和相关 Wiki 页面收集有界上下文，证据不足时保持「未解决」，不会误标为已完成。
 
 ---
 

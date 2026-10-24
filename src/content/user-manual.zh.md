@@ -149,7 +149,7 @@ LLM 摄入时遇到模糊判断会标记到 **审核** 面板：
 
 ---
 
-## 5. 五个新功能（LLMWiKi fork 独有）
+## 5. LLMWiKi fork 功能指南
 
 ### 5.1 `.llmwiki` 一键导入 / 导出
 
@@ -269,7 +269,7 @@ git config --global core.quotepath false  # 让 Windows git status 正常显示�
 
 **怎么发布新版本**（你自己改完代码后，让所有设备能更新）：
 1. 改 `app/package.json` 和 `app/src-tauri/tauri.conf.json` 的 `version`（两处一致）。
-2. `git push origin main`，然后打 tag：`git tag v0.6.4 && git push origin v0.6.4`。
+2. `git push origin main`，然后打 tag：`git tag v0.7.0 && git push origin v0.7.0`。
 3. GitHub Actions 自动构建 + 签名 + 出 release。各设备下次启动即可更新。
 > 详细发版步骤 + 必备 GitHub Secret 见 [`features.md §6.3`](features.md#63-发版流程你怎么发布新版本让所有端更新)。
 > ⚠️ 务必备份 `~/.tauri/llmwiki_updater.key` 和 `.password`——私钥丢了就再也签不了新版本。
@@ -279,6 +279,14 @@ git config --global core.quotepath false  # 让 Windows git status 正常显示�
 - **自动备份**（同机重装用）：每次启动自动加密备份到 `~/Documents/LLMWiki/`，密钥存系统钥匙串；重装后自动恢复，无需操作。
 
 详见 [`features.md §6`](features.md#6-自己-github-自动更新就地更新--加密配置备份)。
+
+### 5.6 v0.7.0 编辑、检索与研究
+
+- **编辑**：编辑器显示保存状态与失败重试。页面切换会排队保存，退出应用或托盘 Quit 会等待写入；失败时保留草稿并保持应用打开。删除失败也会恢复草稿。
+- **内部 Wiki 研究**：在 **设置 → 外部信息源 → Deep Research 来源模式** 选择 **Wiki / 内部知识**。审核研究先读 `affectedPages`，再沿 wikilink 与 Wiki 搜索补充有界上下文，不读取完整 `index.md`。证据不足时显示「未解决」并保留 pending，只有内容、引用和保存全部成功后才解决。
+- **DeepSeek**：在 **设置 → 外部信息源 → DeepSeek** 填 API Key。搜索与原生 Markdown 正文抓取使用同一 Key，Deep Research 会按预算使用正文；单页抓取失败保留摘要。
+- **嵌入**：*Inputs per request* 同时影响单页和全量索引。本地模型可降低批量，*Request timeout* 留空时本地默认 60 秒、云端默认 8 秒，显式范围为 1-300 秒；超时批次自动拆分且不丢 chunk。
+- **AnyTXT**：`limit` 以数值 JSON 发送，范围 1-100，避免 `-32602` 类型错误。
 
 ---
 

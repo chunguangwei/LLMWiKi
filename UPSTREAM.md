@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-10-23（Round 15，上游 v0.6.12+`48fd970` → v0.6.13，`git merge upstream/main`，冲突处优先采用上游、丢弃我方冲突实现，独立不冲突 fork 功能保留）|
+| 最近一次 sync | 2026-10-24（Round 16，上游 `e08cfce` / v0.6.13 与 Round 15 相同，无新提交，无需 merge）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
-| Upstream 版本号 | `0.6.13`（Round 15 追平：MinerU 4 V1 API / 预览前进后退导航 / 移除已停止 Ingest 任务 / 自定义 Provider 请求选项扩展 / 概览与 Review 生命周期 / 大文档 Ingest 可靠性）|
-| **本 fork 版本** | `0.6.20`（Round 15 上游同步 v0.6.12→v0.6.13）|
+| Upstream 版本号 | `0.6.13`（MinerU 4 V1 API / 预览前进后退导航 / 移除已停止 Ingest 任务 / 自定义 Provider 请求选项扩展 / 概览与 Review 生命周期 / 大文档 Ingest 可靠性）|
+| **本 fork 版本** | `0.7.0`（Round 16 编辑可靠性、内部研究、DeepSeek、嵌入与性能优化）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -118,14 +118,29 @@
 > - **合并后修复**：`provider.rs` 上游 3 个新测试适配 fork 的 6 参 `openai_like_body`（补 `use_completion_tokens: false`，同 Round 9/10/12 模式）；fork 的 `ingest-longsource.test.ts` review 上限断言 8192→16384 跟随上游 `e380374` 的新边界。
 > - **README 补齐**：外层 `README.md` 功能一览补「文件预览前进/后退导航」，MinerU 行扩至 4 V1 API，摄取队列行补「移除已停止任务」。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2700 ✅（186 文件）/ cargo check ✅ / cargo test 459 ✅（2 ignored）。
+
+> **Round 16 同步与产品迭代（2026-10-24，v0.6.20 → v0.7.0）**：`git fetch upstream main` 后上游仍为 `e08cfce` / v0.6.13，与 Round 15 相同；compare 为 `identical`、`ahead_by: 0`，因此没有空 merge 或上游覆盖。`origin/main` 同步前与本地基线一致。
+> - **编辑与 UI 可靠性**：`8e63ba0`。按路径串行保存、revision 防回写、搜索预读等待、AI 选区写入协调、删除 tombstone 与失败恢复；原生退出等待保存。统一阅读排版、明暗主题、键盘焦点、可调整/收起面板和真实外链。
+> - **嵌入与 DeepSeek**：`dfd23be`。单页嵌入使用实际 `batchSize`，新增 1-300 秒超时配置；本地/私有 endpoint 使用保守默认值。批量超时二分且保留所有 chunk。新增 DeepSeek Search & Fetch，Deep Research 可使用有界正文。
+> - **内部 Wiki 研究**：`25c577e`。Review 从 `affectedPages` 读取实际内容，沿链接和 Wiki 搜索扩展，最多 12 页且总字符按模型上下文限界。保留路径式引用；`UNRESOLVED` 不写解决页，也不 resolve Review，只有有效内容与保存成功后才 resolve。
+> - **性能与用户 bug**：`40cf8f0` 文件快照按批写入并支持失败恢复；`9ac5def` 修复 AnyTXT `limit` 被序列化为字符串导致的 `-32602`，改为数值 JSON。
+> - **100 个 open issue 核查**：
+>   - 本轮直接修复或交付：#828、#827、#812、#791、#795；#484、#403 的编辑/删除链路与 #370、#379 的面板体验一并覆盖。
+>   - 当前已含实现并做回归核查：#824（新模型参数）、#811/#805（长文预算与实体限额，极端样本仍需实测）、#801（路径式链接）、#800（MinerU 4 V1）、#737（overview/Review 生命周期）、#723（Ollama reasoning 参数）、#698（预览返回）、#696/#720（Agent 配置回退，移动项目场景未复现）、#709/#612/#607/#531（资料监控与刷新）、#476/#470/#513（应用维护聚合页，避免整页生成丢失）、#384（项目工作目录校验）、#589（严格 completion token 参数）、#706（Wiki 索引与内部研究上下文限界）、#443/#532（图片提取与内联展示，实际效果依赖解析配置和模型能力）。
+>   - 需要文档、配置或设计说明：#807（仅 Auto 表示当前模型/Provider 无兼容推理控制）、#803（来源文件名的稳定身份与 schema 命名建议需区分）、#802（通用 `sources[]` 与类型特有 `source` 字段语义不同）、#785/#776/#502（项目与摄入指南）、#716（无 schema 的 Obsidian vault 与项目导入不同）、#679（配置/状态备份同步）、#662（MCP 连接配置）、#563（按钮用途）、#486（共同遵循 Karpathy 模式，不是复制实现）、#385（可用 purpose/schema 约束，未提供任意系统 prompt 覆盖）、#682（按 schema 分目录与聚合/缓存文件的职责）、#777（架构演进需独立拆分，不以本轮小修补代替）。
+>   - 环境、样本或实测不足，未宣称修复：#816、#810、#806、#747、#721、#572、#568、#457、#420、#410、#449、#544、#526、#573、#506、#503、#377、#699、#375、#784、#713（当前仅提供 macOS arm64 包）、#390（CLI 安装与权限配置）。#604/#524/#518/#408 已针对快照和队列热点优化，但大型语料与 LLM 耗时仍需目标环境实测；#743 已有推理与预算适配，具体模型仍需验证。
+>   - 独立产品方向，未伪装成本轮小补丁：#818、#819、#820、#821、#822、#823（Pi Harness）、#762（无头部署）、#740（Copilot）、#717（类型化图谱边）、#666（外部 OpenWiki/LangChain 跟进）、#622（移动端）、#616（符号链接资料）、#609（多 Wiki 融合）、#605（3D 图谱）、#602（其他 OCR）、#599（桌面/后端分离）、#552/#551（模板 Harness）、#533（摄取契约）、#527（Zotero）、#466（Copilot CLI）、#455（opencode）、#402（更多自定义搜索）、#400（browser/LAN shell）、#391（内嵌网页模型）、#386（Cursor CLI）、#373（拖拽导入增强）。
+>   - 文档专项：#725 的 EN/JA/KO 中文架构图和截图本地化仍未完成；本轮已更新四语言文字 README 与操作手册，不将文字更新冒充截图本地化。
+> - **近期 closed issue 回归**：#809（来源摘要覆盖）、#799（分析截断）、#793（长文件名）、#790（UI）、#783-#779（合并模板、实体、研究来源与 wikilink）、#770（同 stem 向量 ID）、#768（图片路径空格）、#765（MiniMax header）、#763（图谱别名性能）、#758（Ingest 恢复）、#756（截断）、#754（校验 MCP 写入）、#736（Excel 日期）、#735（图片摄取）、#734（related 图谱边）、#733（lint stub）。相关上游实现已包含，按现有单元/集成测试复核，不重复 cherry-pick。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2752 ✅（199 文件）/ cargo check ✅ / cargo test 468 ✅（2 ignored）/ mcp:test 25 ✅。真实 DeepSeek/Ollama/AnyTXT 服务、Intel Mac、Windows/Linux 桌面、特定 PDF 与大型语料实测未在本机覆盖；跨平台产物以 CI 为准。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局
 
 两个 git 仓库并存：
 
-- `LLMWiKi/.git/` — **外层仓库**，追踪 `UPSTREAM.md`、`docs/`、`.gitignore`、顶层 `README.md`
-- `LLMWiKi/app/.git/` — `nashsu/llm_wiki` 的克隆，**所有应用源码改动在这里提交**
+- `LLMWiKi/.git/` — **外层工作区仓库**，当前只追踪顶层 `README.md` 与 `.gitignore`，不作为应用发布源
+- `LLMWiKi/app/.git/` — `nashsu/llm_wiki` 的克隆与 fork 发布仓库，**应用源码、文档和 `UPSTREAM.md` 都在这里提交并推送**
 
 外层 git 不会递归进入 `app/`（git 视嵌套 `.git` 为不透明）。要追踪应用层改动，请进入 `app/` 目录后再 commit。
 
@@ -170,8 +185,9 @@
 
 ```bash
 cd app
-git fetch origin main
-git merge origin/main
+git fetch upstream main
+git merge upstream/main
+# 合入前先检查 fork 的独立功能与版本线；随后再运行 git fetch origin main 确认远端基线。
 # 经常出现冲突的文件（实战已验证 keep-both 策略可行）：
 #   src/components/settings/settings-view.tsx     ← CategoryId + CATEGORIES + switch
 #   src/i18n/{en,zh}.json                          ← settings.categories + settings.sections

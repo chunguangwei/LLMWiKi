@@ -39,12 +39,12 @@
 ```bash
 cd app
 
-# 1. 提升版本号 —— 四处必须完全一致（下面以 0.6.4 为例，发版时替换成你的新版本号）
-#    package.json:              "version": "0.6.4"
-#    src-tauri/tauri.conf.json: "version": "0.6.4"
-#    src-tauri/Cargo.toml:      version = "0.6.4"   ← [package] 段顶部那一行
+# 1. 提升版本号 —— 四处必须完全一致（下面以 0.7.0 为例，发版时替换成你的新版本号）
+#    package.json:              "version": "0.7.0"
+#    src-tauri/tauri.conf.json: "version": "0.7.0"
+#    src-tauri/Cargo.toml:      version = "0.7.0"   ← [package] 段顶部那一行
 #    src-tauri/Cargo.lock:      llm-wiki 包的 version —— 别手改，跑下面这条命令同步：
-(cd src-tauri && cargo update -p llm-wiki --precise 0.6.4)
+(cd src-tauri && cargo update -p llm-wiki --precise 0.7.0)
 #    校验四处一致：
 grep -h '"version"' package.json src-tauri/tauri.conf.json | head -2
 grep '^version' src-tauri/Cargo.toml | head -1
@@ -55,12 +55,12 @@ grep -A1 'name = "llm-wiki"' src-tauri/Cargo.lock | head -2
 npm run typecheck   # changelog.ts 是 TS，顺手确认没写崩
 
 # 3. 提交并推送（一次提交带上全部 5 个文件：上面 4 个版本文件 + changelog.ts）
-git commit -am "release v0.6.4"
+git commit -am "release v0.7.0"
 git push origin main
 
 # 4. 打 tag 触发 CI（tag 名必须是 v<版本>）
-git tag v0.6.4
-git push origin v0.6.4
+git tag v0.7.0
+git push origin v0.7.0
 ```
 
 > ⚠️ **版本号没同步 = 自动更新失效**：`latest.json` 取的是 `tauri.conf.json` 的 version；只要它没比已安装版本高，客户端就检测不到更新（见 §3.1）。`Cargo.lock` 不同步则会在 CI 构建时被改动、留下脏 diff。所以四处务必一致、且严格大于上一版。
@@ -89,7 +89,24 @@ git tag v0.6.3 && git push origin v0.6.3
 ### 2.3 已知约束
 
 - **仓库必须 Public**：updater 公开抓取 `latest.json`；私有仓库的 release 需要 token，而 token 不能塞进 app。
-- **不要传空的 Apple 签名变量**：`build.yml` 已移除 `APPLE_*` env。我们没有 Apple Developer 证书，空的 `APPLE_SIGNING_IDENTITY` 会让 macOS 打包器尝试用空身份签名而失败（`security import: failed to import keychain certificate`）。macOS 因此出**未签名**包（用户 `xattr` 清隔离）。将来若买了 Apple 证书，再把那些 env 加回去。
+- **macOS 使用 ad-hoc 签名**：`build.yml` 设置 `APPLE_SIGNING_IDENTITY: "-"`，避免没有 Apple Developer 证书时生成无法启动的 arm64 二进制。它不是 Apple 公证，Gatekeeper 仍可能要求首次执行 `xattr -dr com.apple.quarantine "/Applications/LLM Wiki.app"`。自动更新产物另用 minisign 签名，不要把两种签名混为一谈。
+- **当前不提供 Intel Mac 包**：CI 仅构建 macOS arm64。Windows 仅 x64；Linux 提供 x64 与 arm64。不要把 arm64 安装包写成支持全部架构。
+
+### 2.4 0.7.0 发版检查
+
+本版包含编辑可靠性、内部 Wiki 研究、DeepSeek Search & Fetch、嵌入批量/超时和快照性能改动。发布前至少执行：
+
+```bash
+npm run test:mocks
+npm run mcp:test
+npm run build:desktop
+(cd src-tauri && cargo check && cargo test)
+```
+
+- 确认编辑保存、退出握手、内部研究 resolved/unresolved、DeepSeek mock、嵌入超时拆分和快照失败恢复测试通过。
+- `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 均为 **0.7.0**。
+- tag 后检查四个平台 job、扩展 zip、安装包、`.sig` 与 `latest.json`；只有 `gh release view v0.7.0` 中产物完整且非 draft 才算发版完成。
+- 真实 DeepSeek、Ollama、特定 PDF 和其他平台硬件没有覆盖到时，应在发布说明中明确，不要把 mock 验证写成真实服务或全平台验收。
 
 ---
 

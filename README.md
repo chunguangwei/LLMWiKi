@@ -43,7 +43,7 @@
 - **Persistent Ingest Queue** — serial processing with crash recovery, cancel, retry, and progress visualization
 - **Folder Import** — recursive folder import preserving directory structure, folder context as LLM classification hint
 - **Source Folder Auto-Watch** — detects external changes in `raw/sources/` and keeps ingest/delete cleanup in sync
-- **Deep Research** — LLM-optimized search topics, multi-query web search via Tavily, SerpApi, or SearXNG, auto-ingest results into wiki
+- **Deep Research** — LLM-optimized search topics, multi-query web search via Tavily, SerpApi, SearXNG, DeepSeek, or the project's own Wiki, with verified review resolution
 - **Rust Backend Chat Agent** — tool-using chat runtime with wiki/source/graph/web retrieval, workspace file generation, shell approval, cancellation, and streaming tool events
 - **Agent Skills** — scan and enable local `SKILL.md` folders, select skills with `/skill`, and let the Agent read skill instructions on demand
 - **Generated Outputs Preview** — Agent-created Markdown, HTML, images, and other workspace files appear as outputs with preview and quick folder access
@@ -51,6 +51,15 @@
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 - **Local HTTP API + MCP Server + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API and bundled MCP server for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/nashsu/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
+
+## v0.7.0: reliability and focused research
+
+- **Safer editing** — debounced per-path saves, visible save status and retry, protection against stale drafts, and a native quit handshake that waits for writes before exiting
+- **Internal Wiki research** — Review research can start from affected pages, follow links and Wiki search results, use bounded context, and remain unresolved when evidence is insufficient
+- **DeepSeek Search & Fetch** — use a DeepSeek API key for web search and native Markdown page retrieval, including fetched content in Deep Research
+- **Embedding controls** — configurable batch size and request timeout for both single-page and bulk indexing; local/private endpoints receive suitable defaults, and timed-out batches split without dropping chunks
+- **Lower maintenance overhead** — file-snapshot writes are batched with failure recovery, while AnyTXT result limits use the required numeric JSON type
+- **Clearer workspace UI** — collapsible accessible panels, improved Markdown typography, keyboard-visible actions, external-link handling, and consistent light/dark themes
 
 ## What is this?
 

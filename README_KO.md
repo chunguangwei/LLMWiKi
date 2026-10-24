@@ -43,7 +43,7 @@
 - **영속 인제스트 큐** — 직렬 처리, 충돌 복구, 취소, 재시도, 진행 상황 시각화를 지원합니다
 - **폴더 가져오기** — 디렉터리 구조를 유지하며 재귀적으로 가져오고, 폴더 컨텍스트를 LLM 분류 힌트로 사용합니다
 - **소스 폴더 자동 감시** — `raw/sources/`의 외부 변경을 감지하고 인제스트/삭제 정리 흐름과 동기화합니다
-- **Deep Research** — LLM에 최적화된 검색 주제와 Tavily, SerpApi, SearXNG 기반 다중 쿼리 웹 검색을 사용하고, 결과를 자동으로 Wiki에 인제스트합니다
+- **Deep Research** — LLM에 최적화된 검색 주제와 Tavily, SerpApi, SearXNG, DeepSeek, 프로젝트 프로젝트 내 Wiki를 지원하며, 증거와 저장이 확인된 경우에만 리뷰를 해결합니다
 - **Rust 백엔드 Chat Agent** — Wiki/Source/Graph/Web 검색, workspace 파일 생성, shell 승인, 취소, 스트리밍 tool event를 지원하는 도구 사용형 채팅 runtime입니다
 - **Agent Skills** — 로컬 `SKILL.md` 폴더를 스캔하고 활성화하며, 채팅에서 `/skill`로 선택하면 Agent가 필요할 때 Skill 지침을 읽습니다
 - **생성물 미리보기** — Agent가 만든 Markdown, HTML, 이미지 등 workspace 파일을 생성물로 표시하고, 미리보기와 출력 폴더 열기를 지원합니다
@@ -51,6 +51,15 @@
 - **비동기 리뷰 시스템** — LLM이 사람의 판단이 필요한 항목을 표시하고, 사전 정의된 작업과 미리 생성된 검색 쿼리를 제공합니다
 - **Chrome Web Clipper** — 웹 페이지를 한 번의 클릭으로 캡처하고 지식 베이스에 자동 인제스트합니다
 - **로컬 HTTP API + MCP Server + AI Agent Skill** — 내장 `127.0.0.1:19828` JSON API와 번들 MCP Server를 통해 하이브리드 검색, 파일 읽기, 그래프 탐색, 소스 재스캔을 지원합니다. 바로 사용할 수 있는 [agent skill](https://github.com/nashsu/llm_wiki_skill)은 한 줄 명령(`npx skills add ...`)으로 Claude Code / Codex에 설치할 수 있습니다
+
+## v0.7.0: 안정성과 집중형 연구
+
+- **안전한 편집** — 경로별 디바운스 저장, 저장 상태와 재시도, 오래된 초안 덮어쓰기 방지, 쓰기 완료를 기다리는 네이티브 종료 처리를 제공합니다
+- **프로젝트 내 Wiki 연구** — 영향을 받는 페이지에서 링크와 Wiki 검색을 따라가며 제한된 컨텍스트를 사용하고, 증거가 부족하면 미해결 상태를 유지합니다
+- **DeepSeek Search & Fetch** — 하나의 DeepSeek API 키로 웹 검색과 원생 Markdown 가져오기를 수행하고 본문을 Deep Research에 사용합니다
+- **임베딩 제어** — 단일 페이지와 일괄 인덱싱에 배치 크기와 타임아웃을 적용하고, 로컬/비공개 엔드포인트에 적절한 기본값을 제공하며, 타임아웃된 배치를 chunk 손실 없이 분할합니다
+- **낮은 유지 비용** — 파일 스냅숏을 배치로 기록하고 실패 시 복구하며, AnyTXT limit은 서버가 요구하는 숫자 JSON 형식을 사용합니다
+- **명료한 작업 공간** — 접을 수 있는 접근성 패널, 개선된 Markdown 타이포그래피, 키보드 표시 작업, 외부 링크 처리, 일관된 밝은/어두운 테마를 제공합니다
 
 ## 이게 무엇인가요?
 

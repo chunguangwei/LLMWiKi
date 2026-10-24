@@ -43,7 +43,7 @@
 - **持久化摄入队列** — 串行处理，崩溃恢复，取消/重试，进度可视化
 - **文件夹导入** — 递归导入保留目录结构，文件夹路径作为 LLM 分类上下文
 - **Source 文件夹自动监听** — 检测 `raw/sources/` 的外部变更，并同步触发摄入或删除清理
-- **深度研究** — LLM 智能生成搜索主题，通过 Tavily、SerpApi 或 SearXNG 进行多查询网络搜索，研究结果自动摄入 Wiki
+- **深度研究** — LLM 智能生成搜索主题，通过 Tavily、SerpApi、SearXNG、DeepSeek 或内部 Wiki 进行多查询网络搜索，研究结果自动摄入 Wiki
 - **Rust 后端 Chat Agent** — 支持工具调用的聊天运行时，可进行 Wiki/Source/Graph/Web 检索、workspace 文件生成、shell 审批、取消和流式工具事件展示
 - **Agent Skills** — 扫描并启用本地 `SKILL.md` 目录，在聊天中用 `/skill` 选择，让 Agent 按需读取 Skill 指令
 - **生成物预览** — Agent 生成的 Markdown、HTML、图片等 workspace 文件会作为生成物展示，支持预览和快速打开目录
@@ -51,6 +51,15 @@
 - **异步审核系统** — LLM 在摄入时标记需人工判断的项，预定义操作，预生成搜索查询
 - **Chrome 网页剪藏** — 一键捕获网页内容，自动摄入知识库
 - **本地 HTTP API + MCP Server + AI Agent Skill** — 内置 `127.0.0.1:19828` JSON API 和随包提供的 MCP Server，支持 Hybrid 检索、文件读取、知识图谱遍历、源资料重新扫描；配套 [agent skill](https://github.com/nashsu/llm_wiki_skill) 一行命令接入 Claude Code / Codex（`npx skills add …`）
+
+## v0.7.0：可靠性与聚焦研究
+
+- **更安全的编辑** — 按路径防抖保存、可见状态与失败重试、防止旧草稿回写，原生退出会等待写入完成
+- **内部 Wiki 研究** — 审核研究可读取受影响页面，沿链接与 Wiki 搜索补充有界上下文；证据不足时保留未解决状态
+- **DeepSeek 搜索与抓取** — 使用同一 DeepSeek API Key 搜索网页并抓取原生 Markdown，正文可进入深度研究
+- **嵌入参数与恢复** — 单页和批量索引共用批量与超时配置；本地/私有端点自动选择默认值，超时批次自动拆分且不丢 chunk
+- **更低维护开销** — 文件快照按批写入且失败可恢复，AnyTXT 数量限制使用服务端要求的数值 JSON 类型
+- **更清晰的工作区** — 可收起的无障碍面板、完整 Markdown 排版、键盘可见操作、外链处理，以及统一的明暗主题
 
 ## 这是什么？
 

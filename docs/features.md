@@ -312,12 +312,12 @@ schema 语言在项目创建时确定，之后改 UI 语言不会影响目录命
 
 ### 6.3 发版流程（你怎么发布新版本让所有端更新）
 
-1. 本地改完代码，`cd app`，提升版本号：改 `package.json` 的 `version` 和 `src-tauri/tauri.conf.json` 的 `version`（两处保持一致，如 `0.6.4`）。
+1. 本地改完代码，`cd app`，提升版本号：改 `package.json` 的 `version` 和 `src-tauri/tauri.conf.json` 的 `version`（两处保持一致，如 `0.7.0`）。
 2. 提交并推送：`git push origin main`。
 3. 打 tag 触发 CI：
    ```bash
-   git tag v0.6.4
-   git push origin v0.6.4
+   git tag v0.7.0
+   git push origin v0.7.0
    ```
 4. GitHub Actions（`.github/workflows/build.yml`）自动：跨平台构建 → 用签名密钥签 updater 产物 → 生成 `latest.json` → 创建 GitHub Release 并上传 dmg/exe/AppImage + `latest.json` + `.sig`。
 5. 各台已安装的 app 在下次启动（或手动「检查更新」）时发现新版，一键就地更新。
@@ -381,6 +381,47 @@ schema 语言在项目创建时确定，之后改 UI 语言不会影响目录命
 - 每项目、每设备的备份配置(仓库、周期、范围、`lastSyncSha`)存 `.llm-wiki-local/github-backup.json`(本身不被备份)。
 
 详细技术实现见 `app/src-tauri/src/commands/github_backup.rs`、`src/lib/github-backup.ts`、`src/components/settings/sections/github-backup-section.tsx`。
+
+---
+
+## 8. v0.7.0 可靠性与研究能力
+
+### 8.1 编辑、删除与退出
+
+- Markdown 按路径防抖保存，同一路径串行写入，旧 revision 不会覆盖新草稿。页面切换、搜索预读和图谱预览共享保存状态；失败草稿保留并可重试。
+- AI 选区修改与自动保存进入同一写入队列。删除页面或资料时先使旧保存失效，等待在途写入后再删除；删除失败会恢复草稿。批量清理引用前也会协调未保存内容。
+- 窗口退出、托盘 Quit 和 macOS 退出事件都会先等待保存。保存失败时取消本次退出并列出失败文件，不会静默丢弃草稿。
+
+### 8.2 Wiki / 内部知识研究
+
+**设置 → 外部信息源 → Deep Research 来源模式 → Wiki / 内部知识**。
+
+Review 研究优先读取 `affectedPages` 的实际 Markdown，再沿 wikilink 和现有 Wiki 搜索补充相关页。最多读取 12 页，并按模型上下文限制总字符，不再为每个 Review 任务注入完整 `wiki/index.md`。路径仅允许当前项目索引内的 Wiki 页面，目录穿越与项目外路径会被拒绝。
+
+模型必须返回 `RESOLUTION: RESOLVED` 或 `RESOLUTION: UNRESOLVED`。证据不足或矛盾仍未消除时，任务显示「未解决」、保留 Review pending，且不生成虚假的解决页。只有内容、引用和保存全部成功后才将 Review 标记为已解决。内部引用保留 `[[wiki/...]]` 路径形式，来源列表和生成的 query 页面都可返回原页面。
+
+### 8.3 DeepSeek Search & Fetch
+
+**设置 → 外部信息源 → DeepSeek**，填入 DeepSeek API Key（与模型 API 使用同一套凭证体系，无需再订阅其他搜索服务）。Search 使用 `POST /v1/tools/search`，Fetch 使用 `POST /v1/tools/fetch` 返回原生 Markdown。Deep Research 选择 DeepSeek 时会抓取正文并按总字符预算加入上下文；单页抓取失败会保留搜索摘要。HTTP 408、429 和 5xx 会有限重试，测试不会调用计费接口。
+
+官方协议：[Search & Fetch 指南](https://api-docs.deepseek.com/guides/search)。Search / Fetch 成功请求按 DeepSeek 官方规则计费，空结果、失败抓取和超时不计费；本功能不会自动复用或导出其他 Provider 的密钥。
+
+### 8.4 嵌入批量与超时
+
+- `batchSize` 同时作用于单页嵌入和全量重建。未显式设置时，单页嵌入云端默认 64、本地/私有 HTTP endpoint 默认 8；全量重建保留原有默认。
+- `requestTimeoutSecs` 可设为 1-300 秒，留空时云端默认 8 秒、本地/私有 endpoint 默认 60 秒。
+- 批量超时或服务商大小限制会二分批次并保留全部 chunk 和原顺序；只有单条文本确实超出模型上下文时，才沿用原有文本缩减重试。
+
+### 8.5 文件监控、AnyTXT 与工作区
+
+- 文件快照按 25 个任务或队列排空批量写入，不再每个任务各读写一次完整快照。失败时本批任务恢复 pending，不会把变更静默丢弃。定时导入已对 size + mtime 未变化的文件跳过 MD5。
+- AnyTXT `limit` 使用服务端要求的数值 JSON 类型，范围 1-100，修复 `-32602` 参数类型错误。
+- 支持面板收起、键盘调整、统一 Markdown 排版、明暗主题、页内查找、可见焦点、真实外链和保存状态提示。
+
+### 8.6 Schema 字段与来源命名兼容性
+
+- 通用 frontmatter `sources: []` 是原始资料的溯源数组；类型特有的单数 `source` 是该类型约定的单值语义，不是同一个字段，也不要求相互替代。
+- `wiki/sources/` 摘要路径保留原始来源标识，以维持更新、删除和引用清理的稳定关联。Schema 的 `author-year-slug` 等命名约定用于指导新生成页面，不会为了格式一致而强制迁移已有来源文件或破坏其身份。
 
 ---
 

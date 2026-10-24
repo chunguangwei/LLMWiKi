@@ -56,10 +56,13 @@ LLMWiki 帮你把零散文档（PDF / DOCX / 网页 / OneNote / ...）变成一�
 
 每项填好后按右侧 **Test**，绿色 ✓ 即可。
 
+如果 reasoning 只有 **Auto**，表示当前模型 / Provider 没有兼容的推理控制，不应强行发送私有参数；可换用支持的模型，或在 Custom Provider 的 `extraRequestBody` 中显式配置服务商已确认的字段。
+
 ### 2.4 可选：开向量检索 / 网页搜索
 
-- **设置 → 嵌入向量** → 开启后 100+ 页的 wiki 检索质量明显提升
-- **设置 → 网页搜索** → 选 Tavily（个人）/ SerpApi（商用）/ SearXNG（隐私），填 Key 或地址
+- **设置 → 嵌入向量** → 开启后 100+ 页的 wiki 检索质量明显提升；单页和全量索引共用批量与超时设置
+- **设置 → 外部信息源** → 选 Tavily（个人）/ SerpApi（商用）/ SearXNG（隐私）/ DeepSeek（已有 Key），填 Key 或地址
+- **Deep Research 来源模式 → Wiki / 内部知识** → 无需外部搜索，直接利用当前 Wiki 的受影响页面与相关内容
 
 这两项不开也能用，但开了体验跳一档。
 
@@ -378,6 +381,22 @@ Agent 现在会自适应融合三种检索方式：关键词搜索、向量语�
 - 如果文件在 Agent 修改后未被再次编辑，可安全撤销
 - 支持集中浏览所有生成物，自动预览文档、图片和网页格式
 
+### 5.13 v0.7.0 编辑、检索与研究
+
+**编辑与退出**：页面编辑器会显示未保存、保存中、已保存或失败状态。失败时点重试，不要直接关闭应用；即使失败，草稿也会保留供继续编辑。切换页面会先排队保存，退出应用或托盘 Quit 会等待写入；如果仍失败，应用会保持打开并列出失败文件。删除文件时旧保存不会把文件重建，删除失败则恢复草稿。
+
+**Wiki / 内部知识研究**：
+1. 在 **设置 → 外部信息源 → Deep Research 来源模式** 选择 **Wiki / 内部知识**。
+2. 在 **审核** 中选中待处理项，点 **Research Selected**。无需 Web Search、AnyTXT 或外部搜索 Key。
+3. 应用先读审核项的 `affectedPages`，再沿 wikilink 和 Wiki 搜索补充相关页。上下文有页数与总字符上限，不会把整个 `index.md` 发给模型。
+4. 结果若为 **未解决**，说明证据不足或矛盾仍在，审核项保持 pending。只有证据充分、引用有效且保存成功后，才会将审核项标为已解决。可点击内部来源返回原页面。
+
+**DeepSeek Search & Fetch**：在 **设置 → 外部信息源** 展开 **DeepSeek**，填入 DeepSeek API Key 并启用。搜索与正文抓取都使用该 Key；Deep Research 选择 DeepSeek 时会将抓取的 Markdown 正文加入有界上下文。官方 Search / Fetch 成功请求按 DeepSeek 规则计费，详见[官方说明](https://api-docs.deepseek.com/guides/search)。
+
+**嵌入批量与超时**：在 **设置 → Embeddings** 中，*Inputs per request* 同时影响单页和全量索引。本地模型较慢时可降低批量（如 8），并将 *Request timeout* 留空以使用本地默认 60 秒；云端默认 8 秒。显式超时范围为 1-300 秒。批量超时后自动拆分重试，不会丢弃 chunk。
+
+**AnyTXT**：结果数量限制为 1-100 的整数，应用会以数值 JSON 发送，避免旧版本的 `-32602` 参数错误。
+
 ---
 
 ## 6. 自定义分类 / 规则 / 格式（用户规则）
@@ -412,6 +431,8 @@ LLMWiki 默认带 **34 种**页面类型（综合模板，覆盖日常生活 + �
 ### 8.1 Obsidian 兼容
 
 `wiki/` 目录直接就是合法的 Obsidian vault：项目创建时已自动生成 `.obsidian/` 配置。打开 Obsidian → Open vault → 选项目根 → 用 Obsidian 浏览图谱 / 编辑页面，LLMWiki 会自动检测到外部修改并同步。
+
+已有 vault 如果没有 `schema.md`，不能直接作为 LLMWiKi 项目打开。可以补齐项目配置，或先在 LLMWiKi 新建项目，再导入需要摄取的原始资料；应用不会静默改写原 vault。把 Markdown 放进 Obsidian 浏览，不等于它们已完成 LLMWiKi 摄入与索引。
 
 ### 8.2 Chrome 网页剪藏
 
