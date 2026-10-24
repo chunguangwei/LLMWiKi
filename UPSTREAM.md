@@ -7,7 +7,7 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-10-24（Round 16，上游 `e08cfce` / v0.6.13 与 Round 15 相同，无新提交，无需 merge）|
+| 最近一次 sync | 2026-10-25（Round 16，上游 `e08cfce` / v0.6.13 与 Round 15 相同，无新提交，无需 merge）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
 | Upstream 版本号 | `0.6.13`（MinerU 4 V1 API / 预览前进后退导航 / 移除已停止 Ingest 任务 / 自定义 Provider 请求选项扩展 / 概览与 Review 生命周期 / 大文档 Ingest 可靠性）|
 | **本 fork 版本** | `0.7.0`（Round 16 编辑可靠性、内部研究、DeepSeek、嵌入与性能优化）|
@@ -119,7 +119,7 @@
 > - **README 补齐**：外层 `README.md` 功能一览补「文件预览前进/后退导航」，MinerU 行扩至 4 V1 API，摄取队列行补「移除已停止任务」。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2700 ✅（186 文件）/ cargo check ✅ / cargo test 459 ✅（2 ignored）。
 
-> **Round 16 同步与产品迭代（2026-10-24，v0.6.20 → v0.7.0）**：`git fetch upstream main` 后上游仍为 `e08cfce` / v0.6.13，与 Round 15 相同；compare 为 `identical`、`ahead_by: 0`，因此没有空 merge 或上游覆盖。`origin/main` 同步前与本地基线一致。
+> **Round 16 同步与产品迭代（2026-10-25，v0.6.20 → v0.7.0）**：`git fetch upstream main` 后上游仍为 `e08cfce` / v0.6.13，与 Round 15 相同；compare 为 `identical`、`ahead_by: 0`，因此没有空 merge 或上游覆盖。`origin/main` 同步前与本地基线一致。
 > - **编辑与 UI 可靠性**：`8e63ba0`。按路径串行保存、revision 防回写、搜索预读等待、AI 选区写入协调、删除 tombstone 与失败恢复；原生退出等待保存。统一阅读排版、明暗主题、键盘焦点、可调整/收起面板和真实外链。
 > - **嵌入与 DeepSeek**：`dfd23be`。单页嵌入使用实际 `batchSize`，新增 1-300 秒超时配置；本地/私有 endpoint 使用保守默认值。批量超时二分且保留所有 chunk。新增 DeepSeek Search & Fetch，Deep Research 可使用有界正文。
 > - **内部 Wiki 研究**：`25c577e`。Review 从 `affectedPages` 读取实际内容，沿链接和 Wiki 搜索扩展，最多 12 页且总字符按模型上下文限界。保留路径式引用；`UNRESOLVED` 不写解决页，也不 resolve Review，只有有效内容与保存成功后才 resolve。
@@ -132,7 +132,8 @@
 >   - 独立产品方向，未伪装成本轮小补丁：#818、#819、#820、#821、#822、#823（Pi Harness）、#762（无头部署）、#740（Copilot）、#717（类型化图谱边）、#666（外部 OpenWiki/LangChain 跟进）、#622（移动端）、#616（符号链接资料）、#609（多 Wiki 融合）、#605（3D 图谱）、#602（其他 OCR）、#599（桌面/后端分离）、#552/#551（模板 Harness）、#533（摄取契约）、#527（Zotero）、#466（Copilot CLI）、#455（opencode）、#402（更多自定义搜索）、#400（browser/LAN shell）、#391（内嵌网页模型）、#386（Cursor CLI）、#373（拖拽导入增强）。
 >   - 文档专项：#725 的 EN/JA/KO 中文架构图和截图本地化仍未完成；本轮已更新四语言文字 README 与操作手册，不将文字更新冒充截图本地化。
 > - **近期 closed issue 回归**：#809（来源摘要覆盖）、#799（分析截断）、#793（长文件名）、#790（UI）、#783-#779（合并模板、实体、研究来源与 wikilink）、#770（同 stem 向量 ID）、#768（图片路径空格）、#765（MiniMax header）、#763（图谱别名性能）、#758（Ingest 恢复）、#756（截断）、#754（校验 MCP 写入）、#736（Excel 日期）、#735（图片摄取）、#734（related 图谱边）、#733（lint stub）。相关上游实现已包含，按现有单元/集成测试复核，不重复 cherry-pick。
-> - **验证**：typecheck ✅ 0 错误 / test:mocks 2752 ✅（199 文件）/ cargo check ✅ / cargo test 468 ✅（2 ignored）/ mcp:test 25 ✅。真实 DeepSeek/Ollama/AnyTXT 服务、Intel Mac、Windows/Linux 桌面、特定 PDF 与大型语料实测未在本机覆盖；跨平台产物以 CI 为准。
+> - **安全与运行时**：PDF.js 6.4.299、MCP SDK 1.32.2、KaTeX 0.19.1、Milkdown 7.22.3，CI Node 22（最低 22.13）；主应用与 MCP `npm audit` 均为 0。
+> - **验证**：typecheck ✅ 0 错误 / test:mocks 2752 ✅（199 文件）/ cargo check ✅ / cargo test 468 ✅（2 ignored）/ mcp:test 25 ✅ / npm audit 0。真实 DeepSeek/Ollama/AnyTXT 服务、Intel Mac、Windows/Linux 桌面、特定 PDF 与大型语料实测未在本机覆盖；跨平台产物以 CI 为准。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局

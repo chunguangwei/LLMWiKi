@@ -100,6 +100,7 @@ git tag v0.6.3 && git push origin v0.6.3
 npm run test:mocks
 npm run mcp:test
 npm run build:desktop
+npm audit
 (cd src-tauri && cargo check && cargo test)
 ```
 

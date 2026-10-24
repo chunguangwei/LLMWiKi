@@ -414,7 +414,7 @@ Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
 ### Build from Source
 
 ```bash
-# Prerequisites: Node.js 20+, Rust 1.88+, protoc
+# Prerequisites: Node.js 22.13+, Rust 1.88+, protoc
 #   macOS:  brew install protobuf
 #   Linux:  sudo apt install protobuf-compiler
 #   Windows: choco install protoc

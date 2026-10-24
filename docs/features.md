@@ -423,6 +423,11 @@ Review 研究优先读取 `affectedPages` 的实际 Markdown，再沿 wikilink �
 - 通用 frontmatter `sources: []` 是原始资料的溯源数组；类型特有的单数 `source` 是该类型约定的单值语义，不是同一个字段，也不要求相互替代。
 - `wiki/sources/` 摘要路径保留原始来源标识，以维持更新、删除和引用清理的稳定关联。Schema 的 `author-year-slug` 等命名约定用于指导新生成页面，不会为了格式一致而强制迁移已有来源文件或破坏其身份。
 
+### 8.7 依赖安全与运行时
+
+- 本版使用 PDF.js 6.4、MCP TypeScript SDK 1.32.2、KaTeX 0.19.1 和一致的 Milkdown 7.22.3，CI 使用 Node 22（最低 22.13）。PDF 预览的加载任务使用 `destroy()`，文档对象使用 `cleanup()`；实际解析测试覆盖单页文本提取。
+- 发布前 `npm audit`（主应用与 `mcp-server/`）应为 0 漏洞。依赖升级不改变 34 类 schema、原始资料格式或保存路径。
+
 ---
 
 ## 故障排查

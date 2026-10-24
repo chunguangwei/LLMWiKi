@@ -23,7 +23,7 @@ app/src-tauri/target/release/bundle/dmg/LLM Wiki_0.6.4_aarch64.dmg
 ### 方式 B：从源码构建
 
 前置：
-- Node.js 20+
+- Node.js 22.13+
 - Rust 1.70+（`brew install rust` 或 `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`）
 
 ```bash
