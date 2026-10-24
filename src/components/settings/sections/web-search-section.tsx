@@ -218,11 +218,12 @@ export function WebSearchSection() {
             {t("settings.sections.webSearch.deepResearchSourcesHint")}
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2">
           {([
             ["web", t("settings.sections.webSearch.sourceWeb")],
             ["anytxt", t("settings.sections.webSearch.sourceAnyTxt")],
             ["both", t("settings.sections.webSearch.sourceBoth")],
+            ["wiki", t("settings.sections.webSearch.sourceWiki", { defaultValue: "Wiki / Internal Knowledge" })],
           ] as const).map(([value, label]) => (
             <button
               key={value}

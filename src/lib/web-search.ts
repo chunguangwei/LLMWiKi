@@ -13,6 +13,7 @@ export interface WebSearchResult {
   url: string
   snippet: string
   source: string
+  wikiPath?: string
 }
 
 export const DEFAULT_FIRECRAWL_URL = "https://api.firecrawl.dev"
@@ -119,6 +120,7 @@ export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
 export function hasConfiguredDeepResearchSources(config: SearchApiConfig): boolean {
   const resolved = resolveSearchConfig(config)
   const source = resolved.deepResearchSource ?? "web"
+  if (source === "wiki") return true
   const webConfigured = hasConfiguredSearchProvider(resolved)
   const anyTxtConfigured = hasConfiguredAnyTxt(resolved.anyTxt)
 

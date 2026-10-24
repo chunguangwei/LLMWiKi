@@ -12,6 +12,7 @@ export interface ResearchTask {
   status: "queued" | "searching" | "synthesizing" | "saving" | "done" | "error"
   webResults: WebSearchResult[]
   synthesis: string
+  resolution?: "resolved" | "unresolved"
   savedPath: string | null
   error: string | null
   createdAt: number

@@ -175,6 +175,7 @@
     "sourcesCount": "来源（{{count}}）",
     "anyTxtSource": "AnyTXT 来源",
     "webSource": "网页来源",
+    "wikiSource": "内部 Wiki",
     "synthesis": "综合结果",
     "thinking": "思考中",
     "open": "打开",
@@ -188,6 +189,7 @@
       "saving": "正在保存到 Wiki...",
       "saved": "已保存",
       "done": "已完成",
+      "unresolved": "未解决",
       "failed": "失败"
     }
   },
@@ -833,10 +835,11 @@
         "title": "外部信息源",
         "description": "配置 LLM Wiki 可以使用的外部信息来源。",
         "deepResearchSources": "深度研究来源模式",
-        "deepResearchSourcesHint": "网页搜索使用当前选中的在线搜索 Provider。AnyTXT 会通过本机 ATGUI.exe 的本地索引搜索文件内容。",
+        "deepResearchSourcesHint": "网页搜索使用当前选中的在线 Provider，AnyTXT 搜索本机索引文件；Wiki 仅使用当前项目中的受影响页面和相关知识，无需外部搜索。",
         "sourceWeb": "网页搜索",
         "sourceAnyTxt": "AnyTXT",
         "sourceBoth": "两者都用",
+        "sourceWiki": "Wiki / 内部知识",
         "webProviders": "网页搜索 Provider",
         "anyTxtTitle": "AnyTXT 本地文件搜索",
         "anyTxtDescription": "把 AnyTXT 的本地 JSON-RPC API 作为 Deep Research 的信息来源。开始研究前请保持 ATGUI.exe 运行。",

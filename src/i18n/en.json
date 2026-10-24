@@ -175,6 +175,7 @@
     "sourcesCount": "Sources ({{count}})",
     "anyTxtSource": "AnyTXT source",
     "webSource": "Web source",
+    "wikiSource": "Internal Wiki",
     "synthesis": "Synthesis",
     "thinking": "Thinking",
     "open": "Open",
@@ -188,6 +189,7 @@
       "saving": "Saving to wiki...",
       "saved": "Saved",
       "done": "Done",
+      "unresolved": "Unresolved",
       "failed": "Failed"
     }
   },
@@ -833,10 +835,11 @@
         "title": "External Information Sources",
         "description": "Configure external information sources that LLM Wiki can use.",
         "deepResearchSources": "Deep Research source mode",
-        "deepResearchSourcesHint": "Web Search uses the selected online provider. AnyTXT searches local indexed files through ATGUI.exe on this machine.",
+        "deepResearchSourcesHint": "Web Search uses the selected online provider. AnyTXT searches local indexed files. Wiki uses affected and related pages in the current project without external search.",
         "sourceWeb": "Web Search",
         "sourceAnyTxt": "AnyTXT",
         "sourceBoth": "Both",
+        "sourceWiki": "Wiki / Internal Knowledge",
         "webProviders": "Web Search providers",
         "anyTxtTitle": "AnyTXT local file search",
         "anyTxtDescription": "Use AnyTXT's local JSON-RPC API as a Deep Research source. Keep ATGUI.exe running before starting research.",

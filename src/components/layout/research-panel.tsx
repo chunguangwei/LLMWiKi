@@ -294,7 +294,9 @@ function ResearchTaskCard({
     searching: <Loader2 className="h-3 w-3 animate-spin text-blue-500" />,
     synthesizing: <Loader2 className="h-3 w-3 animate-spin text-purple-500" />,
     saving: <Loader2 className="h-3 w-3 animate-spin text-orange-500" />,
-    done: <CheckCircle2 className="h-3 w-3 text-emerald-500" />,
+    done: task.resolution === "unresolved"
+      ? <AlertCircle className="h-3 w-3 text-amber-500" />
+      : <CheckCircle2 className="h-3 w-3 text-emerald-500" />,
     error: <AlertCircle className="h-3 w-3 text-destructive" />,
   }[task.status]
 
@@ -303,13 +305,28 @@ function ResearchTaskCard({
     searching: t("research.status.searching"),
     synthesizing: t("research.status.synthesizing"),
     saving: t("research.status.saving"),
-    done: task.savedPath ? t("research.status.saved") : t("research.status.done"),
+    done: task.resolution === "unresolved"
+      ? t("research.status.unresolved", { defaultValue: "Unresolved" })
+      : task.savedPath ? t("research.status.saved") : t("research.status.done"),
     error: t("research.status.failed"),
   }[task.status]
 
   async function handleOpenSaved() {
     if (!project || !task.savedPath) return
     const path = `${normalizePath(project.path)}/${task.savedPath}`
+    try {
+      const content = await readFile(path)
+      openFileInPreview(path, content)
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleOpenSource(wikiPath: string) {
+    if (!project) return
+    const relative = normalizePath(wikiPath)
+    if (!relative.startsWith("wiki/") || relative.split("/").includes("..")) return
+    const path = `${normalizePath(project.path)}/${relative}`
     try {
       const content = await readFile(path)
       openFileInPreview(path, content)
@@ -352,18 +369,30 @@ function ResearchTaskCard({
               <div className="flex flex-col gap-1">
                 {task.webResults.map((r, i) => {
                   const isAnyTxt = r.source.toLowerCase() === "anytxt"
-                  const SourceIcon = isAnyTxt ? FileSearch : Globe2
+                  const SourceIcon = r.wikiPath ? FileText : isAnyTxt ? FileSearch : Globe2
                   return (
                     <div key={i} className="flex items-start gap-1.5 rounded bg-muted/50 px-2 py-1">
                       <span className="shrink-0 font-mono text-muted-foreground">[{i + 1}]</span>
                       <SourceIcon
-                        className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${isAnyTxt ? "text-amber-600" : "text-blue-600"}`}
-                        aria-label={isAnyTxt ? t("research.anyTxtSource") : t("research.webSource")}
+                        className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${r.wikiPath ? "text-sidebar-primary" : isAnyTxt ? "text-amber-600" : "text-blue-600"}`}
+                        aria-label={r.wikiPath ? t("research.wikiSource", { defaultValue: "Internal Wiki" }) : isAnyTxt ? t("research.anyTxtSource") : t("research.webSource")}
                       />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium">{r.title}</div>
-                        <div className="truncate text-muted-foreground">{isAnyTxt ? "AnyTXT" : r.source}</div>
-                      </div>
+                      {r.wikiPath ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleOpenSource(r.wikiPath!)}
+                          className="min-w-0 flex-1 text-left hover:text-sidebar-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          title={r.wikiPath}
+                        >
+                          <div className="truncate font-medium">{r.title}</div>
+                          <div className="truncate text-muted-foreground">{r.source}</div>
+                        </button>
+                      ) : (
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">{r.title}</div>
+                          <div className="truncate text-muted-foreground">{isAnyTxt ? "AnyTXT" : r.source}</div>
+                        </div>
+                      )}
                     </div>
                   )
                 })}

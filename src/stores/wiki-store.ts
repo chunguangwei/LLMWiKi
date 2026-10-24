@@ -72,7 +72,7 @@ export type SearchProvider =
   | "deepseek"
   | "firecrawl"
   | "none"
-export type DeepResearchSource = "web" | "anytxt" | "both"
+export type DeepResearchSource = "web" | "anytxt" | "both" | "wiki"
 export type SerpApiEngine =
   | "google"
   | "google_news"

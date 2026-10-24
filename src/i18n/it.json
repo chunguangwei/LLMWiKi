@@ -142,6 +142,7 @@
     "sourcesCount": "Fonti ({{count}})",
     "anyTxtSource": "Fonte AnyTXT",
     "webSource": "Fonte web",
+    "wikiSource": "Wiki interno",
     "synthesis": "Sintesi",
     "thinking": "Ragionamento",
     "open": "Apri",
@@ -155,6 +156,7 @@
       "saving": "Salvataggio nel wiki...",
       "saved": "Salvato",
       "done": "Completato",
+      "unresolved": "Non risolto",
       "failed": "Non riuscito"
     }
   },
@@ -791,10 +793,11 @@
         "title": "Fonti di informazione esterne",
         "description": "Configura le fonti di informazione esterne utilizzabili da LLM Wiki.",
         "deepResearchSources": "Modalità fonti per la Deep Research",
-        "deepResearchSourcesHint": "La ricerca web usa il provider online selezionato. AnyTXT cerca nei file locali indicizzati tramite ATGUI.exe su questa macchina.",
+        "deepResearchSourcesHint": "La ricerca web usa il provider online selezionato. AnyTXT cerca nei file locali indicizzati. Wiki usa le pagine interessate e correlate del progetto corrente senza ricerca esterna.",
         "sourceWeb": "Ricerca web",
         "sourceAnyTxt": "AnyTXT",
         "sourceBoth": "Entrambe",
+        "sourceWiki": "Wiki / Conoscenza interna",
         "webProviders": "Provider di ricerca web",
         "anyTxtTitle": "Ricerca locale AnyTXT",
         "anyTxtDescription": "Usa l'API JSON-RPC locale di AnyTXT come fonte per la Deep Research. Tieni ATGUI.exe in esecuzione prima di avviare una ricerca.",
