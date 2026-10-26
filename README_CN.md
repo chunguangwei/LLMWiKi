@@ -1,7 +1,7 @@
 # LLM Wiki
 
 <p align="center">
-  <img src="logo.jpg" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
+  <img src="logo.png" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
 </p>
 
 <p align="center">
@@ -51,6 +51,13 @@
 - **异步审核系统** — LLM 在摄入时标记需人工判断的项，预定义操作，预生成搜索查询
 - **Chrome 网页剪藏** — 一键捕获网页内容，自动摄入知识库
 - **本地 HTTP API + MCP Server + AI Agent Skill** — 内置 `127.0.0.1:19828` JSON API 和随包提供的 MCP Server，支持 Hybrid 检索、文件读取、知识图谱遍历、源资料重新扫描；配套 [agent skill](https://github.com/nashsu/llm_wiki_skill) 一行命令接入 Claude Code / Codex（`npx skills add …`）
+
+## v0.8.0：新品牌与更自然的资料输入
+
+- **Linked Folio 新标识** — 分层书页与三节点知识路径，提供 SVG、桌面与安装包图标，以及风格统一的剪藏弹窗
+- **资料直接拖入** — 文件或文件夹可混合拖入原始资料面板；原文件保留不动，所有导入共用安全过滤和串行保护
+- **图片拖进聊天** — 支持原生和浏览器图片，沿用类型、大小和数量限制，同时保留选择与粘贴流程
+- **来源操作更明确** — 每个文件的 Ingest 都明确用于生成或更新 Wiki 页面，而非再次复制原文件
 
 ## v0.7.0：可靠性与聚焦研究
 

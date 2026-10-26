@@ -8,7 +8,7 @@ import { useReviewStore } from "@/stores/review-store"
 import { useResearchStore } from "@/stores/research-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { useTranslation } from "react-i18next"
-import logoImg from "@/assets/logo.png"
+import logoImg from "@/assets/brand/llm-wiki-icon.svg"
 import type { WikiState } from "@/stores/wiki-store"
 import {
   isResearchPanelVisible,

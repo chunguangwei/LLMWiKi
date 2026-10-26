@@ -1,7 +1,7 @@
 # LLM Wiki
 
 <p align="center">
-  <img src="logo.jpg" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
+  <img src="logo.png" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
 </p>
 
 <p align="center">
@@ -51,6 +51,13 @@
 - **비동기 리뷰 시스템** — LLM이 사람의 판단이 필요한 항목을 표시하고, 사전 정의된 작업과 미리 생성된 검색 쿼리를 제공합니다
 - **Chrome Web Clipper** — 웹 페이지를 한 번의 클릭으로 캡처하고 지식 베이스에 자동 인제스트합니다
 - **로컬 HTTP API + MCP Server + AI Agent Skill** — 내장 `127.0.0.1:19828` JSON API와 번들 MCP Server를 통해 하이브리드 검색, 파일 읽기, 그래프 탐색, 소스 재스캔을 지원합니다. 바로 사용할 수 있는 [agent skill](https://github.com/nashsu/llm_wiki_skill)은 한 줄 명령(`npx skills add ...`)으로 Claude Code / Codex에 설치할 수 있습니다
+
+## v0.8.0: 새로운 브랜드와 빠른 자료 입력
+
+- **Linked Folio 브랜드** — 겹친 페이지와 세 노드 지식 경로를 담은 SVG 아이콘으로 데스크톱, 설치 패키지, Web Clipper 팝업을 통일했습니다
+- **소스 직접 끌어오기** — 파일과 디렉터리를 섞어 Raw Sources에 놓아 가져옵니다. 원본은 그대로 유지하며 동일한 안전 필터와 직렬 가져오기를 사용합니다.
+- **채팅에 이미지 끌어오기** — 시스템 및 브라우저 이미지를 기존 형식, 크기, 개수 제한으로 첨부하고 선택과 붙여넣기도 지원합니다
+- **명확한 소스 작업** — 파일별 Ingest가 원본을 다시 복사하는 것이 아니라 Wiki 페이지를 생성하거나 업데이트한다는 점을 명확히 설명합니다
 
 ## v0.7.0: 안정성과 집중형 연구
 

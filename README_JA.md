@@ -1,7 +1,7 @@
 # LLM Wiki
 
 <p align="center">
-  <img src="logo.jpg" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
+  <img src="logo.png" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
 </p>
 
 <p align="center">
@@ -51,6 +51,13 @@
 - **非同期レビューシステム** — LLM が人間の判断を要する項目を作成し、定義済みアクションと事前生成された検索クエリを付与
 - **Chrome Web Clipper** — Web ページをワンクリックで取り込み、知識ベースへ自動インジェスト
 - **ローカル HTTP API + MCP Server + AI Agent Skill** — `127.0.0.1:19828` の JSON API と同梱 MCP Server でハイブリッド検索、ファイル読み取り、グラフ探索、ソース再スキャンを提供。専用の [agent skill](https://github.com/nashsu/llm_wiki_skill) はワンコマンドで Claude Code / Codex に追加可能（`npx skills add …`）
+
+## v0.8.0：新しいブランドと直感的な取り込み
+
+- **Linked Folio の新しいブランド** — 重ねたページと 3 ノードの知識パスを持つ SVG アイコンを採用し、デスクトップ／インストーラ／Clipper popup を統一
+- **ソースを直接ドロップ** — ファイルやフォルダを混合して Raw Sources に追加。元ファイルを保持し、共通の安全フィルターと直列インポートを利用
+- **画像をチャットにドロップ** — ネイティブ／ブラウザの画像を既存の形式・サイズ・枚数制限で添付。選択や貼り付けも利用可能
+- **明確なソース操作** — ファイルごとの Ingest が元ファイルの再コピーではなく Wiki の生成・更新であることを明示
 
 ## v0.7.0：信頼性と焦点を絞った調査
 

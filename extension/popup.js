@@ -148,6 +148,11 @@ async function sendClip() {
 }
 
 clipBtn.addEventListener("click", sendClip);
+clipBtn.addEventListener("focus", () => {
+  requestAnimationFrame(() => {
+    document.body.scrollTop = 0;
+  });
+});
 
 projectSelect.addEventListener("change", () => {
   if (projectSelect.value) {
@@ -180,10 +185,21 @@ function resizePreview() {
   const preview = document.getElementById("contentPreview");
   if (!preview) return;
 
-  // Calculate space used by everything except the preview
+  document.body.scrollTop = 0;
   const previewRect = preview.getBoundingClientRect();
-  const bottomSpace = totalHeight - previewRect.top - 60; // 60px for button + footer
-  const maxH = Math.max(100, Math.min(300, bottomSpace));
+  const footer = document.querySelector(".footer");
+  const content = preview.closest(".content");
+  const previewMarginBottom = Number.parseFloat(getComputedStyle(preview.parentElement).marginBottom) || 0;
+  const buttonMarginTop = Number.parseFloat(getComputedStyle(clipBtn).marginTop) || 0;
+  const contentPaddingBottom = content ? Number.parseFloat(getComputedStyle(content).paddingBottom) || 0 : 0;
+  const bottomSpace = totalHeight
+    - previewRect.top
+    - clipBtn.getBoundingClientRect().height
+    - (footer?.getBoundingClientRect().height ?? 0)
+    - previewMarginBottom
+    - buttonMarginTop
+    - contentPaddingBottom;
+  const maxH = Math.max(0, Math.min(260, bottomSpace));
   preview.style.maxHeight = maxH + "px";
 }
 

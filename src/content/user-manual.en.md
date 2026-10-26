@@ -100,7 +100,10 @@ You can use the app without either, but turning them on noticeably upgrades the 
 
 ### 4.1 Ingest new material
 
-Drag files directly into `raw/sources/` or use the **Import** button in the Sources panel on the left:
+Add material in any of these ways; your original files stay in place:
+- Drop one or more files or folders anywhere in the **Sources** panel, including mixed batches. They are copied into the project's `raw/sources/` with the existing sensitive-file exclusions, size limits, and project-directory protection. Repeated actions cannot run overlapping imports.
+- Click **Import** for files, **Folder** for a directory, or **URLs** for a batch of web pages.
+- You can also place files directly into the project's `raw/sources/`. Supported files are queued for ingest when a model is configured.
 
 | Type | Extensions |
 |---|---|
@@ -129,6 +132,8 @@ Switch to the **Chat** panel and ask in plain language:
 - "What new concepts did this month's ingested material introduce?"
 
 **Good answers can be "saved as a new page"** so exploration accumulates into the wiki — next time you don't have to ask again.
+
+For image questions, drop a PNG, JPEG, WebP, or GIF into the chat input, or use **Attach image** or paste. Each image can be up to 5 MB, with at most five images per message, and the current Provider must support vision input. These images belong only to the current message; they are not automatically copied into Raw Sources.
 
 ### 4.3 View the graph
 

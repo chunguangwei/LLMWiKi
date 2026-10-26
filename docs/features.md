@@ -10,6 +10,9 @@ LLMWiki 在 [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) 的基础上�
 | 4 | **中文 i18n 补全 + 一键切换语言** |
 | 5 | **智能拆分 / Splitting Rules（综合 schema + 单页类型）** |
 | 6 | **自己 GitHub 自动更新（就地更新）+ 加密配置备份** |
+| 7 | GitHub 版本化备份与多设备同步 |
+| 8 | v0.7.0 可靠性与研究能力 |
+| 9 | v0.8.0 品牌与拖放输入 |
 
 > 想要自定义分类、规则、格式要求？看 [`user-rules.md`](user-rules.md)（schema.md + purpose.md + Settings）。
 
@@ -427,6 +430,33 @@ Review 研究优先读取 `affectedPages` 的实际 Markdown，再沿 wikilink �
 
 - 本版使用 PDF.js 6.4、MCP TypeScript SDK 1.32.2、KaTeX 0.19.1 和一致的 Milkdown 7.22.3，CI 使用 Node 22（最低 22.13）。PDF 预览的加载任务使用 `destroy()`，文档对象使用 `cleanup()`；实际解析测试覆盖单页文本提取。
 - 发布前 `npm audit`（主应用与 `mcp-server/`）应为 0 漏洞。依赖升级不改变 34 类 schema、原始资料格式或保存路径。
+
+---
+
+## 9. v0.8.0 品牌与拖放输入
+
+### 9.1 Linked Folio 品牌与完整图标
+
+- 新标识以分层书页与三节点连接路径表达资料沉淀为关联 Wiki。深墨绿、矿物青和暖纸白取代蓝紫细线风格，重点保证 16px / 32px 下的轮廓与对比。
+- 可编辑矢量源和 Tauri 图标清单在 `src/assets/brand/`。主图标不含可见文字、脚本或远程图片；透明符号与单色版本分别用于自适应和单色场景。
+- 修改矢量后运行 `npm run tauri -- icon src/assets/brand/icon-manifest.json`，重新生成 `src-tauri/icons/` 的 ICNS、ICO、Windows 磁贴、PNG、Android 与 iOS 资产。侧栏使用 SVG，README 使用 `logo.png`，扩展包含 16 / 48 / 128px 图标和统一配色的 popup；不新增运行时依赖。
+- 弹窗预览按实际按钮、页脚与 CSS 间距计算高度，按钮聚焦时保持顶部稳定，保证 Logo、页脚和快捷键在 500px 弹窗内可见。
+
+### 9.2 资料文件与文件夹拖放
+
+**资料面板 → 任意位置拖入文件或文件夹**。支持混合批次，复制到项目 `raw/sources/`，原文件保持不动。
+
+- `src/hooks/use-native-file-drop.ts` 将 Tauri 的物理坐标按设备像素比换算为 CSS 坐标，只让实际目标区域接收事件；隐藏但仍挂载的来源面板不响应。leave、空路径和卸载都会清理状态。
+- `src/lib/source-drop.ts` 区分文件和目录后，复用现有 `importSourceFiles` / `importSourceFolder`，保留敏感配置排除、大小限制、项目目录保护、唯一命名和 Ingest 队列。缺失路径、部分失败和其他导入结果会一起呈现，不会静默丢弃。
+- 文件选择、文件夹选择、URL 和拖放共用同步导入锁，防止快速操作并发复制。来源行的书本按钮明确表示「为该文件生成或更新 Wiki 页面」，不是再次导入原文件，并提供文件名相关的可访问名称。
+
+### 9.3 聊天图片拖放
+
+**聊天输入框 → 拖入 PNG / JPEG / WebP / GIF**。原生路径先用 `getFileSize` 检查 5MB 上限，再通过现有 `readFileAsBase64` 读取；浏览器文件沿用 FileReader。每条消息最多 5 张。
+
+- 原生路径、浏览器拖放、粘贴和图片选择进入同一串行队列，连续操作不会绕过数量限制；预览、删除和发送数据结构保持兼容。
+- 当前 Provider 不支持视觉输入时不读取文件，并显示本地化提示；不自动更改模型配置。图片属于当前消息，不会自动复制到原始资料。
+- 浏览器验收使用 Tauri mock 与真实 FileReader；原生操作系统拖放仍需对应桌面环境实测，不能把模拟事件当作原生 UI 验证。
 
 ---
 

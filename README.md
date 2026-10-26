@@ -1,7 +1,7 @@
 # LLM Wiki
 
 <p align="center">
-  <img src="logo.jpg" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
+  <img src="logo.png" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
 </p>
 
 <p align="center">
@@ -51,6 +51,13 @@
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 - **Local HTTP API + MCP Server + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API and bundled MCP server for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/nashsu/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
+
+## v0.8.0: a clearer identity and faster capture
+
+- **Linked Folio brand** — a layered-page and three-node knowledge-path mark with scalable vector artwork, native desktop and installer icons, and a matching Web Clipper popup
+- **Drag sources directly** — drop files or folders into Raw Sources, including mixed batches; originals stay in place and every import shares the same safety filters and serialization
+- **Drop images into chat** — attach native or browser images with the existing type, size, and count limits, while keeping picker and paste workflows
+- **Clear source actions** — per-file Ingest controls explain that they generate or update Wiki pages rather than copying the original file again
 
 ## v0.7.0: reliability and focused research
 

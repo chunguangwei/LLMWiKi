@@ -1,0 +1,7 @@
+{
+  "default": "llm-wiki-icon.svg",
+  "bg_color": "#102F33",
+  "android_fg": "llm-wiki-mark.svg",
+  "android_fg_scale": 85,
+  "android_monochrome": "llm-wiki-monochrome.svg"
+}
