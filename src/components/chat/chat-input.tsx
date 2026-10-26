@@ -13,7 +13,9 @@ import {
   fileToMessageImage,
   isAcceptedImageType,
   messageImageToDataUrl,
+  readMessageImageFromPath,
 } from "@/lib/chat-image-utils"
+import { useNativeFileDrop } from "@/hooks/use-native-file-drop"
 
 export interface ChatSendOptions {
   useWebSearch: boolean
@@ -178,6 +180,7 @@ export function ChatInput({
   const [value, setValue] = useState("")
   const [images, setImages] = useState<MessageImage[]>([])
   const [imageError, setImageError] = useState<string | null>(null)
+  const [browserDragging, setBrowserDragging] = useState(false)
   const [showSkills, setShowSkills] = useState(false)
   const [cursorPosition, setCursorPosition] = useState(0)
   const [slashSkillIndex, setSlashSkillIndex] = useState(0)
@@ -187,6 +190,16 @@ export function ChatInput({
   const inputFrameRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const imagesRef = useRef<MessageImage[]>([])
+  const imageQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const skillSourceLabel = useCallback(
     (source: string) => t(`chat.skillSources.${source}`, { defaultValue: source }),
@@ -261,50 +274,104 @@ export function ChatInput({
     return () => document.removeEventListener("pointerdown", onPointerDown)
   }, [contextFileKey, slashSkillKey])
 
-  // Validate + decode a batch of files (from paste, drop, or the file
-  // picker) and append the accepted ones to `images`. Rejections set a
-  // transient error message rather than throwing — one bad file should
-  // never block the good ones in the same batch.
-  const addFiles = useCallback(
-    async (files: File[]) => {
-      const imageFiles = files.filter((f) => f.type.startsWith("image/"))
-      if (imageFiles.length === 0) return
-      if (!imageInputAvailable) {
-        setImageError(t("chat.imageInputUnavailable"))
-        return
+  const updateImages = useCallback((update: (current: MessageImage[]) => MessageImage[]) => {
+    const next = update(imagesRef.current)
+    imagesRef.current = next
+    if (mountedRef.current) setImages(next)
+  }, [])
+
+  const updateImageError = useCallback((message: string | null) => {
+    if (mountedRef.current) setImageError(message)
+  }, [])
+
+  const appendImages = useCallback(async (inputs: Array<File | string>) => {
+    const candidates = inputs.filter((input) => typeof input === "string" || input.type.startsWith("image/"))
+    if (candidates.length === 0) return
+    if (!imageInputAvailable) {
+      updateImageError(t("chat.imageInputUnavailable"))
+      return
+    }
+    let error: string | null = null
+    const accepted: MessageImage[] = []
+    let remaining = MAX_IMAGES_PER_MESSAGE - imagesRef.current.length
+    for (const input of candidates) {
+      if (remaining <= 0) {
+        error = t("chat.tooManyImages", { max: MAX_IMAGES_PER_MESSAGE })
+        break
       }
-      let error: string | null = null
-      const accepted: MessageImage[] = []
-      // Read current count via the functional updater below; here we
-      // pre-compute remaining slots from the latest render's state.
-      let remaining = MAX_IMAGES_PER_MESSAGE - images.length
-      for (const file of imageFiles) {
-        if (remaining <= 0) {
-          error = t("chat.tooManyImages", { max: MAX_IMAGES_PER_MESSAGE })
-          break
-        }
-        if (!isAcceptedImageType(file.type)) {
-          error = t("chat.unsupportedImageType", { type: file.type || "?" })
-          continue
-        }
-        if (file.size > MAX_IMAGE_BYTES) {
-          error = t("chat.imageTooLarge", { max: MAX_IMAGE_MB, name: file.name || "image" })
-          continue
-        }
-        try {
-          accepted.push(await fileToMessageImage(file))
+      if (typeof input === "string") {
+        const result = await readMessageImageFromPath(input)
+        if (result.ok) {
+          accepted.push(result.image)
           remaining -= 1
-        } catch {
-          error = t("chat.unsupportedImageType", { type: file.type || "?" })
+        } else if (result.reason === "too-large") {
+          error = t("chat.imageTooLarge", { max: MAX_IMAGE_MB, name: result.name })
+        } else if (result.reason === "unsupported-type") {
+          error = t("chat.unsupportedImageType", { type: result.mediaType ?? "?" })
+        } else {
+          error = t("chat.imageReadFailed", { name: result.name })
         }
+        continue
       }
-      if (accepted.length > 0) {
-        setImages((prev) => [...prev, ...accepted].slice(0, MAX_IMAGES_PER_MESSAGE))
+      if (!isAcceptedImageType(input.type)) {
+        error = t("chat.unsupportedImageType", { type: input.type || "?" })
+        continue
       }
-      setImageError(error)
+      if (input.size > MAX_IMAGE_BYTES) {
+        error = t("chat.imageTooLarge", { max: MAX_IMAGE_MB, name: input.name || "image" })
+        continue
+      }
+      try {
+        accepted.push(await fileToMessageImage(input))
+        remaining -= 1
+      } catch {
+        error = t("chat.unsupportedImageType", { type: input.type || "?" })
+      }
+    }
+    if (accepted.length > 0) {
+      updateImages((current) => [...current, ...accepted].slice(0, MAX_IMAGES_PER_MESSAGE))
+    }
+    updateImageError(error)
+  }, [imageInputAvailable, t, updateImageError, updateImages])
+
+  const queueImages = useCallback((inputs: Array<File | string>) => {
+    const queued = imageQueueRef.current.then(() => appendImages(inputs))
+    imageQueueRef.current = queued.catch(() => {
+      updateImageError(t("chat.imageReadFailed", { name: "image" }))
+    })
+    return imageQueueRef.current
+  }, [appendImages, t, updateImageError])
+
+  const addFiles = useCallback((files: File[]) => queueImages(files), [queueImages])
+  const addPaths = useCallback((paths: string[]) => queueImages(paths), [queueImages])
+  const nativeDragging = useNativeFileDrop({
+    target: inputFrameRef,
+    enabled: imageInputAvailable && !isStreaming,
+    onDrop: (paths) => {
+      void addPaths(paths)
     },
-    [imageInputAvailable, images.length, t],
-  )
+  })
+
+  const handleBrowserDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (isStreaming || !imageInputAvailable) return
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return
+    event.preventDefault()
+    setBrowserDragging(true)
+  }, [imageInputAvailable, isStreaming])
+
+  const handleBrowserDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    const next = event.relatedTarget
+    if (next instanceof Node && event.currentTarget.contains(next)) return
+    setBrowserDragging(false)
+  }, [])
+
+  const handleBrowserDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (event.dataTransfer.files.length === 0) return
+    event.preventDefault()
+    setBrowserDragging(false)
+    if (isStreaming) return
+    void addFiles(Array.from(event.dataTransfer.files))
+  }, [addFiles, isStreaming])
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -338,9 +405,9 @@ export function ChatInput({
   )
 
   const removeImage = useCallback((index: number) => {
-    setImages((prev) => prev.filter((_, i) => i !== index))
-    setImageError(null)
-  }, [])
+    updateImages((current) => current.filter((_, i) => i !== index))
+    updateImageError(null)
+  }, [updateImageError, updateImages])
 
   const removeSelectedSkill = useCallback(
     (id: string) => {
@@ -381,13 +448,13 @@ export function ChatInput({
       skillMode: selectedSkills.length > 0 ? "explicit" : "auto",
     })
     setValue("")
-    setImages([])
-    setImageError(null)
+    updateImages(() => [])
+    updateImageError(null)
     setShowSkills(false)
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
     }
-  }, [agentMode, imageInputAvailable, images, isStreaming, onSend, retrievalMode, selectedContextFiles, selectedSkills, t, useAnyTxtSearch, useWebSearch, value])
+  }, [agentMode, imageInputAvailable, images, isStreaming, onSend, retrievalMode, selectedContextFiles, selectedSkills, t, updateImageError, updateImages, useAnyTxtSearch, useWebSearch, value])
 
   const applySlashSkill = useCallback(
     (skill: ChatSkillOption) => {
@@ -540,7 +607,20 @@ export function ChatInput({
 
   return (
     <div className="border-t bg-background/95 p-3">
-      <div ref={inputFrameRef} className="relative rounded-lg border border-border/80 bg-card/80 p-2 shadow-sm ring-1 ring-black/5 focus-within:border-ring/60 focus-within:ring-ring/20 dark:ring-white/5">
+      <div
+        ref={inputFrameRef}
+        className="relative rounded-lg border border-border/80 bg-card/80 p-2 shadow-sm ring-1 ring-black/5 focus-within:border-ring/60 focus-within:ring-ring/20 dark:ring-white/5"
+        onDragOver={handleBrowserDragOver}
+        onDragLeave={handleBrowserDragLeave}
+        onDrop={handleBrowserDrop}
+        data-drop-active={nativeDragging || browserDragging || undefined}
+      >
+        {(nativeDragging || browserDragging) && (
+          <div role="status" data-testid="chat-image-drop-overlay" className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-emerald-500/60 bg-background/95 p-4 text-center">
+            <ImagePlus className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+            <p className="max-w-xs text-xs font-medium leading-relaxed">{t("chat.dropImages")}</p>
+          </div>
+        )}
         {images.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2 px-1">
             {images.map((img, i) => (

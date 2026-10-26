@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
-import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Link, ExternalLink, Search, X } from "lucide-react"
+import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Link, ExternalLink, Search, X, Upload } from "lucide-react"
+import { useNativeFileDrop } from "@/hooks/use-native-file-drop"
+import { createImportGuard, importDroppedSourcePaths } from "@/lib/source-drop"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -39,6 +41,7 @@ export function SourcesView() {
   const { t } = useTranslation()
   const appDialog = useAppDialog()
   const project = useWikiStore((s) => s.project)
+  const activeView = useWikiStore((s) => s.activeView)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
@@ -47,6 +50,8 @@ export function SourcesView() {
   const dataVersion = useWikiStore((s) => s.dataVersion)
   const [sources, setSources] = useState<FileNode[]>([])
   const [importing, setImporting] = useState(false)
+  const sourceDropRef = useRef<HTMLDivElement>(null)
+  const importGuard = useRef(createImportGuard())
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
@@ -146,6 +151,40 @@ export function SourcesView() {
   const totalSourceCount = useMemo(() => countFiles(sources), [sources])
   const filteredSourceCount = useMemo(() => countFiles(filteredSources), [filteredSources])
 
+  function beginImport(): boolean {
+    if (!importGuard.current.tryAcquire()) return false
+    setImporting(true)
+    return true
+  }
+
+  function endImport() {
+    importGuard.current.release()
+    setImporting(false)
+  }
+
+  async function handleDroppedSources(paths: string[]) {
+    if (!project || paths.length === 0 || !beginImport()) return
+    setImportOutcome(null)
+    setShowAllImportSkips(false)
+    try {
+      const result = await importDroppedSourcePaths(project, paths, llmConfig, sourceWatchConfig)
+      setImportOutcome(summarizeImportOutcome(result, result.error))
+      await loadSources()
+    } catch (error) {
+      setImportOutcome(summarizeImportOutcome(null, error))
+    } finally {
+      endImport()
+    }
+  }
+
+  const sourceDragging = useNativeFileDrop({
+    target: sourceDropRef,
+    enabled: Boolean(project) && activeView === "sources" && !importing,
+    onDrop: (paths) => {
+      void handleDroppedSources(paths)
+    },
+  })
+
   async function handleRefreshSources() {
     if (!project || refreshing) return
     setRefreshing(true)
@@ -203,7 +242,7 @@ export function SourcesView() {
 
     if (!selected || selected.length === 0) return
 
-    setImporting(true)
+    if (!beginImport()) return
     setImportOutcome(null)
     setShowAllImportSkips(false)
     const paths = Array.isArray(selected) ? selected : [selected]
@@ -215,7 +254,7 @@ export function SourcesView() {
       console.error("Failed to import files:", err)
       setImportOutcome(summarizeImportOutcome(null, err))
     } finally {
-      setImporting(false)
+      endImport()
     }
   }
 
@@ -229,7 +268,7 @@ export function SourcesView() {
 
     if (!selected || typeof selected !== "string") return
 
-    setImporting(true)
+    if (!beginImport()) return
     setImportOutcome(null)
     setShowAllImportSkips(false)
     try {
@@ -240,7 +279,7 @@ export function SourcesView() {
       console.error(`Failed to import folder:`, err)
       setImportOutcome(summarizeImportOutcome(null, err))
     } finally {
-      setImporting(false)
+      endImport()
     }
   }
 
@@ -254,7 +293,7 @@ export function SourcesView() {
       setUrlError(error instanceof Error ? error.message : String(error))
       return
     }
-    setImporting(true)
+    if (!beginImport()) return
     setUrlError(null)
     setUrlResults([])
     try {
@@ -263,7 +302,7 @@ export function SourcesView() {
       await loadSources()
       if (results.every((result) => result.path && !result.error)) setUrlInput("")
     } finally {
-      setImporting(false)
+      endImport()
     }
   }
 
@@ -374,7 +413,16 @@ export function SourcesView() {
 
   return (
     <TooltipProvider delay={300}>
-      <div className="flex h-full flex-col">
+      <div ref={sourceDropRef} className="relative flex h-full flex-col" data-drop-active={sourceDragging || undefined}>
+      {sourceDragging && (
+        <div role="status" data-testid="source-drop-overlay" className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-emerald-500/60 bg-background/95 p-6 text-center shadow-xl">
+          <Upload className="h-7 w-7 text-emerald-600 dark:text-emerald-400" />
+          <div className="space-y-1">
+            <p className="text-sm font-semibold">{t("sources.dropTitle")}</p>
+            <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">{t("sources.dropDescription")}</p>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">{t("sources.title")}</h2>
         <div className="flex gap-1">
@@ -859,7 +907,8 @@ function SourceTree({
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0"
-              title={t("sources.ingest")}
+              title={t("sources.ingestFileTooltip")}
+              aria-label={t("sources.ingestFile", { name: node.name })}
               disabled={
                 ingestingPath === node.path ||
                 ingestStatus === "pending" ||

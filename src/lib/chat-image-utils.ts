@@ -1,3 +1,5 @@
+import { getFileSize, readFileAsBase64 } from "@/commands/fs"
+import { getFileName } from "@/lib/path-utils"
 import type { MessageImage } from "@/stores/chat-store"
 
 /** Image MIME types every vision-capable provider on our wire accepts. */
@@ -42,4 +44,38 @@ export function fileToMessageImage(file: File | Blob): Promise<MessageImage> {
 /** Build the `data:` URL for rendering a stored image in an <img>. */
 export function messageImageToDataUrl(img: MessageImage): string {
   return `data:${img.mediaType};base64,${img.dataBase64}`
+}
+
+export type MessageImagePathResult =
+  | { ok: true; image: MessageImage }
+  | { ok: false; reason: "unsupported-type" | "too-large" | "unreadable"; name: string; mediaType?: string }
+
+function imageMediaTypeFromPath(path: string): string {
+  const extension = getFileName(path).toLowerCase().split(".").pop()
+  return {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+  }[extension ?? ""] ?? "application/octet-stream"
+}
+
+export async function readMessageImageFromPath(path: string): Promise<MessageImagePathResult> {
+  const name = getFileName(path) || "image"
+  const expectedType = imageMediaTypeFromPath(path)
+  if (!isAcceptedImageType(expectedType)) {
+    return { ok: false, reason: "unsupported-type", name, mediaType: expectedType }
+  }
+  try {
+    const size = await getFileSize(path)
+    if (size > MAX_IMAGE_BYTES) return { ok: false, reason: "too-large", name }
+    const file = await readFileAsBase64(path)
+    if (!isAcceptedImageType(file.mimeType)) {
+      return { ok: false, reason: "unsupported-type", name, mediaType: file.mimeType }
+    }
+    return { ok: true, image: { mediaType: file.mimeType, dataBase64: file.base64 } }
+  } catch {
+    return { ok: false, reason: "unreadable", name }
+  }
 }

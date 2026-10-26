@@ -9,10 +9,16 @@ const {
   openUrlMock,
   deleteChatConversationMock,
   readFileMock,
+  getFileSizeMock,
+  readFileAsBase64Mock,
+  nativeDropMock,
 } = vi.hoisted(() => ({
   openUrlMock: vi.fn(),
   deleteChatConversationMock: vi.fn(),
   readFileMock: vi.fn(),
+  getFileSizeMock: vi.fn(),
+  readFileAsBase64Mock: vi.fn(),
+  nativeDropMock: { options: null as null | { enabled: boolean; onDrop: (paths: string[]) => void } },
 }))
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: openUrlMock }))
@@ -24,11 +30,21 @@ vi.mock("@/lib/persist", async (importOriginal) => ({
 vi.mock("@/commands/fs", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/commands/fs")>(),
   readFile: readFileMock,
+  getFileSize: getFileSizeMock,
+  readFileAsBase64: readFileAsBase64Mock,
+}))
+vi.mock("@/hooks/use-native-file-drop", () => ({
+  useNativeFileDrop: (options: { enabled: boolean; onDrop: (paths: string[]) => void }) => {
+    nativeDropMock.options = options
+    return false
+  },
 }))
 vi.mock("react-i18next", async (importOriginal) => ({
   ...await importOriginal<typeof import("react-i18next")>(),
   useTranslation: () => ({ t: (key: string) => key }),
 }))
+import { ChatInput } from "./chat-input"
+import { flushIO, flushMicrotasks } from "@/test-helpers/deferred"
 
 import { ConversationSidebar } from "./chat-panel"
 import { ChatMessage, MarkdownContent } from "./chat-message"
@@ -48,6 +64,9 @@ beforeEach(() => {
   openUrlMock.mockReset().mockResolvedValue(undefined)
   deleteChatConversationMock.mockReset().mockResolvedValue(undefined)
   readFileMock.mockReset().mockRejectedValue(new Error("not found"))
+  getFileSizeMock.mockReset().mockResolvedValue(3)
+  readFileAsBase64Mock.mockReset().mockResolvedValue({ base64: "aW1n", mimeType: "image/png" })
+  nativeDropMock.options = null
   useChatStore.setState({ conversations: [], activeConversationId: null, messages: [] })
   useWikiStore.setState({ project: null })
   Object.defineProperty(navigator, "clipboard", {
@@ -200,5 +219,136 @@ describe("MarkdownContent links", () => {
     expect(container.querySelector("a")).toBeNull()
     expect(container.textContent).toContain("Empty")
     expect(openUrlMock).not.toHaveBeenCalled()
+  })
+})
+
+async function renderChatInput(options: { imageInputAvailable?: boolean; isStreaming?: boolean } = {}) {
+  const { imageInputAvailable = true, isStreaming = false } = options
+  const onSend = vi.fn()
+  await render(
+    <ChatInput
+      onSend={onSend}
+      onStop={vi.fn()}
+      isStreaming={isStreaming}
+      useWebSearch={false}
+      useAnyTxtSearch={false}
+      agentMode="standard"
+      retrievalMode="standard"
+      availableSkills={[]}
+      selectedSkills={[]}
+      availableContextFiles={[]}
+      selectedContextFiles={[]}
+      onUseWebSearchChange={vi.fn()}
+      onUseAnyTxtSearchChange={vi.fn()}
+      onAgentModeChange={vi.fn()}
+      onRetrievalModeChange={vi.fn()}
+      onSelectedSkillsChange={vi.fn()}
+      onSelectedContextFilesChange={vi.fn()}
+      anyTxtAvailable={false}
+      imageInputAvailable={imageInputAvailable}
+    />,
+  )
+  return onSend
+}
+
+async function dropNative(paths: string[]) {
+  const onDrop = nativeDropMock.options?.onDrop
+  if (!onDrop) throw new Error("Native drop handler is not registered")
+  await act(async () => {
+    onDrop(paths)
+    await flushMicrotasks(25)
+  })
+}
+
+async function fireBrowserFileEvent(type: "dragover" | "drop", files: File[]) {
+  const textarea = container.querySelector("textarea")
+  if (!textarea) throw new Error("Chat textarea is missing")
+  const event = new Event(type, { bubbles: true, cancelable: true })
+  Object.assign(event, { dataTransfer: { files, types: ["Files"] } })
+  await act(async () => {
+    textarea.dispatchEvent(event)
+    await flushMicrotasks(5)
+    await flushIO(5)
+    await flushMicrotasks(5)
+  })
+  return event
+}
+
+describe("ChatInput image drops", () => {
+  it("reads a browser image file directly", async () => {
+    const { fileToMessageImage } = await import("@/lib/chat-image-utils")
+    const file = new File(["image"], "browser.png", { type: "image/png" })
+    expect(file.type).toBe("image/png")
+    await expect(fileToMessageImage(file)).resolves.toEqual({
+      mediaType: "image/png",
+      dataBase64: "aW1hZ2U=",
+    })
+  })
+
+  it("puts a native image path into the preview and outgoing message", async () => {
+    const onSend = await renderChatInput()
+    await dropNative(["/tmp/note.png"])
+
+    expect(readFileAsBase64Mock).toHaveBeenCalledExactlyOnceWith("/tmp/note.png")
+    const preview = container.querySelector<HTMLImageElement>('img[src="data:image/png;base64,aW1n"]')
+    expect(preview).not.toBeNull()
+    await act(async () => findButton("chat.sendMessage").click())
+    expect(onSend).toHaveBeenCalledExactlyOnceWith(
+      "",
+      [{ mediaType: "image/png", dataBase64: "aW1n" }],
+      expect.objectContaining({ agentMode: "standard", retrievalMode: "standard" }),
+    )
+    expect(container.querySelector('img[src^="data:image/"]')).toBeNull()
+  })
+
+  it("accepts a browser image drop and removes it without native path reads", async () => {
+    await renderChatInput()
+    const file = new File(["image"], "browser.png", { type: "image/png" })
+    await fireBrowserFileEvent("dragover", [file])
+    expect(container.querySelector('[data-testid="chat-image-drop-overlay"]')).not.toBeNull()
+
+    await fireBrowserFileEvent("drop", [file])
+    expect(container.querySelector('[data-testid="chat-image-drop-overlay"]')).toBeNull()
+    await vi.waitFor(() => {
+      expect(container.querySelector('img[src^="data:image/png;base64,"]'), container.innerHTML).not.toBeNull()
+    })
+    expect(getFileSizeMock).not.toHaveBeenCalled()
+    expect(readFileAsBase64Mock).not.toHaveBeenCalled()
+
+    const remove = container.querySelector<HTMLButtonElement>('button[title="chat.removeImage"]')
+    expect(remove).not.toBeNull()
+    await act(async () => remove!.click())
+    expect(container.querySelector('img[src^="data:image/"]')).toBeNull()
+  })
+
+  it("serializes consecutive drops and keeps only five images", async () => {
+    await renderChatInput()
+    await dropNative(["/tmp/1.png", "/tmp/2.png", "/tmp/3.png"])
+    await dropNative(["/tmp/4.png", "/tmp/5.png", "/tmp/6.png"])
+
+    expect(container.querySelectorAll('img[src^="data:image/"]')).toHaveLength(5)
+    expect(readFileAsBase64Mock).toHaveBeenCalledTimes(5)
+    expect(readFileAsBase64Mock).not.toHaveBeenCalledWith("/tmp/6.png")
+    expect(container.textContent).toContain("chat.tooManyImages")
+  })
+
+  it("does not read files when the provider cannot accept images", async () => {
+    await renderChatInput({ imageInputAvailable: false })
+    expect(nativeDropMock.options?.enabled).toBe(false)
+    await dropNative(["/tmp/private.png"])
+
+    expect(getFileSizeMock).not.toHaveBeenCalled()
+    expect(readFileAsBase64Mock).not.toHaveBeenCalled()
+    expect(container.textContent).toContain("chat.imageInputUnavailable")
+  })
+
+  it("shows an oversized-image error without reading the image bytes", async () => {
+    getFileSizeMock.mockResolvedValue(5 * 1024 * 1024 + 1)
+    await renderChatInput()
+    await dropNative(["/tmp/large.png"])
+
+    expect(readFileAsBase64Mock).not.toHaveBeenCalled()
+    expect(container.textContent).toContain("chat.imageTooLarge")
+    expect(container.querySelector('img[src^="data:image/"]')).toBeNull()
   })
 })
