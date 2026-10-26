@@ -28,6 +28,40 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.8.0",
+    date: "2026-10-26",
+    highlights: {
+      en: [
+        "Introduced the Linked Folio identity with layered pages and a three-node knowledge path, delivered as scalable vector, desktop, installer, favicon, and extension icons.",
+        "Added native file and folder drops to Raw Sources with safe mixed imports, clear feedback, and duplicate-import protection.",
+        "Added native and browser image drops to chat, preserving the 5 MB and five-image limits along with paste, picker, preview, and send behavior.",
+        "Clarified per-source Ingest actions with accessible names and explicit generate-or-update Wiki descriptions.",
+        "Refined the Web Clipper popup with the new mark, accessible focus colors, and preview sizing that keeps the footer and shortcuts visible.",
+      ],
+      zh: [
+        "全新「折页知识路径」品牌标识：分层书页与三节点连接，覆盖矢量、桌面安装包、favicon 与扩展图标。",
+        "原始资料支持原生文件/文件夹拖放，保留混合导入安全限制、清晰反馈和重复导入保护。",
+        "聊天支持原生与浏览器图片拖放，沿用 5MB、最多 5 张限制，保留粘贴、选择、预览与发送流程。",
+        "来源 Ingest 操作补充可访问名称与生成/更新 Wiki 的明确说明。",
+        "优化剪藏弹窗：新图标、清晰的焦点色，以及自适应预览高度，确保页脚与快捷键提示完整可见。",
+      ],
+      it: [
+        "Nuova identità Linked Folio con pagine sovrapposte e un percorso di tre nodi, con icone vettoriali per app, installer, favicon ed estensione.",
+        "Trascinamento nativo di file e cartelle nelle Fonti con importazioni miste sicure, feedback chiaro e protezione dai duplicati.",
+        "Trascinamento di immagini nativo e browser nella chat, con limiti di 5 MB e cinque immagini e supporto invariato di incolla, selezione, anteprima e invio.",
+        "Azioni Ingest più chiare con nomi accessibili e spiegazione esplicita della creazione o aggiornamento del Wiki.",
+        "Popup Web Clipper aggiornato con nuovo marchio, focus accessibile e anteprima ridimensionata per mantenere visibili footer e scorciatoie.",
+      ],
+      ru: [
+        "Новый знак Linked Folio: слои страниц и путь из трёх узлов, векторные иконки для приложения, установщиков, favicon и расширения.",
+        "Перетаскивание файлов и папок в источники с безопасным смешанным импортом, понятной обратной связью и защитой от повторного импорта.",
+        "Перетаскивание изображений в чат из системы и браузера с прежними лимитами 5 МБ и пяти изображений, вставкой, выбором, предпросмотром и отправкой.",
+        "Понятные действия Ingest с доступными именами и явным описанием создания или обновления Wiki.",
+        "Обновлённый popup Web Clipper: новый знак, доступные цвета фокуса и высота предпросмотра, при которой видны нижняя панель и горячие клавиши.",
+      ],
+    },
+  },
+  {
     version: "0.7.0",
     date: "2026-10-25",
     highlights: {

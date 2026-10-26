@@ -7,10 +7,10 @@
 | Upstream | `nashsu/llm_wiki` `main` 分支（remote `upstream`）|
 | 我们的仓库 | `chunguangwei/LLMWiKi`（remote `origin`，Public，自动更新源）|
 | Fork 时间 | 2026-05-18（shallow clone；2026-05-20 已 `--unshallow` 补全历史）|
-| 最近一次 sync | 2026-10-25（Round 16，上游 `e08cfce` / v0.6.13 与 Round 15 相同，无新提交，无需 merge）|
+| 最近一次 sync | 2026-10-26（Round 17，上游 `e08cfce` / v0.6.13 与 Round 16 相同，无新提交，无需 merge）|
 | License | **GPL v3** — 我们的分发版本同样保持 GPL v3 |
 | Upstream 版本号 | `0.6.13`（MinerU 4 V1 API / 预览前进后退导航 / 移除已停止 Ingest 任务 / 自定义 Provider 请求选项扩展 / 概览与 Review 生命周期 / 大文档 Ingest 可靠性）|
-| **本 fork 版本** | `0.7.0`（Round 16 编辑可靠性、内部研究、DeepSeek、嵌入与性能优化）|
+| **本 fork 版本** | `0.8.0`（Round 17 新品牌、来源与聊天拖放、剪藏弹窗优化）|
 
 > **Round 3 同步原则（2026-06-23）**：用户指示「冲突处优先采用上游、丢弃我方实现」；独立不冲突的 fork 功能保留。**唯一排除** `d969cd4`（schema 路由，触碰核心 34 类 split/schema 红线）。**需一次测试发版验证**：MCP 资源打包、托盘/开机自启运行时、新的中央预览布局。
 
@@ -135,6 +135,15 @@
 > - **安全与运行时**：PDF.js 6.4.299、MCP SDK 1.32.2、KaTeX 0.19.1、Milkdown 7.22.3，CI Node 22（最低 22.13）；主应用与 MCP `npm audit` 均为 0。
 > - **验证**：typecheck ✅ 0 错误 / test:mocks 2752 ✅（199 文件）/ cargo check ✅ / cargo test 468 ✅（2 ignored）/ mcp:test 25 ✅ / npm audit 0。真实 DeepSeek/Ollama/AnyTXT 服务、Intel Mac、Windows/Linux 桌面、特定 PDF 与大型语料实测未在本机覆盖；跨平台产物以 CI 为准。
 > - **原生构建与 UI 验收边界**：本机无图形会话，Finder AppleScript 返回 `-600`；使用 Tauri 的 `CI=true` 模式进行本地打包（只跳过 Finder 图标排版），更新签名由 GitHub 仓库密钥完成，不在本机生成或替换私钥。浏览器 UI 验收使用 Tauri mock，不代替原生桌面端到端测试。
+>
+> **Round 17 品牌与可补充功能（2026-10-26，v0.7.0 → v0.8.0）**：上游远程引用仍为 `e08cfce` / v0.6.13，与 Round 16 相同，无新提交需要合并；本轮只承接可独立验证的功能与品牌工作。
+> - **Linked Folio 品牌**：`9094bfc`。以分层书页与三节点连接路径表达资料沉淀为关联 Wiki，使用深墨绿、矿物青与暖纸白。保留可编辑 SVG、透明符号和单色版本，通过 Tauri CLI 生成 ICNS、ICO、Windows 磁贴、Android/iOS 资产；统一侧栏、README、favicon 和扩展图标，16px / 32px 已实际检查。
+> - **#373 拖放输入与 #563 操作说明**：`63d0615`。来源支持原生文件/文件夹混合拖放，复用现有导入过滤、项目目录保护和结果汇总；同步导入锁防止重复复制。聊天支持原生路径与浏览器图片拖放，先校验类型/大小，串行处理并保持 5MB / 5 张限制。来源 Ingest 按钮明确生成或更新 Wiki，而非再次导入原文件。
+> - **剪藏弹窗**：`9094bfc`。统一新图标、深墨绿标题栏和焦点色；预览高度按实际按钮、页脚与 CSS 间距计算，聚焦时保持顶部稳定，修复 500px 弹窗中 Logo 或页脚被裁切的问题。
+> - **验证**：typecheck ✅ / test:mocks 2787 ✅（203 文件）/ cargo test 468 ✅（2 ignored）/ mcp:test 25 ✅ / 主应用与 MCP `npm audit` 均为 0 / `npm run build:desktop` ✅ / `node --check extension/popup.js` ✅。
+> - **原生打包**：`CI=true npm run tauri build` 已生成 macOS arm64 `.app`、DMG 和 updater `.app.tar.gz`；DMG CRC 校验有效，应用版本为 0.8.0，包内 ICNS 与新矢量图标生成物的 SHA-256 完全一致。最后仅因本机缺少 updater 私钥而退出，签名由 GitHub CI 仓库密钥完成，本机未生成或替换私钥。
+> - **浏览器验收**：Chrome + Tauri mock 下检查明暗主题、键盘焦点、窄窗口无横向溢出；来源混合拖放实际复制文件与嵌套目录，单次 drop 只消费一次且原文件保留；原生图片读取和浏览器 `DataTransfer` 均生成可解码 PNG 预览，删除无残留。扩展以模拟 Chrome API 和剪藏响应完成连接、项目加载与剪藏，Logo、页脚和快捷键均完整显示。控制台 Errors 为 0。
+> - **验收边界**：Tauri mock 与真实浏览器交互不等同于真实操作系统原生拖放或原生桌面 UI 验证；真实 DeepSeek/Ollama/AnyTXT 与 `test:llm` 未运行，Intel Mac、Windows/Linux 原生 UI、特定 PDF 和超大语料仍未覆盖。
 | 工作目录 | `app/`（即原 upstream 的项目根） |
 
 ## 仓库布局
