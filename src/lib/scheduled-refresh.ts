@@ -87,8 +87,9 @@ export async function scanProject(
           skipped += 1
           continue
         }
-        await runPageRefresh(p)
-        ran += 1
+        const result = await runPageRefresh(p, project.path)
+        if (result === "error") errored += 1
+        else ran += 1
       } catch (err) {
         console.error(`[scheduled-refresh] page ${p} failed:`, err)
         errored += 1

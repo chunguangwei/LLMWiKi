@@ -1,4 +1,7 @@
 import { readFile, writeFile } from "@/commands/fs"
+import { withProjectLock } from "@/lib/project-mutex"
+import { markdownFileSaver } from "@/lib/markdown-file-saver"
+import { normalizePath } from "@/lib/path-utils"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { webSearch, type WebSearchResult } from "@/lib/web-search"
 import { streamChat } from "@/lib/llm-client"
@@ -19,9 +22,13 @@ import type { RefreshConfig, RefreshLastResult } from "@/types/wiki"
  * Returns the outcome so the caller (scheduler or manual UI button)
  * can log / surface it.
  */
-export async function runPageRefresh(pagePath: string): Promise<RefreshLastResult> {
+export async function runPageRefresh(pagePath: string, projectRoot?: string): Promise<RefreshLastResult> {
   const store = useWikiStore.getState()
   const { llmConfig, searchApiConfig } = store
+  const normalized = normalizePath(pagePath)
+  const wikiIndex = normalized.indexOf("/wiki/")
+  const projectPath = normalizePath(projectRoot ?? store.project?.path ??
+    (wikiIndex >= 0 ? normalized.slice(0, wikiIndex) : normalized))
 
   let content: string
   try {
@@ -49,16 +56,24 @@ export async function runPageRefresh(pagePath: string): Promise<RefreshLastResul
     }
   } catch (err) {
     console.error(`[refresh] web search failed for ${pagePath}:`, err)
-    await stampResult(pagePath, content, parsed.rawBlock, "error")
+    await stampResult(projectPath, pagePath, content, parsed.rawBlock, "error")
     return "error"
   }
 
   if (allResults.length === 0) {
-    await stampResult(pagePath, content, parsed.rawBlock, "no-change")
-    return "no-change"
+    return await stampResult(projectPath, pagePath, content, parsed.rawBlock, "no-change") ? "no-change" : "error"
   }
 
-  const verdict = await askLlmForVerdict(llmConfig, title, parsed.body, allResults)
+  let verdict: { isStale: boolean; summary: string }
+  try {
+    verdict = await askLlmForVerdict(llmConfig, title, parsed.body, allResults)
+  } catch (err) {
+    console.error(`[refresh] model verdict failed for ${pagePath}:`, err)
+    await stampResult(projectPath, pagePath, content, parsed.rawBlock, "error")
+    return "error"
+  }
+  const result = verdict.isStale ? "pending-review" : "no-change"
+  if (!await stampResult(projectPath, pagePath, content, parsed.rawBlock, result)) return "error"
   if (verdict.isStale) {
     useReviewStore.getState().addItem({
       type: "suggestion",
@@ -71,17 +86,16 @@ export async function runPageRefresh(pagePath: string): Promise<RefreshLastResul
         { label: "Dismiss", action: "dismiss" },
       ],
     })
-    await stampResult(pagePath, content, parsed.rawBlock, "pending-review")
     return "pending-review"
   }
 
-  await stampResult(pagePath, content, parsed.rawBlock, "no-change")
   return "no-change"
 }
 
 /** Decide if a page is due for a refresh based on its frontmatter. */
 export function isDue(cfg: RefreshConfig, now: number = Date.now()): boolean {
   if (!cfg.enabled) return false
+  if (cfg.lastResult === "error") return true
   if (!cfg.lastRefreshed) return true
   const last = Date.parse(cfg.lastRefreshed)
   if (Number.isNaN(last)) return true
@@ -163,6 +177,7 @@ async function askLlmForVerdict(
   const prompt = `You are auditing a wiki page for staleness. Compare the page below against fresh web search results.\n\nReturn one line: STATUS=fresh OR STATUS=stale.\nIf stale, follow with a 3-5 bullet summary of what is new or contradicting; cite result numbers like [2].\nIf fresh, no bullets needed.\n\n=== PAGE: ${title} ===\n${trimmedBody}\n\n=== WEB RESULTS ===\n${resultsBlock}`
 
   let buffer = ""
+  let failure: Error | null = null
   await streamChat(
     llmConfig,
     [
@@ -174,12 +189,16 @@ async function askLlmForVerdict(
         buffer += t
       },
       onDone: () => {},
-      onError: () => {},
+      onError: (error) => { failure = error },
     },
   )
 
-  const isStale = /STATUS\s*=\s*stale/i.test(buffer)
-  return { isStale, summary: buffer.trim() }
+  if (failure) throw failure
+  const statuses = [...buffer.matchAll(/^STATUS\s*=\s*(fresh|stale)\s*$/gim)]
+  if (statuses.length !== 1 || !/^STATUS\s*=\s*(fresh|stale)\s*$/i.test(buffer.trim().split(/\r?\n/)[0])) {
+    throw new Error("Invalid refresh verdict: expected a single STATUS=fresh or STATUS=stale")
+  }
+  return { isStale: statuses[0][1].toLowerCase() === "stale", summary: buffer.trim() }
 }
 
 /**
@@ -189,23 +208,41 @@ async function askLlmForVerdict(
  * regex pass rather than re-serializing.
  */
 async function stampResult(
+  projectPath: string,
   pagePath: string,
   originalContent: string,
   rawBlock: string,
   result: RefreshLastResult,
-): Promise<void> {
-  const now = new Date().toISOString()
-  let nextBlock = rawBlock
-  if (nextBlock.length === 0) {
-    // Page had no frontmatter; prepend a minimal one.
-    const yaml = `---\nrefresh-last-refreshed: "${now}"\nrefresh-last-result: ${result}\n---\n`
-    await writeFile(pagePath, yaml + originalContent)
-    return
+): Promise<boolean> {
+  // Serialize with ingest/research and with editor saves. Never stamp an old
+  // verdict onto changed content, and never recreate a page deleted mid-run.
+  try {
+    return await withProjectLock(projectPath, async () => {
+      let committed = false
+      await markdownFileSaver.writeExternal(pagePath, originalContent, async () => {
+        const latest = await readFile(pagePath)
+        if (latest !== originalContent) return latest
+        const snapshot = markdownFileSaver.getSnapshot(pagePath)
+        if (snapshot?.pending || snapshot?.dirty && !snapshot.running) return latest
+        const now = new Date().toISOString()
+        let nextBlock = rawBlock
+        if (nextBlock.length === 0) {
+          nextBlock = `---\nrefresh-last-refreshed: "${now}"\nrefresh-last-result: ${result}\n---\n`
+        } else {
+          nextBlock = upsertField(nextBlock, "refresh-last-refreshed", `"${now}"`)
+          nextBlock = upsertField(nextBlock, "refresh-last-result", result)
+        }
+        const updated = nextBlock + originalContent.slice(rawBlock.length)
+        await writeFile(pagePath, updated)
+        committed = true
+        return updated
+      })
+      return committed
+    })
+  } catch (err) {
+    console.error(`[refresh] metadata commit failed for ${pagePath}:`, err)
+    return false
   }
-  nextBlock = upsertField(nextBlock, "refresh-last-refreshed", `"${now}"`)
-  nextBlock = upsertField(nextBlock, "refresh-last-result", result)
-  const body = originalContent.slice(rawBlock.length)
-  await writeFile(pagePath, nextBlock + body)
 }
 
 /**

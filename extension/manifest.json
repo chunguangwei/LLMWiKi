@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LLM Wiki Clipper",
-  "version": "0.1.0",
+  "version": "0.8.1",
   "description": "Clip web pages to your LLM Wiki knowledge base",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [

@@ -95,3 +95,7 @@ describe("isDue", () => {
     ).toBe(true)
   })
 })
+
+it("retries failed refreshes on the next scan rather than waiting the normal interval", () => {
+  expect(isDue({ enabled: true, intervalDays: 7, queries: [], lastRefreshed: new Date().toISOString(), lastResult: "error" })).toBe(true)
+})

@@ -437,9 +437,10 @@ Review 研究优先读取 `affectedPages` 的实际 Markdown，再沿 wikilink �
 
 ### 9.1 Linked Folio 品牌与完整图标
 
-- 新标识以分层书页与三节点连接路径表达资料沉淀为关联 Wiki。深墨绿、矿物青和暖纸白取代蓝紫细线风格，重点保证 16px / 32px 下的轮廓与对比。
+- 新标识以连续折叠书页构成 W，表达零散资料经整理、连接后沉淀为 Wiki。深墨绿底、暖纸白与玉石绿书页通过克制明暗体现折面质感；统一外轮廓与较大的负空间保证 16px / 32px 下的识别。设计与预览见 `docs/brand/README.md`。
 - 可编辑矢量源和 Tauri 图标清单在 `src/assets/brand/`。主图标不含可见文字、脚本或远程图片；透明符号与单色版本分别用于自适应和单色场景。
 - 修改矢量后运行 `npm run tauri -- icon src/assets/brand/icon-manifest.json`，重新生成 `src-tauri/icons/` 的 ICNS、ICO、Windows 磁贴、PNG、Android 与 iOS 资产。侧栏使用 SVG，README 使用 `logo.png`，扩展包含 16 / 48 / 128px 图标和统一配色的 popup；不新增运行时依赖。
+- 随后运行 `python3 scripts/export-brand-assets.py`（构建时需要 Pillow），同步 README、前端 PNG、favicon 和扩展图标。
 - 弹窗预览按实际按钮、页脚与 CSS 间距计算高度，按钮聚焦时保持顶部稳定，保证 Logo、页脚和快捷键在 500px 弹窗内可见。
 
 ### 9.2 资料文件与文件夹拖放

@@ -28,6 +28,24 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.8.1",
+    date: "2026-10-27",
+    highlights: {
+      en: [
+        "Refined the logo into connected folded pages forming a clear W, with matching desktop, installer and Web Clipper icons.",
+        "Hardened project package imports: unsafe paths, symlink destinations and invalid checksums are rejected before file writes.",
+        "Project packages now preserve schema.md and purpose.md for complete migration; older packages can be restored into an existing project.",
+        "Background page refresh preserves edits and deleted pages, reports failed or invalid model verdicts as errors, and retries failed checks on the next scan.",
+      ],
+      zh: [
+        "重新设计 Logo：连接折页构成清晰的 W，统一桌面、安装包与剪藏扩展图标。",
+        "加固项目包导入：写入前校验完整包，拒绝越界路径、符号链接目标与校验失败内容。",
+        "项目包完整保留 schema.md 与 purpose.md；旧版包可导入已有项目恢复。",
+        "后台页面刷新保护编辑与删除操作，正确报告模型失败或无效回答，并在下一次扫描重试失败检查。",
+      ],
+    },
+  },
+  {
     version: "0.8.0",
     date: "2026-10-26",
     highlights: {
