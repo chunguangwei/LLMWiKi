@@ -52,6 +52,11 @@
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 - **Local HTTP API + MCP Server + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API and bundled MCP server for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/nashsu/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
 
+## v0.8.2: easier ingest recovery
+
+- **Batch-ingest pending sources** — queue supported sources that are new, failed, or cancelled in one action; completed and active sources are skipped, and a missing ingest model is clearly explained
+- **Visible URL transport errors** — if HTTP transport setup fails, each URL receives an error result instead of an unhandled rejection
+
 ## v0.8.0: a clearer identity and faster capture
 
 - **Linked Folio brand** — a layered-page and three-node knowledge-path mark with scalable vector artwork, native desktop and installer icons, and a matching Web Clipper popup

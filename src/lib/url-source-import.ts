@@ -158,7 +158,13 @@ export async function importSourceUrls(
   llmConfig: LlmConfig,
   sourceWatchConfig?: SourceWatchConfig,
 ): Promise<UrlImportResult[]> {
-  const fetch = await getHttpFetch()
+  let fetch: typeof globalThis.fetch
+  try {
+    fetch = await getHttpFetch()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return urls.map((url) => ({ url, error: message }))
+  }
   const maxBytes = normalizeSourceWatchConfig(sourceWatchConfig).maxFileSizeMb * 1024 * 1024
   const sourceRoot = `${normalizePath(project.path)}/raw/sources`
   const results: UrlImportResult[] = []

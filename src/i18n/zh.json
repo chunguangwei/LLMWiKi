@@ -296,6 +296,10 @@
     "ingest": "提取到 Wiki",
     "ingestFile": "从「{{name}}」生成或更新 Wiki",
     "ingestFileTooltip": "解析这份资料并生成或更新对应的 Wiki 页面，不会再次导入原文件。",
+    "ingestPending": "提取待处理资料（{{count}}）",
+    "ingestPendingHint": "将所有尚未提取的支持格式资料加入队列，包括失败或已取消的任务；正在处理和已完成的资料会跳过。",
+    "noLlmForIngest": "请先在设置中配置资料提取模型。",
+    "queueingIngest": "加入队列中...",
     "dropTitle": "拖放文件或文件夹以导入",
     "dropDescription": "文件将复制到 raw/sources，原文件保留不动；支持的资料会自动进入 Wiki 提取队列。",
     "ingestStatus": {

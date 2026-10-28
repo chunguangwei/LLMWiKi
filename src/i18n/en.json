@@ -296,6 +296,10 @@
     "ingest": "Ingest",
     "ingestFile": "Build Wiki from {{name}}",
     "ingestFileTooltip": "Generate or update this file's Wiki pages without importing the original file again.",
+    "ingestPending": "Ingest pending ({{count}})",
+    "ingestPendingHint": "Queue all supported sources not yet ingested, including failed or cancelled sources. Active and completed sources are skipped.",
+    "noLlmForIngest": "Configure an ingest model in Settings first.",
+    "queueingIngest": "Queueing...",
     "dropTitle": "Drop files or folders to import",
     "dropDescription": "Copies go to raw/sources. Your original files stay in place, and supported files are queued for ingest.",
     "ingestStatus": {

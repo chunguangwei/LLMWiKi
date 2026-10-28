@@ -249,6 +249,10 @@
     "ingest": "Elabora",
     "ingestFile": "Crea o aggiorna il wiki da {{name}}",
     "ingestFileTooltip": "Genera o aggiorna le pagine wiki di questo file senza importare di nuovo il file originale.",
+    "ingestPending": "Elabora da elaborare ({{count}})",
+    "ingestPendingHint": "Aggiunge alla coda tutte le fonti supportate non ancora elaborate, incluse quelle non riuscite o annullate. Salta quelle attive e completate.",
+    "noLlmForIngest": "Configura prima un modello di elaborazione nelle impostazioni.",
+    "queueingIngest": "Aggiunta alla coda...",
     "dropTitle": "Trascina file o cartelle da importare",
     "dropDescription": "Le copie vanno in raw/sources; gli originali restano al loro posto e i file supportati entrano nella coda di elaborazione.",
     "ingestStatus": {

@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest"
-import { MAX_BATCH_URLS, fetchImportUrl, parseImportUrls, urlSourceFileName } from "./url-source-import"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { getHttpFetch } from "@/lib/tauri-fetch"
+import { MAX_BATCH_URLS, fetchImportUrl, importSourceUrls, parseImportUrls, urlSourceFileName } from "./url-source-import"
+
+vi.mock("@/lib/tauri-fetch", () => ({ getHttpFetch: vi.fn() }))
+
+const mockedGetHttpFetch = vi.mocked(getHttpFetch)
+
+beforeEach(() => {
+  vi.resetAllMocks()
+})
 
 describe("parseImportUrls", () => {
   it("normalizes fragments, removes duplicates, and preserves order", () => {
@@ -40,6 +49,23 @@ describe("urlSourceFileName", () => {
       .toBe("AUX-web.txt")
     expect(urlSourceFileName("https://example.com/bad%escape", "text/plain", "hello"))
       .toBe("bad-escape.txt")
+  })
+})
+
+describe("importSourceUrls", () => {
+  it("returns a visible error for every URL when the HTTP transport is unavailable", async () => {
+    mockedGetHttpFetch.mockRejectedValue(new Error("HTTP transport is unavailable"))
+
+    const result = await importSourceUrls(
+      { id: "project", path: "/project", name: "Project" } as never,
+      ["https://example.com/a", "https://example.com/b"],
+      {} as never,
+    )
+
+    expect(result).toEqual([
+      { url: "https://example.com/a", error: "HTTP transport is unavailable" },
+      { url: "https://example.com/b", error: "HTTP transport is unavailable" },
+    ])
   })
 })
 

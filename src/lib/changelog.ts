@@ -28,6 +28,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.8.2",
+    date: "2026-10-28",
+    highlights: {
+      en: [
+        "Queue all supported sources that are new, failed, or cancelled from the Sources panel; active and completed items are skipped.",
+        "URL imports now show transport initialization failures for each submitted URL.",
+      ],
+      zh: [
+        "可在资料源面板一键排入未提取、失败或取消的支持格式资料；正在处理和已完成的项目会自动跳过。",
+        "网址导入现在会逐条显示 HTTP 传输初始化失败。",
+      ],
+    },
+  },
+  {
     version: "0.8.1",
     date: "2026-10-27",
     highlights: {

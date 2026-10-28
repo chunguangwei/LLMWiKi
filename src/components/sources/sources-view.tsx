@@ -31,6 +31,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { importSourceUrls, parseImportUrls, type UrlImportResult } from "@/lib/url-source-import"
 import { listIngestedSourceIdentities } from "@/lib/ingest-cache"
 import { getQueue, subscribeIngestQueue, type IngestTask } from "@/lib/ingest-queue"
+import { findSourcesAwaitingIngest } from "@/lib/source-ingest-actions"
+import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
@@ -150,6 +153,11 @@ export function SourcesView() {
   )
   const totalSourceCount = useMemo(() => countFiles(sources), [sources])
   const filteredSourceCount = useMemo(() => countFiles(filteredSources), [filteredSources])
+  const awaitingIngest = useMemo(
+    () => findSourcesAwaitingIngest(sources, sourceStatuses),
+    [sources, sourceStatuses],
+  )
+  const ingestLlmReady = hasUsableLlm(getTaskLlmConfig("ingest", llmConfig))
 
   function beginImport(): boolean {
     if (!importGuard.current.tryAcquire()) return false
@@ -411,6 +419,19 @@ export function SourcesView() {
     }
   }
 
+  async function handleIngestAwaiting() {
+    if (!project || !ingestLlmReady || ingestingPath || awaitingIngest.length === 0) return
+    setIngestingPath("__batch__")
+    try {
+      await enqueueSourceIngest(project, awaitingIngest, llmConfig)
+    } catch (err) {
+      console.error("Failed to enqueue pending sources:", err)
+      await appDialog.alert({ message: String(err) })
+    } finally {
+      setIngestingPath(null)
+    }
+  }
+
   return (
     <TooltipProvider delay={300}>
       <div ref={sourceDropRef} className="relative flex h-full flex-col" data-drop-active={sourceDragging || undefined}>
@@ -632,6 +653,28 @@ export function SourcesView() {
               })
             : t("sources.sourceCount", { count: totalSourceCount })}
         </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleIngestAwaiting()}
+                disabled={!project || !ingestLlmReady || importing || Boolean(ingestingPath) || awaitingIngest.length === 0}
+                title={!ingestLlmReady ? t("sources.noLlmForIngest") : undefined}
+                className="h-7 px-2 text-xs"
+              />
+            }
+          >
+            <BookOpen className="mr-1.5 h-3.5 w-3.5" />
+            {ingestingPath === "__batch__"
+              ? t("sources.queueingIngest")
+              : t("sources.ingestPending", { count: awaitingIngest.length })}
+          </TooltipTrigger>
+          <TooltipContent side="top" align="end" className="max-w-80 whitespace-normal leading-relaxed">
+            {t("sources.ingestPendingHint", { count: awaitingIngest.length })}
+          </TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -910,7 +953,7 @@ function SourceTree({
               title={t("sources.ingestFileTooltip")}
               aria-label={t("sources.ingestFile", { name: node.name })}
               disabled={
-                ingestingPath === node.path ||
+                Boolean(ingestingPath) ||
                 ingestStatus === "pending" ||
                 ingestStatus === "processing"
               }

@@ -52,6 +52,11 @@
 - **Chrome 网页剪藏** — 一键捕获网页内容，自动摄入知识库
 - **本地 HTTP API + MCP Server + AI Agent Skill** — 内置 `127.0.0.1:19828` JSON API 和随包提供的 MCP Server，支持 Hybrid 检索、文件读取、知识图谱遍历、源资料重新扫描；配套 [agent skill](https://github.com/nashsu/llm_wiki_skill) 一行命令接入 Claude Code / Codex（`npx skills add …`）
 
+## v0.8.2：更容易恢复资料摄入
+
+- **批量提取待处理资料** — 一键将未提取、失败或取消的支持格式资料加入持久化队列；跳过已完成与正在处理的项目，未配置提取模型时明确提示
+- **网址导入错误可见** — HTTP 传输初始化失败会为每个网址显示错误，不再静默落到未处理的 Promise 异常
+
 ## v0.8.0：新品牌与更自然的资料输入
 
 - **Linked Folio 新标识** — 分层书页与三节点知识路径，提供 SVG、桌面与安装包图标，以及风格统一的剪藏弹窗
