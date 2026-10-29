@@ -52,6 +52,14 @@
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 - **Local HTTP API + MCP Server + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API and bundled MCP server for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/nashsu/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
 
+## v0.8.3: reliable source state and bounded downloads
+
+- **Project-isolated source state** — discard stale responses after switching projects; wait for source and cache readiness before ingesting, with visible errors and retry
+- **Validated queue recovery** — check source paths before preprocessing and when replaying saved tasks, while preserving existing relative-path tasks
+- **Bounded URL downloads** — enforce the 60-second timeout through the response body and check size incrementally; failed downloads do not block subsequent URLs
+
+[Download v0.8.3](https://github.com/chunguangwei/LLMWiKi/releases/tag/v0.8.3) · [Release notes and verification](docs/release-0.8.3.md)
+
 ## v0.8.2: easier ingest recovery
 
 - **Batch-ingest pending sources** — queue supported sources that are new, failed, or cancelled in one action; completed and active sources are skipped, and a missing ingest model is clearly explained

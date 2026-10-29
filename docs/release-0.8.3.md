@@ -1,5 +1,15 @@
 # LLM Wiki v0.8.3
 
+## 发布状态
+
+- 2026-10-29 已发布为 [GitHub 正式版本](https://github.com/chunguangwei/LLMWiKi/releases/tag/v0.8.3)，非草稿、非预发布。
+- 发布提交：`fa2aca87af253dda16a2082d100871aa3bd5ca71`；标签：`v0.8.3`。
+- [构建与发布工作流](https://github.com/chunguangwei/LLMWiKi/actions/runs/40823485114)最终全部成功：macOS Apple Silicon、Windows x64、Linux x64/ARM64，以及浏览器扩展。
+- Mac 首次构建长时间无新输出，取消后定向重试成功；其他平台已成功的产物保留。
+- 21 个发布文件齐全；自动更新清单包含 13 个平台/安装格式条目，均指向已上传产物，9 个独立签名文件与清单内容一致。此处验证的是文件一致性，未下载全部安装包进行密码学签名验真。
+- 浏览器扩展 ZIP 完整性检查通过，manifest 版本为 `0.8.3`。
+- [三平台 CI](https://github.com/chunguangwei/LLMWiKi/actions/runs/40823484737)全部通过。
+
 ## 更新内容
 
 - 来源列表和摄入状态按项目隔离，丢弃旧异步响应，防止切换项目时资料串入新项目。
