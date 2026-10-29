@@ -126,6 +126,11 @@ npm audit
 
 ### 3.1 更新检测不到新版？
 
+- **0.8.3 及以前的检测限制**：提示更新依赖匿名 GitHub Releases API；共享代理/VPN 出口遇到 HTTP 403/429 限流时，后台检测会静默失败，即使安装所用的 `latest.json` 可以正常访问，也不会出现更新横幅。
+- **当前源码修复（尚未包含在 v0.8.3 安装包中）**：API 请求失败或响应不可用时回退读取同仓库的 `releases/latest/download/latest.json`；只用于发现版本，下载与签名验证仍由现有 Tauri updater 完成。
+- **旧客户端临时处理**：限流解除后在「设置 → 关于 → 检查更新」手动重试，或从 [正式发布页](https://github.com/chunguangwei/LLMWiKi/releases/latest) 下载对应平台安装包更新。不要为更新检查写入个人 GitHub Token。
+- 自动检测目前在启动时执行一次；保持打开的旧会话不会定时重新检测。手动检查可立即重新请求，但不能绕过旧客户端的 API 限流问题。
+
 - `package.json` / `tauri.conf.json` 的 `version` 必须真的比已安装版本高。
 - 仓库必须 Public（否则抓不到 `latest.json`）。
 - 验签失败 = app 内置公钥与签名私钥不匹配（换过密钥但 app 没重新构建）。

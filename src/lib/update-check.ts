@@ -1,20 +1,11 @@
 /**
- * Lightweight update checker: hits the GitHub Releases API for the
- * repo's `latest` release, compares against the app's build-time
- * version, and returns a status the UI can surface. We intentionally
- * don't download or install — the user gets a "new version available"
- * hint in Settings → About and a button that opens the GitHub
- * release page in their browser. See `update-store.ts` for the UI
- * state layer and `about-section.tsx` for the surfacing.
- *
- * Why not tauri-plugin-updater: a real auto-install flow needs Tauri-
- * signed release manifests plus a paid Windows code-signing cert to
- * avoid SmartScreen warnings. Worth doing later, but for a free OSS
- * distribution a polite "here's the new version, click to download"
- * covers 95% of the value.
+ * Update notification metadata. Prefer GitHub's API for full release notes,
+ * then fall back to the published updater manifest when the API is unavailable
+ * (including anonymous rate limits on shared proxy/VPN addresses).
+ * This only detects updates; updater.ts verifies and installs signed artifacts.
  */
 
-import { getHttpFetch, isFetchNetworkError } from "./tauri-fetch"
+import { getHttpFetch } from "./tauri-fetch"
 
 /** The subset of the GitHub release API response we care about. */
 /**
@@ -98,7 +89,7 @@ export function isNewer(remote: string, local: string): boolean {
  * webview's CORS policy for api.github.com (which is permissive today
  * but might not always be).
  */
-export async function fetchLatestRelease(
+async function fetchGithubRelease(
   repo: string,
 ): Promise<GithubRelease | null> {
   const url = `https://api.github.com/repos/${repo}/releases/latest`
@@ -129,8 +120,41 @@ export async function fetchLatestRelease(
       }
     }
     return null
-  } catch (err) {
-    if (isFetchNetworkError(err)) return null
+  } catch {
+    return null
+  }
+}
+
+/** A release asset remains reachable when the anonymous API quota is exhausted. */
+export async function fetchLatestRelease(repo: string): Promise<GithubRelease | null> {
+  const release = await fetchGithubRelease(repo)
+  if (release) return release
+
+  const releaseUrl = `https://github.com/${repo}/releases/latest`
+  try {
+    const httpFetch = await getHttpFetch()
+    const response = await httpFetch(`${releaseUrl}/download/latest.json`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    if (
+      typeof data?.version !== "string" ||
+      !/^v?\d+\.\d+\.\d+$/.test(data.version) ||
+      !data.platforms || typeof data.platforms !== "object" ||
+      Array.isArray(data.platforms) || Object.keys(data.platforms).length === 0
+    ) return null
+
+    const version = data.version.replace(/^v/, "")
+    return {
+      tag_name: `v${version}`,
+      name: `v${version}`,
+      body: typeof data.notes === "string" ? data.notes : "",
+      html_url: releaseUrl,
+      published_at: typeof data.pub_date === "string" ? data.pub_date : "",
+    }
+  } catch {
     return null
   }
 }
@@ -151,7 +175,7 @@ export async function checkForUpdates(opts: {
     return {
       kind: "error",
       local: currentVersion,
-      message: "Could not reach GitHub Releases API.",
+      message: "Could not retrieve GitHub release metadata.",
     }
   }
   const remote = release.tag_name
