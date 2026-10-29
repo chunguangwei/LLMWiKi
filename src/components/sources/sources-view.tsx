@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
 import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Link, ExternalLink, Search, X, Upload } from "lucide-react"
 import { useNativeFileDrop } from "@/hooks/use-native-file-drop"
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
-import { listDirectory, openPathInProject, readFile } from "@/commands/fs"
+import { openPathInProject, readFile } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
@@ -25,11 +25,10 @@ import {
   type SkippedSourceImport,
   type SourceImportResult,
 } from "@/lib/source-lifecycle"
-import { filterRawSourceTree } from "@/lib/source-filter"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { importSourceUrls, parseImportUrls, type UrlImportResult } from "@/lib/url-source-import"
-import { listIngestedSourceIdentities } from "@/lib/ingest-cache"
+import { useSourceSnapshot } from "@/hooks/use-source-snapshot"
 import { getQueue, subscribeIngestQueue, type IngestTask } from "@/lib/ingest-queue"
 import { findSourcesAwaitingIngest } from "@/lib/source-ingest-actions"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
@@ -41,6 +40,11 @@ const IMPORT_SKIP_INITIAL_ROWS = 100
 type SourceIngestStatus = "not-ingested" | "ingested" | IngestTask["status"]
 
 export function SourcesView() {
+  const project = useWikiStore((s) => s.project)
+  return <ProjectSourcesView key={JSON.stringify([project?.id, project?.path])} />
+}
+
+function ProjectSourcesView() {
   const { t } = useTranslation()
   const appDialog = useAppDialog()
   const project = useWikiStore((s) => s.project)
@@ -49,22 +53,26 @@ export function SourcesView() {
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
   const llmConfig = useWikiStore((s) => s.llmConfig)
+  useWikiStore((s) => s.taskModelRouting)
+  useWikiStore((s) => s.providerConfigs)
+  useWikiStore((s) => s.projectLlmOverride)
+  useWikiStore((s) => s.customLlmPresets)
   const sourceWatchConfig = useWikiStore((s) => s.sourceWatchConfig)
   const dataVersion = useWikiStore((s) => s.dataVersion)
-  const [sources, setSources] = useState<FileNode[]>([])
+  const { sources, identities: ingestedIdentities, ready: sourcesReady, error: snapshotError, reload: loadSources } = useSourceSnapshot(project, dataVersion)
   const [importing, setImporting] = useState(false)
   const sourceDropRef = useRef<HTMLDivElement>(null)
   const importGuard = useRef(createImportGuard())
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
-  const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [rescanError, setRefreshError] = useState<string | null>(null)
   const [urlDialogOpen, setUrlDialogOpen] = useState(false)
   const [urlInput, setUrlInput] = useState("")
   const [urlError, setUrlError] = useState<string | null>(null)
   const [urlResults, setUrlResults] = useState<UrlImportResult[]>([])
   const [importOutcome, setImportOutcome] = useState<ImportOutcome | null>(null)
   const [showAllImportSkips, setShowAllImportSkips] = useState(false)
-  const [ingestedIdentities, setIngestedIdentities] = useState<string[]>([])
+  const refreshError = snapshotError ?? rescanError
   const [queueSnapshot, setQueueSnapshot] = useState<IngestTask[]>(() => [...getQueue()])
   const [sourceQuery, setSourceQuery] = useState("")
   /**
@@ -89,45 +97,6 @@ export function SourcesView() {
     const t = setTimeout(() => setPendingDeletePath(null), 5000)
     return () => clearTimeout(t)
   }, [pendingDeletePath])
-
-  const loadSources = useCallback(async () => {
-    if (!project) return
-    const pp = normalizePath(project.path)
-    try {
-      const tree = await listDirectory(`${pp}/raw/sources`, true)
-      setSources(filterRawSourceTree(tree))
-      setRefreshError(null)
-    } catch (err) {
-      setRefreshError(String(err))
-      setSources([])
-    }
-  }, [project])
-
-  useEffect(() => {
-    loadSources()
-  }, [loadSources, dataVersion])
-
-  useEffect(() => {
-    setSourceQuery("")
-  }, [project?.id])
-
-  useEffect(() => {
-    if (!project) {
-      setIngestedIdentities([])
-      return
-    }
-    let active = true
-    listIngestedSourceIdentities(project.path)
-      .then((identities) => {
-        if (active) setIngestedIdentities(identities)
-      })
-      .catch(() => {
-        if (active) setIngestedIdentities([])
-      })
-    return () => {
-      active = false
-    }
-  }, [project, dataVersion])
 
   useEffect(() => {
     return subscribeIngestQueue((tasks) => setQueueSnapshot([...tasks]))
@@ -401,7 +370,7 @@ export function SourcesView() {
   }
 
   async function handleIngest(node: FileNode) {
-    if (!project || ingestingPath) return
+    if (!project || !sourcesReady || ingestingPath) return
     // Re-ingest goes through the same automated queue path as a fresh
     // import (`handleImport` above). Earlier this used `startIngest`,
     // which opens an interactive chat → user clicks "Save to Wiki" →
@@ -420,7 +389,7 @@ export function SourcesView() {
   }
 
   async function handleIngestAwaiting() {
-    if (!project || !ingestLlmReady || ingestingPath || awaitingIngest.length === 0) return
+    if (!project || !sourcesReady || !ingestLlmReady || ingestingPath || awaitingIngest.length === 0) return
     setIngestingPath("__batch__")
     try {
       await enqueueSourceIngest(project, awaitingIngest, llmConfig)
@@ -548,11 +517,16 @@ export function SourcesView() {
 
       <ScrollArea className="min-h-0 flex-1 overflow-hidden">
         {refreshError && (
-          <div className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div role="alert" className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {t("sources.refreshFailed", {
               defaultValue: "Failed to refresh sources: {{error}}",
               error: refreshError,
             })}
+            {snapshotError && (
+              <Button variant="outline" size="sm" onClick={() => void loadSources()}>
+                {t("common.retry")}
+              </Button>
+            )}
           </div>
         )}
         {importOutcome && (
@@ -606,7 +580,11 @@ export function SourcesView() {
             )}
           </div>
         )}
-        {sources.length === 0 ? (
+        {!sourcesReady && sources.length === 0 ? (
+          <div role="status" className="p-8 text-center text-sm text-muted-foreground">
+            {snapshotError ? null : t("common.loading")}
+          </div>
+        ) : sources.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground">
             <p>{t("sources.noSources")}</p>
             <p>{t("sources.importHint")}</p>
@@ -636,7 +614,7 @@ export function SourcesView() {
               onDeleteFolder={handleDeleteFolder}
               pendingDeletePath={pendingDeletePath}
               setPendingDeletePath={setPendingDeletePath}
-              ingestingPath={ingestingPath}
+              ingestingPath={sourcesReady ? ingestingPath : "__loading__"}
               sourceStatuses={sourceStatuses}
               forceExpanded={Boolean(sourceQuery.trim())}
             />
@@ -660,7 +638,7 @@ export function SourcesView() {
                 variant="outline"
                 size="sm"
                 onClick={() => void handleIngestAwaiting()}
-                disabled={!project || !ingestLlmReady || importing || Boolean(ingestingPath) || awaitingIngest.length === 0}
+                disabled={!project || !sourcesReady || !ingestLlmReady || importing || Boolean(ingestingPath) || awaitingIngest.length === 0}
                 title={!ingestLlmReady ? t("sources.noLlmForIngest") : undefined}
                 className="h-7 px-2 text-xs"
               />

@@ -28,6 +28,24 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.8.3",
+    date: "2026-10-29",
+    highlights: {
+      en: [
+        "Isolated source lists and ingest status by project, preventing stale project data from entering a new project's batch.",
+        "Batch ingest waits for source status to load; unreadable caches show a retryable error while same-project refresh preserves the file tree.",
+        "Validated source paths before parsing and when replaying saved queues, preserving monitoring and legacy relative-path behavior.",
+        "URL imports now bound the complete download by time and size, cancel rejected streams, and continue the batch after a timeout.",
+      ],
+      zh: [
+        "按项目隔离来源列表与摄入状态，防止切换项目后旧资料误入新项目。",
+        "批量提取等待状态加载完成，缓存读取失败支持重试，同项目刷新保留文件树。",
+        "预解析及旧队列恢复均校验来源路径，兼容自动监控与已有相对路径任务。",
+        "网址导入对完整下载执行超时及流式大小限制，取消异常响应并继续处理后续网址。",
+      ],
+    },
+  },
+  {
     version: "0.8.2",
     date: "2026-10-28",
     highlights: {

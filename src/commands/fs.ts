@@ -125,8 +125,8 @@ export async function createDirectory(path: string): Promise<void> {
   return invoke<void>("create_directory", { path })
 }
 
-export async function fileExists(path: string): Promise<boolean> {
-  return invoke<boolean>("file_exists", { path })
+export async function fileExists(path: string, options?: { strict?: boolean }): Promise<boolean> {
+  return invoke<boolean>("file_exists", options?.strict ? { path, strict: true } : { path })
 }
 
 export async function getFileModifiedTime(path: string): Promise<number> {

@@ -589,3 +589,33 @@ describe("source import skip reporting", () => {
     ])
   })
 })
+
+describe("ingest project boundary", () => {
+  it.each([
+    "/other/raw/sources/a.md",
+    "/project/raw/sources-other/a.md",
+    "/project/raw/sources/../../wiki/a.md",
+    "raw/sources/../../wiki/a.md",
+  ])("rejects %s before preprocessing even in a mixed batch", async (outside) => {
+    await expect(enqueueSourceIngest(
+      { id: "p1", name: "Project", path: "/project" },
+      ["/project/raw/sources/valid.md", outside],
+      { provider: "openai", apiKey: "key" } as never,
+    )).rejects.toThrow("outside")
+    expect(mocks.preprocessFile).not.toHaveBeenCalled()
+    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+  })
+  it("accepts project-relative and Windows paths and preserves nested folder context", async () => {
+    await enqueueSourceIngest(
+      { id: "p1", name: "Project", path: "C:\\Project" },
+      ["raw/sources/papers/a.md", "c:\\project\\raw\\sources\\papers\\b.md"],
+      { provider: "openai", apiKey: "key" } as never,
+    )
+    expect(mocks.enqueueBatch).toHaveBeenCalledWith("p1", [
+      { sourcePath: "raw/sources/papers/a.md", folderContext: "papers" },
+      { sourcePath: "c:/project/raw/sources/papers/b.md", folderContext: "papers" },
+    ])
+    expect(mocks.preprocessFile).toHaveBeenCalledWith("C:/Project/raw/sources/papers/a.md")
+    expect(mocks.preprocessFile).toHaveBeenCalledWith("c:/project/raw/sources/papers/b.md")
+  })
+})

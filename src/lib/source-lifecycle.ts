@@ -1,3 +1,4 @@
+import { resolveContainedSourcePath } from "@/lib/contained-source-path"
 import {
   copyFile,
   createDirectory,
@@ -267,7 +268,15 @@ export async function enqueueSourceIngest(
   // model is configured. Imported source files remain on disk and can be
   // queued after the user configures a provider.
   if (!hasUsableLlm(getTaskLlmConfig("ingest", llmConfig))) return []
-  const files = sourcePaths
+  const sourceRoot = normalizePath(project.path).replace(/\/+$/, "") + "/raw/sources"
+  // Validate the entire batch before any parsing. UI state can be stale, and
+  // this boundary is also shared by imports and file monitoring.
+  const validatedPaths = sourcePaths.map((sourcePath) => {
+    resolveContainedSourcePath(sourceRoot, resolveContainedSourcePath(project.path, sourcePath))
+    // Preserve relative queue identities used by file monitoring and migration.
+    return normalizePath(sourcePath)
+  })
+  const files = validatedPaths
     .filter((sourcePath) =>
       isIngestableSourcePath(sourcePath) &&
       !isSensitiveConfigSourceFile(sourcePath)
@@ -282,7 +291,10 @@ export async function enqueueSourceIngest(
   if (files.length === 0) return []
   const parsingConcurrency = options.parsingConcurrency
     ?? normalizeSourceWatchConfig(useWikiStore.getState().sourceWatchConfig).parsingConcurrency
-  await preprocessSourceFiles(files.map((file) => file.sourcePath), parsingConcurrency)
+  await preprocessSourceFiles(
+    files.map((file) => resolveContainedSourcePath(project.path, file.sourcePath)),
+    parsingConcurrency,
+  )
   return enqueueBatch(project.id, files)
 }
 

@@ -94,3 +94,32 @@ describe("ingest-cache — checkIngestCache", () => {
     expect(result).toBeNull()
   })
 })
+
+describe("strict source status loading", () => {
+  it("accepts an absent cache for a new project", async () => {
+    mockFileExists.mockResolvedValue(false)
+    const { listIngestedSourceIdentities } = await import("./ingest-cache")
+    expect(await listIngestedSourceIdentities("/project")).toEqual([])
+  })
+  it.each(["{", '{"entries":[]}', '{"entries":{"a.md":null}}'])("rejects malformed existing caches: %s", async (raw) => {
+    mockFileExists.mockResolvedValue(true)
+    mockReadFile.mockResolvedValue(raw)
+    const { listIngestedSourceIdentities } = await import("./ingest-cache")
+    await expect(listIngestedSourceIdentities("/project")).rejects.toThrow()
+  })
+  it("propagates read failure for an existing cache", async () => {
+    mockFileExists.mockResolvedValue(true)
+    mockReadFile.mockRejectedValue(new Error("permission denied"))
+    const { listIngestedSourceIdentities } = await import("./ingest-cache")
+    await expect(listIngestedSourceIdentities("/project")).rejects.toThrow("permission denied")
+  })
+})
+
+it("requests strict metadata lookup and propagates its failure", async () => {
+  mockFileExists.mockImplementation(async (_path, options) => {
+    if (options?.strict) throw new Error("stat permission denied")
+    return false
+  })
+  const { listIngestedSourceIdentities } = await import("./ingest-cache")
+  await expect(listIngestedSourceIdentities("/project")).rejects.toThrow("stat permission denied")
+})

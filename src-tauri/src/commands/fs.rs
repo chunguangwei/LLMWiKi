@@ -2036,14 +2036,22 @@ pub async fn read_file_as_base64(path: String) -> Result<FileBase64, String> {
 /// Cheap existence check without reading or classifying the file.
 /// Returns true iff `path` refers to something on disk right now.
 #[tauri::command]
-pub async fn file_exists(path: String) -> Result<bool, String> {
+pub async fn file_exists(path: String, strict: Option<bool>) -> Result<bool, String> {
     // `Path::exists()` does a `stat(2)` syscall — fast on a hot
     // cache, but a blocking syscall nonetheless. Wrapping it keeps
     // the rule "no sync IO on tokio worker threads" uniform across
     // every fs command rather than carving out an exception that's
     // easy to violate later.
     tauri::async_runtime::spawn_blocking(move || {
-        run_guarded("file_exists", || Ok(Path::new(&path).exists()))
+        run_guarded("file_exists", || {
+            if strict.unwrap_or(false) {
+                Path::new(&path)
+                    .try_exists()
+                    .map_err(|error| format!("Cannot inspect file existence: {error}"))
+            } else {
+                Ok(Path::new(&path).exists())
+            }
+        })
     })
     .await
     .map_err(|e| format!("file_exists blocking task join error: {e}"))?
@@ -2127,6 +2135,29 @@ mod tests {
         ));
         fs::write(&path, bytes).unwrap();
         path
+    }
+
+    #[tokio::test]
+    async fn strict_file_exists_distinguishes_present_and_missing() {
+        let path = tmp_file_with_extension("json", b"{}");
+        let name = path.to_string_lossy().to_string();
+        assert!(file_exists(name.clone(), Some(true)).await.unwrap());
+        fs::remove_file(&path).unwrap();
+        assert!(!file_exists(name.clone(), Some(true)).await.unwrap());
+        assert!(!file_exists(name, None).await.unwrap());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn strict_file_exists_propagates_metadata_errors() {
+        let path = std::env::temp_dir().join(format!("llm-wiki-exists-{}", uuid::Uuid::new_v4()));
+        std::os::unix::fs::symlink(&path, &path).unwrap();
+        let name = path.to_string_lossy().to_string();
+        let strict_result = file_exists(name.clone(), Some(true)).await;
+        let legacy_result = file_exists(name, None).await;
+        fs::remove_file(&path).unwrap();
+        assert!(strict_result.is_err(), "a symlink loop must not become a missing cache");
+        assert!(!legacy_result.unwrap());
     }
 
     fn tmp_zip_with_entries(extension: &str, entries: &[(&str, &str)]) -> std::path::PathBuf {

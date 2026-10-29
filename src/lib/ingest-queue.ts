@@ -1,3 +1,4 @@
+import { resolveContainedSourcePath } from "@/lib/contained-source-path"
 import { readFile, writeFile } from "@/commands/fs"
 import { autoIngest } from "./ingest"
 import { normalizePath, isAbsolutePath } from "@/lib/path-utils"
@@ -1083,14 +1084,14 @@ async function runTask(
   run: ActiveIngestRun,
   runCommit: ReturnType<IngestCommitCoordinator["reserve"]>["runCommit"],
 ): Promise<void> {
-  const fullSourcePath = isAbsolutePath(task.sourcePath)
-    ? normalizePath(task.sourcePath)
-    : `${projectPath}/${task.sourcePath}`
   const trackWrittenFile = (relativePath: string): void => {
     if (!run.writtenFiles.includes(relativePath)) run.writtenFiles.push(relativePath)
   }
 
   try {
+    // Validate again at execution: restored/inactive queues can bypass the UI
+    // boundary, including records created by older versions.
+    const fullSourcePath = resolveContainedSourcePath(projectPath, task.sourcePath)
     const writtenFiles = await autoIngest(
       projectPath,
       fullSourcePath,

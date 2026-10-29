@@ -40,7 +40,18 @@ async function loadCache(projectPath: string): Promise<CacheData> {
 
 /** Source identities with a recorded successful ingest result. */
 export async function listIngestedSourceIdentities(projectPath: string): Promise<string[]> {
-  const cache = await loadCache(projectPath)
+  const path = cachePath(projectPath)
+  // A new project has no cache yet. Existing but unreadable/malformed state
+  // must not enable a batch that treats every source as new.
+  if (!await fileExists(path, { strict: true })) return []
+  const cache = JSON.parse(await readFile(path)) as CacheData
+  if (!cache || typeof cache.entries !== "object" || !cache.entries || Array.isArray(cache.entries) ||
+      Object.values(cache.entries).some((entry) =>
+        !entry || typeof entry.hash !== "string" || typeof entry.timestamp !== "number" ||
+        !Array.isArray(entry.filesWritten) || entry.filesWritten.some((file) => typeof file !== "string")
+      )) {
+    throw new Error("Invalid ingest cache")
+  }
   return Object.keys(cache.entries)
 }
 

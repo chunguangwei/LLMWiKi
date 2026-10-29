@@ -1594,3 +1594,18 @@ describe("cleanupWrittenFiles — page cascade", () => {
     )
   })
 })
+
+describe("persisted source containment", () => {
+  it.each(["/project-b/raw/sources/private.md", "raw/sources/../../../project-b/private.md"])("fails restored foreign source %s without LLM calls", async (sourcePath) => {
+    mockReadFile.mockResolvedValue(JSON.stringify([{
+      id: "foreign", projectId: TEST_ID, sourcePath, folderContext: "",
+      status: "processing", addedAt: 0, error: null, retryCount: 0,
+    }]))
+    mockAutoIngest.mockResolvedValue(["wiki/a.md"])
+    await restoreQueue(TEST_ID, TEST_PATH)
+    await flushMicrotasks(40)
+    expect(mockAutoIngest).not.toHaveBeenCalled()
+    expect(getQueue().find(t => t.id === "foreign")).toMatchObject({ status: "failed" })
+    expect(getQueue().find(t => t.id === "foreign")?.error).toMatch(/outside/)
+  })
+})

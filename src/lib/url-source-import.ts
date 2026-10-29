@@ -91,6 +91,7 @@ export async function fetchImportUrl(
   let current = validateHttpUrl(initialUrl)
   const initialIsPrivate = isPrivateNetworkHost(current.hostname)
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
+    if (signal.aborted) throw signal.reason
     // Tauri plugin-http does not forward the standard `redirect` option to
     // reqwest. Its transport-specific maxRedirections flag is therefore
     // required to expose each 3xx response to this policy loop. Native/Node
@@ -101,7 +102,14 @@ export async function fetchImportUrl(
       signal,
     }
     const response = await fetch(current.toString(), requestInit)
+    if (signal.aborted) {
+      void response.body?.cancel().catch(() => {})
+      throw signal.reason
+    }
     if (![301, 302, 303, 307, 308].includes(response.status)) return response
+    // Redirect bodies are not imported. Release the connection without
+    // waiting for a remote stream to finish.
+    void response.body?.cancel().catch(() => {})
     if (redirects === MAX_REDIRECTS) throw new Error(`Too many redirects (maximum ${MAX_REDIRECTS})`)
     const location = response.headers.get("location")
     if (!location) throw new Error("Redirect response is missing a Location header")
@@ -152,6 +160,78 @@ function attachSourceUrl(url: string, contentType: string, body: string): string
   return `Source URL: ${url}\n\n${body}`
 }
 
+/**
+ * Bound the complete download, including headers and streaming body. The
+ * timeout race also handles transports that do not promptly honor abort.
+ * No file writes occur inside the raced operation.
+ */
+async function downloadSourceText(
+  fetch: typeof globalThis.fetch,
+  url: string,
+  maxBytes: number,
+): Promise<{ body: string; contentType: string }> {
+  const controller = new AbortController()
+  const { signal } = controller
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error("URL download timed out after 60 seconds")
+      controller.abort(error)
+      reject(error)
+    }, 60_000)
+  })
+  const download = async () => {
+    const response = await fetchImportUrl(fetch, url, signal)
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+    const cancel = () => {
+      // Cancellation is best effort; awaiting it could stall the batch again.
+      if (reader) void reader.cancel().catch(() => {})
+      else void response.body?.cancel().catch(() => {})
+    }
+    signal.addEventListener("abort", cancel, { once: true })
+    try {
+      if (signal.aborted) throw signal.reason
+      if (!response.ok) throw new Error("HTTP " + response.status)
+      const contentType = response.headers.get("content-type") ?? "text/plain"
+      const mimeType = contentType.split(";")[0].trim().toLowerCase()
+      if (!mimeType.startsWith("text/") && !["application/xhtml+xml", "application/json", "application/xml"].includes(mimeType)) {
+        throw new Error("Unsupported content type: " + mimeType)
+      }
+      const declaredSize = Number(response.headers.get("content-length") ?? "0")
+      if (Number.isFinite(declaredSize) && declaredSize > maxBytes) {
+        throw new Error("Response exceeds the source file size limit")
+      }
+      if (!response.body) return { body: "", contentType }
+      reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      const parts: string[] = []
+      let bytesRead = 0
+      while (true) {
+        if (signal.aborted) throw signal.reason
+        const { done, value } = await reader.read()
+        if (signal.aborted) throw signal.reason
+        if (done) break
+        bytesRead += value.byteLength
+        if (bytesRead > maxBytes) throw new Error("Response exceeds the source file size limit")
+        parts.push(decoder.decode(value, { stream: true }))
+      }
+      parts.push(decoder.decode())
+      return { body: parts.join(""), contentType }
+    } catch (error) {
+      cancel()
+      throw error
+    } finally {
+      signal.removeEventListener("abort", cancel)
+      reader?.releaseLock()
+    }
+  }
+  try {
+    return await Promise.race([download(), timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function importSourceUrls(
   project: WikiProject,
   urls: string[],
@@ -172,26 +252,7 @@ export async function importSourceUrls(
 
   for (const url of urls) {
     try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 60_000)
-      let response: Response
-      try {
-        response = await fetchImportUrl(fetch, url, controller.signal)
-      } finally {
-        clearTimeout(timeout)
-      }
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const declaredSize = Number(response.headers.get("content-length") ?? "0")
-      if (Number.isFinite(declaredSize) && declaredSize > maxBytes) {
-        throw new Error("Response exceeds the source file size limit")
-      }
-      const bytes = new Uint8Array(await response.arrayBuffer())
-      if (bytes.byteLength > maxBytes) throw new Error("Response exceeds the source file size limit")
-      const contentType = response.headers.get("content-type") ?? "text/plain"
-      if (!/(?:text\/|application\/(?:xhtml\+xml|json|xml))/i.test(contentType)) {
-        throw new Error(`Unsupported content type: ${contentType.split(";")[0]}`)
-      }
-      const body = new TextDecoder().decode(bytes)
+      const { body, contentType } = await downloadSourceText(fetch, url, maxBytes)
       const fileName = urlSourceFileName(url, contentType, body)
       const path = await getUniqueDestPath(sourceRoot, fileName)
       await writeFile(path, attachSourceUrl(url, contentType, body))
