@@ -564,6 +564,7 @@
       "general": "Общие",
       "llm": "Модели LLM",
       "embedding": "Эмбеддинги",
+      "jev": "JEV-поиск",
       "multimodal": "Подписи к изображениям",
       "webSearch": "Внешние источники информации",
       "network": "Сеть",
@@ -718,6 +719,30 @@
           "ingestTitle": "Рассуждение при импорте",
           "ingestHint": "Обычно лучше выключить: импорт запрашивает структурированный вывод, а рассуждение отнимает время, не улучшая результат. Повышайте только если модель отказывается работать с выключенным рассуждением."
         }
+      },
+      "jev": {
+        "title": "Поиск доказательств JEV",
+        "description": "Оценивает найденные доказательства с помощью decision-модели JEV (System One) для ранжирования и объединения результатов поиска. Используйте официальный endpoint OpenRouter или self-hosted-сервис System One / Kev-4B.",
+        "enableLabel": "Включить поиск доказательств JEV",
+        "enableHint": "Если выключено, поиск не применяет оценку JEV.",
+        "provider": "Провайдер",
+        "providerOpenrouter": "Официальный OpenRouter",
+        "providerCustom": "Свой (self-hosted)",
+        "baseUrl": "Базовый URL",
+        "baseUrlHint": "Допускается корень приложения, /v1 или полный endpoint /systemone либо /decisions.",
+        "openrouterHint": "Официальный endpoint OpenRouter зафиксирован.",
+        "model": "Модель",
+        "modelHint": "Например, typesafe/jev-1.13 на OpenRouter; kev-latest для self-hosted-сервисов.",
+        "apiKey": "API-ключ",
+        "apiKeyPlaceholder": "Оставьте пустым для локального сервиса без авторизации",
+        "auth": "Авторизация",
+        "authBearer": "Bearer (заголовок Authorization)",
+        "authNone": "Нет (без заголовка Authorization)",
+        "testHeading": "Проверка соединения",
+        "testHeadingHint": "Вызывает серверную проверку здоровья для проверки endpoint, ключа и модели.",
+        "testConnection": "Проверить соединение",
+        "testing": "Проверка…",
+        "testSuccess": "Соединение успешно."
       },
       "embedding": {
         "title": "Векторные эмбеддинги",

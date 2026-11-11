@@ -606,6 +606,7 @@
       "general": "通用",
       "llm": "LLM 模型",
       "embedding": "向量嵌入",
+      "jev": "JEV 检索",
       "multimodal": "图片描述",
       "labs": "实验室（Labs）",
       "webSearch": "外部信息源",
@@ -760,6 +761,30 @@
           "ingestTitle": "导入时的推理",
           "ingestHint": "通常应关闭：导入需要结构化输出，推理只会增加耗时而无助于质量。仅当模型拒绝在关闭推理的情况下运行时才调高。"
         }
+      },
+      "jev": {
+        "title": "JEV 证据检索",
+        "description": "使用 JEV（System One）决策模型对检索到的证据进行评分，为搜索结果排序与合并提供依据。可使用 OpenRouter 官方接口，或自托管的 System One / Kev-4B 服务。",
+        "enableLabel": "启用 JEV 证据检索",
+        "enableHint": "关闭时，搜索不进行 JEV 决策评分。",
+        "provider": "服务提供商",
+        "providerOpenrouter": "OpenRouter 官方",
+        "providerCustom": "自定义（自托管）",
+        "baseUrl": "接口地址",
+        "baseUrlHint": "可填写应用根地址、/v1，或完整的 /systemone、/decisions 接口地址。",
+        "openrouterHint": "OpenRouter 官方端点固定为此地址。",
+        "model": "模型",
+        "modelHint": "OpenRouter 例如 typesafe/jev-1.13；自托管服务例如 kev-latest。",
+        "apiKey": "API 密钥",
+        "apiKeyPlaceholder": "本地无鉴权服务可留空",
+        "auth": "鉴权方式",
+        "authBearer": "Bearer（Authorization 头）",
+        "authNone": "无（不发送 Authorization 头）",
+        "testHeading": "连接测试",
+        "testHeadingHint": "调用后端健康检查，验证接口地址、密钥与模型是否可用。",
+        "testConnection": "测试连接",
+        "testing": "测试中…",
+        "testSuccess": "连接成功。"
       },
       "embedding": {
         "title": "向量嵌入",

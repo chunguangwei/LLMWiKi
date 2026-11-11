@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
+import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, JevConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { normalizePath } from "@/lib/path-utils"
 import { DEFAULT_ZOOM_LEVEL, clampZoomLevel } from "@/stores/zoom-store"
@@ -177,6 +177,18 @@ export async function saveEmbeddingConfig(config: EmbeddingConfig): Promise<void
 export async function loadEmbeddingConfig(): Promise<EmbeddingConfig | null> {
   const store = await getStore()
   return (await store.get<EmbeddingConfig>(EMBEDDING_KEY)) ?? null
+}
+
+const JEV_KEY = "jevConfig"
+
+export async function saveJevConfig(config: JevConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(JEV_KEY, config)
+}
+
+export async function loadJevConfig(): Promise<JevConfig | null> {
+  const store = await getStore()
+  return (await store.get<JevConfig>(JEV_KEY)) ?? null
 }
 
 const MULTIMODAL_KEY = "multimodalConfig"

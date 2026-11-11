@@ -42,6 +42,14 @@ export interface SettingsDraft {
   /** Extra HTTP headers to send on every embedding request. Empty = none. */
   embeddingExtraHeaders: Record<string, string>
 
+  // JEV evidence retrieval (SAG2 decision scoring)
+  jevEnabled: boolean
+  jevProvider: "openrouter" | "custom"
+  jevBaseUrl: string
+  jevModel: string
+  jevApiKey: string
+  jevAuth: "bearer" | "none"
+
   // Multimodal (image captioning at ingest time)
   multimodalEnabled: boolean
   multimodalUseMainLlm: boolean

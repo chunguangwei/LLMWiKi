@@ -9,7 +9,7 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { listDirectory, openProject, readFile } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchAllProjects, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadJevConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchAllProjects, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences, loadActivityItems, hydrateActivityItems } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
@@ -515,6 +515,10 @@ function App() {
         const savedEmbeddingConfig = await loadEmbeddingConfig()
         if (savedEmbeddingConfig) {
           useWikiStore.getState().setEmbeddingConfig(savedEmbeddingConfig)
+        }
+        const savedJevConfig = await loadJevConfig()
+        if (savedJevConfig) {
+          useWikiStore.getState().setJevConfig(savedJevConfig)
         }
         const savedMultimodalConfig = await loadMultimodalConfig()
         if (savedMultimodalConfig) {

@@ -167,6 +167,23 @@ interface EmbeddingConfig {
 }
 
 /**
+ * JEV evidence-retrieval settings (SAG2 decision-scoring arm).
+ *
+ * `provider: "openrouter"` pins `baseUrl` to the hosted OpenRouter
+ * decisions endpoint; `"custom"` points at a self-hosted System One /
+ * Kev-4B deployment. `auth: "none"` sends no Authorization header for
+ * local servers without auth.
+ */
+interface JevConfig {
+  enabled: boolean
+  provider: "openrouter" | "custom"
+  baseUrl: string // app root, /v1, or full /systemone or /decisions URL
+  model: string
+  apiKey: string
+  auth: "bearer" | "none"
+}
+
+/**
  * Image-captioning settings (Phase 4 of the multimodal-images plan).
  *
  * Decoupled from `llmConfig` because vision-capable endpoints are
@@ -459,6 +476,7 @@ interface WikiState {
   projectLlmOverride: ProjectLlmOverride
   searchApiConfig: SearchApiConfig
   embeddingConfig: EmbeddingConfig
+  jevConfig: JevConfig
   multimodalConfig: MultimodalConfig
   outputLanguage: OutputLanguage
   proxyConfig: ProxyConfig
@@ -494,6 +512,7 @@ interface WikiState {
   setProjectLlmOverride: (config: ProjectLlmOverride) => void
   setSearchApiConfig: (config: SearchApiConfig) => void
   setEmbeddingConfig: (config: EmbeddingConfig) => void
+  setJevConfig: (config: JevConfig) => void
   setMultimodalConfig: (config: MultimodalConfig) => void
   setOutputLanguage: (lang: OutputLanguage) => void
   setProxyConfig: (config: ProxyConfig) => void
@@ -687,6 +706,15 @@ export const useWikiStore = create<WikiState>((set) => ({
     model: "",
   },
 
+  jevConfig: {
+    enabled: false,
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/alpha/decisions",
+    model: "typesafe/jev-1.13",
+    apiKey: "",
+    auth: "bearer",
+  },
+
   multimodalConfig: {
     // Off by default — captioning is a non-trivial token spend
     // (one VLM call per extracted image), and silently turning it
@@ -768,6 +796,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setProjectLlmOverride: (projectLlmOverride) => set({ projectLlmOverride }),
   setSearchApiConfig: (searchApiConfig) => set({ searchApiConfig }),
   setEmbeddingConfig: (embeddingConfig) => set({ embeddingConfig }),
+  setJevConfig: (jevConfig) => set({ jevConfig }),
   setMultimodalConfig: (multimodalConfig) => set({ multimodalConfig }),
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
   setProxyConfig: (proxyConfig) => set({ proxyConfig }),
@@ -787,4 +816,4 @@ export const useWikiStore = create<WikiState>((set) => ({
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
-export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig }
+export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, JevConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig }

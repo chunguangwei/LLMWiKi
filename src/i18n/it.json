@@ -564,6 +564,7 @@
       "general": "Generale",
       "llm": "Modelli LLM",
       "embedding": "Embedding",
+      "jev": "Recupero JEV",
       "multimodal": "Didascalie immagini",
       "webSearch": "Fonti di informazione esterne",
       "network": "Rete",
@@ -718,6 +719,30 @@
           "ingestTitle": "Ragionamento durante l'ingest",
           "ingestHint": "Di norma va tenuto spento: l'ingest chiede output strutturato e il ragionamento costa tempo senza migliorarlo. Alzalo solo se il modello si rifiuta di funzionare con il ragionamento disattivato."
         }
+      },
+      "jev": {
+        "title": "Recupero prove JEV",
+        "description": "Valuta le prove recuperate con un modello decisionale JEV (System One) per ordinare e unire i risultati di ricerca. Usa l'endpoint ufficiale OpenRouter o un servizio System One / Kev-4B self-hosted.",
+        "enableLabel": "Abilita recupero prove JEV",
+        "enableHint": "Se disattivo, la ricerca non applica il punteggio decisionale JEV.",
+        "provider": "Fornitore",
+        "providerOpenrouter": "OpenRouter ufficiale",
+        "providerCustom": "Personalizzato (self-hosted)",
+        "baseUrl": "URL base",
+        "baseUrlHint": "Accetta la radice dell'app, /v1 oppure un endpoint completo /systemone o /decisions.",
+        "openrouterHint": "L'endpoint ufficiale OpenRouter e' fisso.",
+        "model": "Modello",
+        "modelHint": "Es. typesafe/jev-1.13 su OpenRouter; kev-latest per i servizi self-hosted.",
+        "apiKey": "Chiave API",
+        "apiKeyPlaceholder": "Lascia vuoto per servizi locali senza autenticazione",
+        "auth": "Autenticazione",
+        "authBearer": "Bearer (header Authorization)",
+        "authNone": "Nessuna (nessun header Authorization)",
+        "testHeading": "Test di connessione",
+        "testHeadingHint": "Richiama il controllo di integrita' del backend per verificare endpoint, chiave e modello.",
+        "testConnection": "Testa connessione",
+        "testing": "Test in corso…",
+        "testSuccess": "Connessione riuscita."
       },
       "embedding": {
         "title": "Embedding vettoriali",

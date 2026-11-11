@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Bot,
   Binary,
+  BrainCircuit,
   Globe,
   Languages,
   Palette,
@@ -29,6 +30,7 @@ import { disable as disableAutostart, enable as enableAutostart } from "@tauri-a
 import i18n from "@/i18n"
 import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
+import type { JevConfig } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { useZoomStore } from "@/stores/zoom-store"
@@ -46,6 +48,7 @@ import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { setIngestWorkerLimit } from "@/lib/ingest-queue"
 import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
+import { JevSection, jevBaseUrlForDraft } from "./sections/jev-section"
 import { MultimodalSection } from "./sections/multimodal-section"
 import { WebSearchSection } from "./sections/web-search-section"
 import { OutputSection } from "./sections/output-section"
@@ -71,6 +74,7 @@ type CategoryId =
   | "general"
   | "llm"
   | "embedding"
+  | "jev"
   | "multimodal"
   | "web-search"
   | "network"
@@ -104,6 +108,7 @@ const CATEGORIES: Category[] = [
   { id: "general", labelKey: "settings.categories.general", icon: Settings },
   { id: "llm", labelKey: "settings.categories.llm", icon: Bot },
   { id: "embedding", labelKey: "settings.categories.embedding", icon: Binary },
+  { id: "jev", labelKey: "settings.categories.jev", icon: BrainCircuit },
   { id: "multimodal", labelKey: "settings.categories.multimodal", icon: ImageIcon },
   { id: "web-search", labelKey: "settings.categories.webSearch", icon: Globe },
   { id: "network", labelKey: "settings.categories.network", icon: Network },
@@ -128,6 +133,7 @@ const CATEGORIES: Category[] = [
 function initialDraft(
   llm: ReturnType<typeof useWikiStore.getState>["llmConfig"],
   embed: ReturnType<typeof useWikiStore.getState>["embeddingConfig"],
+  jev: JevConfig,
   multimodal: ReturnType<typeof useWikiStore.getState>["multimodalConfig"],
   outputLanguage: ReturnType<typeof useWikiStore.getState>["outputLanguage"],
   proxy: ReturnType<typeof useWikiStore.getState>["proxyConfig"],
@@ -178,6 +184,12 @@ function initialDraft(
     embeddingBatchSize: embed.batchSize ?? 1,
     embeddingRequestTimeoutSecs: embed.requestTimeoutSecs,
     embeddingExtraHeaders: embed.extraHeaders ?? {},
+    jevEnabled: jev.enabled,
+    jevProvider: jev.provider,
+    jevBaseUrl: jev.baseUrl,
+    jevModel: jev.model,
+    jevApiKey: jev.apiKey,
+    jevAuth: jev.auth,
     multimodalEnabled: multimodal.enabled,
     multimodalUseMainLlm: multimodal.useMainLlm,
     multimodalProvider: multimodal.provider,
@@ -237,6 +249,8 @@ export function SettingsView() {
   const setLlmConfig = useWikiStore((s) => s.setLlmConfig)
   const embeddingConfig = useWikiStore((s) => s.embeddingConfig)
   const setEmbeddingConfig = useWikiStore((s) => s.setEmbeddingConfig)
+  const jevConfig = useWikiStore((s) => s.jevConfig)
+  const setJevConfig = useWikiStore((s) => s.setJevConfig)
   const multimodalConfig = useWikiStore((s) => s.multimodalConfig)
   const setMultimodalConfig = useWikiStore((s) => s.setMultimodalConfig)
   const outputLanguage = useWikiStore((s) => s.outputLanguage)
@@ -275,6 +289,7 @@ export function SettingsView() {
     initialDraft(
       llmConfig,
       embeddingConfig,
+      jevConfig,
       multimodalConfig,
       outputLanguage,
       proxyConfig,
@@ -345,6 +360,7 @@ export function SettingsView() {
       initialDraft(
         llmConfig,
         embeddingConfig,
+        jevConfig,
         multimodalConfig,
         outputLanguage,
         proxyConfig,
@@ -368,6 +384,7 @@ export function SettingsView() {
   }, [
     llmConfig,
     embeddingConfig,
+    jevConfig,
     multimodalConfig,
     outputLanguage,
     proxyConfig,
@@ -397,6 +414,8 @@ export function SettingsView() {
       loadLlmConfig,
       saveEmbeddingConfig,
       loadEmbeddingConfig,
+      saveJevConfig,
+      loadJevConfig,
       saveMultimodalConfig,
       loadMultimodalConfig,
       saveOutputLanguage,
@@ -443,6 +462,14 @@ export function SettingsView() {
       batchSize: Math.max(1, Math.min(64, Math.floor(draft.embeddingBatchSize || 1))),
       requestTimeoutSecs: draft.embeddingRequestTimeoutSecs,
       extraHeaders: draft.embeddingExtraHeaders,
+    }
+    const newJev: JevConfig = {
+      enabled: draft.jevEnabled,
+      provider: draft.jevProvider,
+      baseUrl: jevBaseUrlForDraft(draft),
+      model: draft.jevModel.trim(),
+      apiKey: draft.jevApiKey.trim(),
+      auth: draft.jevAuth,
     }
     const newMultimodal = {
       enabled: draft.multimodalEnabled,
@@ -516,6 +543,7 @@ export function SettingsView() {
     // the old value and make the UI look like saving reverted the user's edit.
     setLlmConfig(newLlm)
     setEmbeddingConfig(newEmbed)
+    setJevConfig(newJev)
     setMultimodalConfig(newMultimodal)
     setOutputLanguage(draft.outputLanguage as typeof outputLanguage)
     setProxyConfig(newProxy)
@@ -531,6 +559,7 @@ export function SettingsView() {
     try {
       await saveLlmConfig(newLlm)
       await saveEmbeddingConfig(newEmbed)
+      await saveJevConfig(newJev)
       await saveMultimodalConfig(newMultimodal)
       await saveOutputLanguage(draft.outputLanguage as typeof outputLanguage, project?.id)
       await saveProxyConfig(newProxy)
@@ -631,6 +660,7 @@ export function SettingsView() {
         const [
           persistedLlm,
           persistedEmbedding,
+          persistedJev,
           persistedMultimodal,
           persistedOutputLanguage,
           persistedProxy,
@@ -644,6 +674,7 @@ export function SettingsView() {
         ] = await Promise.allSettled([
           loadLlmConfig(),
           loadEmbeddingConfig(),
+          loadJevConfig(),
           loadMultimodalConfig(),
           loadOutputLanguage(project?.id),
           loadProxyConfig(),
@@ -657,6 +688,7 @@ export function SettingsView() {
         ] as const)
         setLlmConfig(resultValue(persistedLlm, null) ?? llmConfig)
         setEmbeddingConfig(resultValue(persistedEmbedding, null) ?? embeddingConfig)
+        setJevConfig(resultValue(persistedJev, null) ?? jevConfig)
         setMultimodalConfig(resultValue(persistedMultimodal, null) ?? multimodalConfig)
         setOutputLanguage((resultValue(persistedOutputLanguage, null) ?? outputLanguage) as typeof outputLanguage)
         setProxyConfig(resultValue(persistedProxy, null) ?? proxyConfig)
@@ -680,6 +712,7 @@ export function SettingsView() {
     project,
     llmConfig,
     embeddingConfig,
+    jevConfig,
     multimodalConfig,
     outputLanguage,
     proxyConfig,
@@ -692,6 +725,7 @@ export function SettingsView() {
     maxHistoryMessages,
     setLlmConfig,
     setEmbeddingConfig,
+    setJevConfig,
     setMultimodalConfig,
     setOutputLanguage,
     setProxyConfig,
@@ -716,6 +750,8 @@ export function SettingsView() {
         return <LlmProviderSection />
       case "embedding":
         return <EmbeddingSection draft={draft} setDraft={setDraft} />
+      case "jev":
+        return <JevSection draft={draft} setDraft={setDraft} />
       case "multimodal":
         return <MultimodalSection draft={draft} setDraft={setDraft} />
       case "web-search":

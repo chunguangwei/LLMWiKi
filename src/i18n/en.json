@@ -606,6 +606,7 @@
       "general": "General",
       "llm": "LLM Models",
       "embedding": "Embeddings",
+      "jev": "JEV Retrieval",
       "multimodal": "Image Captioning",
       "labs": "Labs (Experimental)",
       "webSearch": "External Information Sources",
@@ -760,6 +761,30 @@
           "ingestTitle": "Reasoning during ingest",
           "ingestHint": "Off is usually right: ingest asks for structured output and thinking costs time without helping. Raise it only if the model refuses to run with reasoning disabled."
         }
+      },
+      "jev": {
+        "title": "JEV Evidence Retrieval",
+        "description": "Score retrieved evidence with a JEV (System One) decision model to rank and merge search results. Use the official OpenRouter endpoint or a self-hosted System One / Kev-4B service.",
+        "enableLabel": "Enable JEV evidence retrieval",
+        "enableHint": "When off, search skips JEV decision scoring.",
+        "provider": "Provider",
+        "providerOpenrouter": "OpenRouter official",
+        "providerCustom": "Custom (self-hosted)",
+        "baseUrl": "Base URL",
+        "baseUrlHint": "Accepts the app root, /v1, or a full /systemone or /decisions endpoint.",
+        "openrouterHint": "The official OpenRouter endpoint is fixed to this address.",
+        "model": "Model",
+        "modelHint": "e.g. typesafe/jev-1.13 on OpenRouter; kev-latest for self-hosted servers.",
+        "apiKey": "API Key",
+        "apiKeyPlaceholder": "Leave empty for local no-auth servers",
+        "auth": "Auth",
+        "authBearer": "Bearer (Authorization header)",
+        "authNone": "None (no Authorization header)",
+        "testHeading": "Connection test",
+        "testHeadingHint": "Invokes the backend health check to verify the endpoint, key, and model.",
+        "testConnection": "Test connection",
+        "testing": "Testing…",
+        "testSuccess": "Connection OK."
       },
       "embedding": {
         "title": "Vector Embeddings",
