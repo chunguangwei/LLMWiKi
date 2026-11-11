@@ -52,6 +52,7 @@ describe("searchWiki backend wrapper", () => {
       includeContent: false,
       queryEmbedding: null,
       embeddingConfig: expect.objectContaining({ enabled: true, model: "test-embed" }),
+      jevConfig: null,
     })
     expect(out[0].path).toBe("/tmp/project/wiki/concepts/attention.md")
   })

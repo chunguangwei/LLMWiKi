@@ -12,13 +12,11 @@ use crate::panic_guard::run_guarded_async;
 const DEFAULT_RESULTS: usize = 20;
 const MAX_RESULTS: usize = 50;
 const RRF_K: f64 = 60.0;
-const FILENAME_EXACT_BONUS: f64 = 200.0;
-const PHRASE_IN_TITLE_BONUS: f64 = 50.0;
-const PHRASE_IN_CONTENT_PER_OCC: f64 = 20.0;
-const MAX_PHRASE_OCC_COUNTED: usize = 10;
-const TITLE_TOKEN_WEIGHT: f64 = 5.0;
-const CONTENT_TOKEN_WEIGHT: f64 = 1.0;
 const SNIPPET_CONTEXT: usize = 80;
+/// Cap on keyword candidates sent to JEV per query: serial self-hosted
+/// evidence servers cost ~170ms/request, so scoring stays inside the SAG2
+/// seed budget instead of fanning out over the full candidate list.
+const MAX_JEV_SCORED: usize = 10;
 const SEARCH_EMBEDDING_TIMEOUT_SECS: u64 = 8;
 const MAX_SEARCH_FILES: usize = 10_000;
 const MIN_GRAPH_RESULT_RATIO: f64 = 0.15;
@@ -134,6 +132,7 @@ pub async fn search_project(
     include_content: Option<bool>,
     query_embedding: Option<Vec<f32>>,
     embedding_config: Option<SearchEmbeddingConfig>,
+    jev_config: Option<crate::commands::jev::JevConfig>,
 ) -> Result<ProjectSearchResponse, String> {
     run_guarded_async("search_project", async move {
         let query_embedding =
@@ -144,10 +143,11 @@ pub async fn search_project(
             top_k.unwrap_or(DEFAULT_RESULTS),
             include_content.unwrap_or(false),
             query_embedding,
+            jev_config,
         )
         .await
     })
-    .await
+        .await
 }
 
 #[tauri::command]
@@ -159,7 +159,7 @@ pub async fn embedding_fetch(
     run_guarded_async("embedding_fetch", async move {
         fetch_embedding_with_retry(&text, &cfg, max_retries.unwrap_or(3)).await
     })
-    .await
+        .await
 }
 
 #[tauri::command]
@@ -170,7 +170,7 @@ pub async fn embedding_fetch_batch(
     run_guarded_async("embedding_fetch_batch", async move {
         fetch_embedding_batch(&texts, &cfg).await
     })
-    .await
+        .await
 }
 
 #[tauri::command]
@@ -352,17 +352,12 @@ pub async fn search_project_inner(
     top_k: usize,
     include_content: bool,
     query_embedding: Option<Vec<f32>>,
+    jev_config: Option<crate::commands::jev::JevConfig>,
 ) -> Result<ProjectSearchResponse, String> {
     if query.trim().is_empty() {
         return Err("query is required".to_string());
     }
     let limit = top_k.clamp(1, MAX_RESULTS);
-    let tokens = tokenize_query(&query);
-    let effective_tokens = if tokens.is_empty() {
-        vec![query.trim().to_lowercase()]
-    } else {
-        tokens
-    };
     let query_phrase = trim_query_punctuation(&query.to_lowercase());
     let mut results = Vec::new();
     let mut page_paths_by_vector_id = BTreeMap::new();
@@ -370,6 +365,7 @@ pub async fn search_project_inner(
     let mut graph_pages = BTreeMap::new();
 
     let wiki_root = Path::new(&project_path).join("wiki");
+    let mut scan_truncated = false;
     if wiki_root.exists() {
         let mut searched_files = 0usize;
         for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
@@ -384,6 +380,7 @@ pub async fn search_project_inner(
             }
             searched_files += 1;
             if searched_files > MAX_SEARCH_FILES {
+                scan_truncated = true;
                 eprintln!(
                     "[Search] stopped scanning wiki after {MAX_SEARCH_FILES} markdown files in {project_path}"
                 );
@@ -411,15 +408,6 @@ pub async fn search_project_inner(
                     .and_then(|value| value.to_str())
                     .unwrap_or_default(),
             );
-            let hit = score_file(
-                &project_path,
-                entry.path(),
-                &content,
-                &effective_tokens,
-                &query_phrase,
-                &query,
-                include_content,
-            );
             graph_pages.insert(
                 normalize_path(&relative_path),
                 GraphPage {
@@ -429,10 +417,21 @@ pub async fn search_project_inner(
                     content,
                 },
             );
-            if let Some(hit) = hit {
-                results.push(hit);
-            }
         }
+    }
+
+    // Keyword arm: BM25 over the per-project FTS5 index (jieba-segmented),
+    // kept fresh from the scan above. On any index failure the arm is simply
+    // empty and vector/graph search proceeds without keyword ranks.
+    if !graph_pages.is_empty() {
+        results = fts_keyword_results(
+            &project_path,
+            &graph_pages,
+            &query,
+            &query_phrase,
+            include_content,
+            scan_truncated,
+        );
     }
     let legacy_page_paths = legacy_stem_candidates
         .into_iter()
@@ -483,13 +482,53 @@ pub async fn search_project_inner(
         }
     }
 
-    if vector_hits > 0 {
+    // Evidence arm (P1): JEV noul scoring over the top keyword candidates.
+    // Serial self-hosted deployments are slow per request, so only the top
+    // MAX_JEV_SCORED candidates go to the model (SAG2 seed budget). Failure
+    // or missing config leaves this arm absent and ordering untouched.
+    let jev_rank: Option<BTreeMap<String, usize>> = match jev_config.as_ref() {
+        Some(cfg) if cfg.is_usable() && !results.is_empty() => {
+            let candidates: Vec<&ProjectSearchResult> =
+                results.iter().take(MAX_JEV_SCORED).collect();
+            let mut texts = Vec::with_capacity(candidates.len());
+            for result in &candidates {
+                let path = Path::new(&project_path).join(&result.path);
+                texts.push(fs::read_to_string(&path).unwrap_or_default());
+            }
+            let scores = crate::commands::jev::score_candidates(cfg, &query, &texts).await;
+            scores.map(|scores| {
+                let mut order: Vec<(f32, &str)> = scores
+                    .iter()
+                    .rev()
+                    .zip(candidates.iter().rev())
+                    .map(|(score, result)| (*score, result.path.as_str()))
+                    .collect();
+                // descending by score, path tiebreak for determinism
+                order.sort_by(|a, b| {
+                    b.0.partial_cmp(&a.0)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| a.1.cmp(b.1))
+                });
+                order
+                    .iter()
+                    .filter(|(score, _)| *score > 0.0)
+                    .enumerate()
+                    .map(|(idx, (_, path))| (normalize_path(path), idx + 1))
+                    .collect()
+            })
+        }
+        _ => None,
+    };
+
+    if vector_hits > 0 || jev_rank.is_some() {
         apply_rrf_scores(
             &mut results,
             &token_rank,
             &vector_rank,
             &vector_score,
             &legacy_page_paths,
+            jev_rank.as_ref(),
+            &query_phrase,
         );
     }
 
@@ -516,15 +555,125 @@ pub async fn search_project_inner(
     })
 }
 
+/// Keyword arm via the per-project FTS5 BM25 index. The caller's graph scan
+/// already holds every page's content, so sync, snippet, and title all reuse
+/// it — no second file read. Exact filename matches keep their historical
+/// first-place semantics on top of BM25 ordering.
+fn fts_keyword_results(
+    project_path: &str,
+    pages: &BTreeMap<String, GraphPage>,
+    query: &str,
+    query_phrase: &str,
+    include_content: bool,
+    scan_truncated: bool,
+) -> Vec<ProjectSearchResult> {
+    let docs: Vec<crate::commands::fts_index::FtsDoc> = pages
+        .values()
+        .map(|page| crate::commands::fts_index::FtsDoc {
+            path: &page.path,
+            title: &page.title,
+            content: &page.content,
+        })
+        .collect();
+    let conn = match crate::commands::fts_index::open(project_path) {
+        Ok(conn) => conn,
+        Err(err) => {
+            eprintln!("[Search] FTS index unavailable, keyword arm degraded: {err}");
+            return Vec::new();
+        }
+    };
+    if let Err(err) = crate::commands::fts_index::sync(&conn, &docs, !scan_truncated) {
+        eprintln!("[Search] FTS sync failed, keyword arm degraded: {err}");
+        return Vec::new();
+    }
+    let hits = crate::commands::fts_index::search(&conn, query, MAX_RESULTS);
+    // Snippet anchor: the old scanner aimed the snippet at the query phrase
+    // when it appeared verbatim, otherwise at the first query token actually
+    // present in the page. Rebuild that anchor list from the segmented query
+    // terms so snippets stay relevant when the raw query never matches.
+    let content_lower_first = |tokens: &[String], content: &str| {
+        let content = content.to_lowercase();
+        tokens
+            .iter()
+            .find(|token| content.contains(token.as_str()))
+            .cloned()
+    };
+    let tokens = crate::commands::fts_index::query_tokens(query);
+    let anchor = |content: &str| -> String {
+        if !query_phrase.is_empty() && content.to_lowercase().contains(query_phrase) {
+            query_phrase.to_string()
+        } else if let Some(token) = content_lower_first(&tokens, content) {
+            token
+        } else {
+            query.to_string()
+        }
+    };
+
+    let mut results: Vec<ProjectSearchResult> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for page in pages
+        .values()
+        .filter(|page| !query_phrase.is_empty() && file_stem(&page.path) == query_phrase)
+    {
+        seen.insert(page.path.clone());
+        results.push(keyword_result_from_page(
+            page,
+            &anchor(&page.content),
+            1e18,
+            true,
+            include_content,
+        ));
+    }
+    for hit in hits {
+        if !seen.insert(hit.path.clone()) {
+            continue;
+        }
+        let Some(page) = pages.get(&hit.path) else {
+            continue;
+        };
+        results.push(keyword_result_from_page(
+            page,
+            &anchor(&page.content),
+            hit.score,
+            hit.title_match,
+            include_content,
+        ));
+    }
+    results
+}
+
+fn keyword_result_from_page(
+    page: &GraphPage,
+    snippet_anchor: &str,
+    score: f64,
+    title_match: bool,
+    include_content: bool,
+) -> ProjectSearchResult {
+    ProjectSearchResult {
+        path: page.path.clone(),
+        title: page.title.clone(),
+        snippet: build_snippet(&page.content, snippet_anchor),
+        title_match,
+        score,
+        vector_score: None,
+        images: extract_image_refs(&page.content),
+        content: include_content.then(|| page.content.clone()),
+        graph_related_to: Vec::new(),
+    }
+}
+
 fn apply_rrf_scores(
     results: &mut [ProjectSearchResult],
     token_rank: &BTreeMap<String, usize>,
     vector_rank: &BTreeMap<String, usize>,
     vector_score: &BTreeMap<String, f32>,
     legacy_page_paths: &BTreeMap<String, String>,
+    jev_rank: Option<&BTreeMap<String, usize>>,
+    query_phrase: &str,
 ) {
     for result in results {
-        let token = token_rank.get(&normalize_path(&result.path)).copied();
+        let normalized = normalize_path(&result.path);
+        let token = token_rank.get(&normalized).copied();
         let vector_id = vector_page_id(&result.path).unwrap_or_else(|| file_stem(&result.path));
         let legacy_stem = file_stem(&result.path);
         let legacy_matches_page = legacy_page_paths
@@ -538,11 +687,20 @@ fn apply_rrf_scores(
                     .flatten()
             })
             .copied();
+        // An exact filename query is the strongest lexical signal there is;
+        // keep it first regardless of fusion math (historical semantics).
+        if !query_phrase.is_empty() && legacy_stem == query_phrase {
+            result.score = f64::MAX;
+            continue;
+        }
         let mut rrf = 0.0;
         if let Some(rank) = token {
             rrf += 1.0 / (RRF_K + rank as f64);
         }
         if let Some(rank) = vector {
+            rrf += 1.0 / (RRF_K + rank as f64);
+        }
+        if let Some(rank) = jev_rank.and_then(|ranks| ranks.get(&normalized).copied()) {
             rrf += 1.0 / (RRF_K + rank as f64);
         }
         if let Some(score) = vector_score
@@ -831,7 +989,7 @@ async fn search_by_embedding(
         query_embedding,
         (top_k * 3).max(30),
     )
-    .await?;
+        .await?;
     if raw_chunks.is_empty() {
         return Ok(vec![]);
     }
@@ -946,108 +1104,6 @@ fn build_vector_snippet(result: &PageVectorResult) -> String {
         format!("{heading}: {text}")
     }
 }
-
-fn score_file(
-    project_path: &str,
-    path: &Path,
-    content: &str,
-    tokens: &[String],
-    query_phrase: &str,
-    query: &str,
-    include_content: bool,
-) -> Option<ProjectSearchResult> {
-    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let title = extract_title(content, file_name);
-    let title_text = format!("{title} {file_name}");
-    let title_lower = title_text.to_lowercase();
-    let content_lower = content.to_lowercase();
-    let stem = file_name.trim_end_matches(".md").to_lowercase();
-
-    let filename_exact = !query_phrase.is_empty() && stem == query_phrase;
-    let title_has_phrase = !query_phrase.is_empty() && title_lower.contains(query_phrase);
-    let content_phrase_occ =
-        count_occurrences(&content_lower, query_phrase).min(MAX_PHRASE_OCC_COUNTED);
-    let title_token_score = token_match_score(&title_text, tokens);
-    let content_token_score = token_match_score(content, tokens);
-
-    if !filename_exact
-        && !title_has_phrase
-        && content_phrase_occ == 0
-        && title_token_score == 0
-        && content_token_score == 0
-    {
-        return None;
-    }
-
-    let score = (if filename_exact {
-        FILENAME_EXACT_BONUS
-    } else {
-        0.0
-    }) + (if title_has_phrase {
-        PHRASE_IN_TITLE_BONUS
-    } else {
-        0.0
-    }) + content_phrase_occ as f64 * PHRASE_IN_CONTENT_PER_OCC
-        + title_token_score as f64 * TITLE_TOKEN_WEIGHT
-        + content_token_score as f64 * CONTENT_TOKEN_WEIGHT;
-
-    let snippet_anchor = if content_phrase_occ > 0 {
-        query_phrase.to_string()
-    } else {
-        tokens
-            .iter()
-            .find(|token| content_lower.contains(token.as_str()))
-            .cloned()
-            .unwrap_or_else(|| query.to_string())
-    };
-
-    Some(ProjectSearchResult {
-        path: relative_to_project(project_path, path),
-        title,
-        snippet: build_snippet(content, &snippet_anchor),
-        title_match: title_token_score > 0 || title_has_phrase,
-        score,
-        vector_score: None,
-        images: extract_image_refs(content),
-        content: include_content.then_some(content.to_string()),
-        graph_related_to: Vec::new(),
-    })
-}
-
-pub fn tokenize_query(query: &str) -> Vec<String> {
-    let raw = query
-        .to_lowercase()
-        .split(is_query_separator)
-        .filter(|token| token.chars().count() > 1)
-        .filter(|token| !is_stop_word(token))
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-
-    let mut out = Vec::new();
-    for token in raw {
-        let chars = token.chars().collect::<Vec<_>>();
-        let has_cjk = chars.iter().any(|c| ('\u{3400}'..='\u{9fff}').contains(c));
-        if has_cjk && chars.len() > 2 {
-            for pair in chars.windows(2) {
-                out.push(pair.iter().collect());
-            }
-            for ch in &chars {
-                let s = ch.to_string();
-                if !is_stop_word(&s) {
-                    out.push(s);
-                }
-            }
-            out.push(token);
-        } else {
-            out.push(token);
-        }
-    }
-    out.into_iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
 fn is_query_separator(c: char) -> bool {
     c.is_whitespace()
         || c.is_ascii_punctuation()
@@ -1071,7 +1127,7 @@ fn is_query_separator(c: char) -> bool {
         )
 }
 
-fn is_stop_word(token: &str) -> bool {
+pub(crate) fn is_stop_word(token: &str) -> bool {
     matches!(
         token,
         "的" | "是"
@@ -1122,20 +1178,6 @@ fn trim_query_punctuation(value: &str) -> String {
     value.trim_matches(is_query_separator).to_string()
 }
 
-fn token_match_score(text: &str, tokens: &[String]) -> usize {
-    let lower = text.to_lowercase();
-    tokens
-        .iter()
-        .filter(|token| lower.contains(token.as_str()))
-        .count()
-}
-
-fn count_occurrences(haystack: &str, needle: &str) -> usize {
-    if needle.is_empty() {
-        return 0;
-    }
-    haystack.match_indices(needle).count()
-}
 
 pub fn extract_title(content: &str, file_name: &str) -> String {
     let has_frontmatter = content.starts_with("---");
@@ -1263,7 +1305,7 @@ pub(crate) async fn fetch_embedding_batch(
             }
             if texts.len() == 1 && matches!(&error, EmbeddingBatchError::Oversize(_)) {
                 return fetch_embedding_with_retry(&texts[0], cfg, 3)
-                    .await
+        .await
                     .map(|embedding| vec![embedding]);
             }
             Err(match error {
@@ -1896,14 +1938,6 @@ mod tests {
     }
 
     #[test]
-    fn tokenizes_cjk_bigrams_and_chars() {
-        let tokens = tokenize_query("默会知识");
-        assert!(tokens.contains(&"默会".to_string()));
-        assert!(tokens.contains(&"知识".to_string()));
-        assert!(tokens.contains(&"默".to_string()));
-    }
-
-    #[test]
     fn extracts_image_refs_without_duplicates() {
         let refs = extract_image_refs("![a](wiki/media/x.png)\n![b](wiki/media/x.png)");
         assert_eq!(refs.len(), 1);
@@ -2188,6 +2222,8 @@ mod tests {
             &vector_rank,
             &vector_score,
             &legacy_page_paths,
+            None,
+            "",
         );
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
@@ -2329,6 +2365,7 @@ mod tests {
             20,
             false,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -2336,7 +2373,7 @@ mod tests {
         assert_eq!(out.mode, "keyword");
         assert_eq!(out.results[0].title, "Attention");
         assert!(out.results[0].title_match);
-        assert!(out.results[0].score > 100.0);
+        assert!(out.results[0].score > 1e17);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -2364,6 +2401,7 @@ mod tests {
             "agent runtime".into(),
             10,
             false,
+            None,
             None,
         )
         .await
@@ -2477,7 +2515,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keyword_search_handles_cjk_bigram_queries() {
+    async fn keyword_search_handles_cjk_word_segmented_queries() {
         let root = tmp_project();
         write_page(
             &root,
@@ -2491,6 +2529,7 @@ mod tests {
             20,
             false,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -2501,17 +2540,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keyword_search_phrase_in_content_beats_scattered_tokens() {
+    async fn keyword_search_prefers_pages_matching_more_query_tokens() {
         let root = tmp_project();
         write_page(
             &root,
-            "wiki/concepts/phrase.md",
-            "---\ntitle: Phrase\n---\n\n# Phrase\n\nThe phrase vector database appears together.",
+            "wiki/concepts/both.md",
+            "---\ntitle: Both\n---\n\n# Both\n\nThe vector database appears together.",
         );
         write_page(
             &root,
-            "wiki/concepts/scattered.md",
-            "---\ntitle: Scattered\n---\n\n# Scattered\n\nvector appears here. database appears later.",
+            "wiki/concepts/one-token.md",
+            "---\ntitle: One Token\n---\n\n# One Token\n\ndatabase appears later.",
         );
 
         let out = search_project_inner(
@@ -2520,11 +2559,50 @@ mod tests {
             20,
             false,
             None,
+            None,
         )
         .await
         .unwrap();
 
-        assert_eq!(out.results[0].title, "Phrase");
+        assert_eq!(out.results[0].title, "Both");
+        // OR semantics: the single-token page is still recalled, just behind.
+        assert!(out.results.iter().any(|result| result.title == "One Token"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn keyword_search_drops_pages_deleted_since_last_search() {
+        let root = tmp_project();
+        write_page(
+            &root,
+            "wiki/concepts/transient.md",
+            "---\ntitle: Transient\n---\n\n# Transient\n\nrebuild-marker content here.",
+        );
+        let first = search_project_inner(
+            root.to_string_lossy().to_string(),
+            "rebuild-marker".into(),
+            20,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.results.len(), 1);
+
+        fs::remove_file(root.join("wiki/concepts/transient.md")).unwrap();
+        let second = search_project_inner(
+            root.to_string_lossy().to_string(),
+            "rebuild-marker".into(),
+            20,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(second.results.is_empty());
+        assert_eq!(second.token_hits, 0);
         let _ = fs::remove_dir_all(root);
     }
     #[test]
@@ -2630,7 +2708,7 @@ mod tests {
         config.batch_size = Some(2);
         config.request_timeout_secs = Some(1);
         let vectors = fetch_embedding_batch(&["one".to_string(), "two".to_string()], &config)
-            .await
+        .await
             .unwrap();
         assert_eq!(vectors, vec![vec![1.0], vec![2.0]]);
         server.await.unwrap();

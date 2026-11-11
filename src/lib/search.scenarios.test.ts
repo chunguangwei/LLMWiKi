@@ -52,6 +52,7 @@ describe("searchWiki backend command contract", () => {
       includeContent: false,
       queryEmbedding: null,
       embeddingConfig: expect.objectContaining({ enabled: false }),
+      jevConfig: null,
     })
     expect(results[0].path).toBe("/tmp/project/wiki/concepts/attention.md")
   })

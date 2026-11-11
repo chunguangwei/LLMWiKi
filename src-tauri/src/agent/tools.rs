@@ -953,6 +953,7 @@ pub async fn run_wiki_search(
         top_k,
         include_content,
         query_embedding,
+        None,
     )
     .await?;
     let project_for_context = project_path.clone();

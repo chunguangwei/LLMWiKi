@@ -66,6 +66,7 @@ export async function searchWiki(
   if (!query.trim()) return []
   const pp = normalizePath(projectPath)
   const embCfg = useWikiStore.getState().embeddingConfig
+  const jevCfg = useWikiStore.getState().jevConfig
 
   const response = await invoke<BackendSearchResponse>("search_project", {
     projectPath: pp,
@@ -74,6 +75,7 @@ export async function searchWiki(
     includeContent: false,
     queryEmbedding: null,
     embeddingConfig: embCfg,
+    jevConfig: jevCfg?.enabled ? jevCfg : null,
   })
 
   return response.results.map((result) => ({

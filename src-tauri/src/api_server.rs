@@ -1966,6 +1966,7 @@ fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
         top_k,
         req.include_content.unwrap_or(false),
         query_embedding,
+        None,
     )) {
         Ok(search) => ok(json!({
             "ok": true,
@@ -3733,16 +3734,6 @@ mod tests {
                 "c:/users/me/wiki"
             ));
         }
-    }
-
-    #[test]
-    fn tokenize_keeps_single_cjk_character() {
-        assert_eq!(
-            crate::commands::search::tokenize_query("图"),
-            Vec::<String>::new()
-        );
-        let tokens = crate::commands::search::tokenize_query("知识图谱");
-        assert!(tokens.contains(&"知识".to_string()));
     }
 
     #[test]
