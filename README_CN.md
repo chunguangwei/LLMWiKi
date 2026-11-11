@@ -52,6 +52,14 @@
 - **Chrome 网页剪藏** — 一键捕获网页内容，自动摄入知识库
 - **本地 HTTP API + MCP Server + AI Agent Skill** — 内置 `127.0.0.1:19828` JSON API 和随包提供的 MCP Server，支持 Hybrid 检索、文件读取、知识图谱遍历、源资料重新扫描；配套 [agent skill](https://github.com/nashsu/llm_wiki_skill) 一行命令接入 Claude Code / Codex（`npx skills add …`）
 
+## v0.9.0：SAG2 检索 — FTS5 BM25 + 可选 JEV 证据打分
+
+- **BM25 关键词检索（默认开启）** — 关键词臂换成 SQLite FTS5 倒排索引 + jieba 中文分词（SAG2 论文 arXiv:2610.22588），替换全量扫文件 + 手写加分；标题加权 BM25 排序，文件名词干精确匹配仍置顶；索引在 `.llm-wiki/fts.db`，按 sha256 增量同步
+- **JEV 证据打分臂（可选）** — 设置新增「JEV 证据检索」：OpenRouter 官方或自定义端点（应用根 / `/v1` / 完整 `/systemone`、`/decisions`，Bearer 或无鉴权，兼容快手内网 Kev-4B 自托管）；对 BM25 top-10 候选做 noul 证据判定并作为第三路进 RRF，串行服务限 10 次请求、失败自动回退 BM25
+- **降级链** — 未配 JEV → 纯 BM25；JEV 不可达 → 跳过证据臂；索引异常 → 跳过关键词臂，向量/图谱不受影响。`search_project` 响应契约不变
+
+[下载 v0.9.0](https://github.com/chunguangwei/LLMWiKi/releases/tag/v0.9.0) · [发布说明与验证记录](docs/release-0.9.0.md)
+
 ## v0.8.3：更可靠的来源状态与网址下载
 
 - **来源状态按项目隔离** — 切换项目时丢弃旧响应；目录与缓存共同就绪后才允许提取，读取失败可查看错误并重试

@@ -461,6 +461,29 @@ Review 研究优先读取 `affectedPages` 的实际 Markdown，再沿 wikilink �
 
 ---
 
+## 10. v0.9.0 SAG2 检索：FTS5 BM25 + JEV 证据打分
+
+关键词检索从「全量扫文件 + 手写加分」换成 SQLite FTS5 BM25 倒排索引（SAG2 论文 arXiv:2610.22588 的词法臂），并可叠加 JEV 证据打分臂。参考实现：Zleap-AI/SAG-Benchmark、Zleap-AI/SAG-Wiki（MIT）。
+
+### 10.1 BM25 关键词臂（默认开启，零配置）
+
+- 每个项目一个索引库 `<project>/.llm-wiki/fts.db`（与 LanceDB 向量库同目录、同生命周期，可随时删除重建）。中文经 jieba 分词后以空格连接写入 FTS5（unicode61），中英查询与索引使用同一分词器，替换了旧的 bigram 猜测匹配。
+- 索引在每次搜索前按 sha256 增量同步（未变页面只算一次哈希；官方基准 11,656 篇建索引 2.4s，本机同量级毫秒~秒级），页面上次搜索后被删除会自动从结果消失。
+- 排序用 `bm25()` 且标题列权重 5x；文件名词干与查询完全相等时仍保持置顶（历史语义）。查询 token 之间是 OR 融合，靠 BM25 聚合分数排序，不再是"必须全含"。
+- 结果 JSON 契约（`search_project`）不变，前端无感；LanceDB 向量臂与一跳图谱臂不变，仍走 RRF 融合。
+
+### 10.2 JEV 证据打分臂（可选）
+
+- **设置 → JEV 证据检索**：启用后可选 OpenRouter 官方（`typesafe/jev-1.13`）或自定义端点。自定义支持填应用根、`/v1` 或完整 `/systemone`/`/decisions` 端点，鉴权 Bearer 或无（本地服务）。快手内网 Kev-4B 自托管即用"自定义"：base URL 填 `https://<host>/kev-4b`，model 填 `kev-latest`。「测试连接」探测规则：`/v1` 类部署走 `GET /v1/models`（官方健康检查，不占串行打分槽位，返回已加载模型列表）；`/decisions` 类端点无 models 路由，退回一次最小 noul 往返。
+- 工作方式：对 BM25 top-10 候选逐段问"该段落是否是回答问题的必要证据"（noul 概率），命中者以第三路进 RRF。串行自托管服务（p95 ~170ms/请求）已按 SAG2 seed 预算封顶 10 次请求，并发闸 1；超时/失败自动回退纯 BM25 排序，不阻塞搜索。
+- API Key 与其他 provider 一样进入加密配置备份，不落明文。
+
+### 10.3 降级链
+
+无 JEV 配置 → 纯 BM25（已强于旧手写打分）；JEV 不可达 → 本次请求跳过证据臂；FTS 索引损坏 → 删除 `.llm-wiki/fts.db` 或等下次搜索自动重建，向量/图谱臂不受影响。
+
+---
+
 ## 故障排查
 
 ### `.llmwiki` 导入提示 "Package missing manifest.json"

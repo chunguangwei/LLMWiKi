@@ -52,6 +52,14 @@
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 - **Local HTTP API + MCP Server + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API and bundled MCP server for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/nashsu/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
 
+## v0.9.0: SAG2 retrieval — FTS5 BM25 + optional JEV evidence scoring
+
+- **BM25 keyword search (on by default)** — the keyword arm is now a SQLite FTS5 inverted index with jieba Chinese segmentation (SAG2 paper, arXiv:2610.22588), replacing full-directory scans with hand-rolled bonuses; title-weighted BM25 ranking, exact-filename queries still pinned first, index at `.llm-wiki/fts.db` kept fresh by hash-gated incremental sync
+- **JEV evidence arm (optional)** — new Settings → JEV evidence retrieval: OpenRouter official or custom endpoint (app root, `/v1`, or full `/systemone`/`/decisions`; Bearer or none; works with self-hosted Kev-4B). Top-10 BM25 candidates get noul evidence judgments fused into RRF; serial servers are capped at 10 requests with fast fallback to BM25 order
+- **Graceful degradation** — no JEV config → pure BM25; JEV unreachable → evidence arm skipped; broken index → keyword arm skipped, vector/graph unaffected. `search_project` API contract unchanged
+
+[Download v0.9.0](https://github.com/chunguangwei/LLMWiKi/releases/tag/v0.9.0) · [Release notes and verification](docs/release-0.9.0.md)
+
 ## v0.8.3: reliable source state and bounded downloads
 
 - **Project-isolated source state** — discard stale responses after switching projects; wait for source and cache readiness before ingesting, with visible errors and retry
