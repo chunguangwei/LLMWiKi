@@ -26,7 +26,67 @@ export interface ChangelogEntry {
   }
 }
 
+/**
+ * Highlights for `version` (bare "0.6.19" or "v0.6.19"), or undefined
+ * when the bundled changelog has no entry for it. An update reminder
+ * must not show another version's notes: when the app is older than the
+ * pending release, the bundled changelog cannot describe it yet — the
+ * notes appear on the About page after the update installs.
+ */
+export function findReleaseHighlights(version: string): ChangelogEntry | undefined {
+  const bare = version.replace(/^v/i, "")
+  return CHANGELOG.find((entry) => entry.version === bare)
+}
+
+export type ChangelogLang = "en" | "zh" | "it" | "ru"
+
+/** Map an i18n language tag onto the languages CHANGELOG carries. */
+export function resolveChangelogLang(language?: string): ChangelogLang {
+  const l = (language ?? "").toLowerCase()
+  if (l.startsWith("zh")) return "zh"
+  if (l.startsWith("it")) return "it"
+  if (l.startsWith("ru")) return "ru"
+  return "en"
+}
+
+/** Entry highlights in `lang`, falling back to English when absent. */
+export function highlightsFor(entry: ChangelogEntry, lang: ChangelogLang): string[] {
+  return entry.highlights[lang] ?? entry.highlights.en
+}
+
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.9.1",
+    date: "2026-11-12",
+    highlights: {
+      en: [
+        "Simplified release notes: the full-history Changelog settings page is gone; update reminders now list the pending version's core points, and the About page keeps a persistent summary of what's new.",
+        "Added the missing 0.9.0 entry to the release notes so the About page's what's-new card finally describes the current version.",
+      ],
+      zh: [
+        "更新内容简化：移除完整历史的「更新日志」设置页；更新提醒改为列出待更新版本的核心要点，关于页常驻当前版本的更新要点摘要。",
+        "补上缺失的 0.9.0 更新条目，关于页的更新要点卡现在正确描述当前版本。",
+      ],
+    },
+  },
+  {
+    version: "0.9.0",
+    date: "2026-11-11",
+    highlights: {
+      en: [
+        "New keyword search engine: SQLite FTS5 BM25 ranking replaces the full-file scan, with jieba Chinese tokenization, 5x title weighting, exact filename-stem matches pinned to the top, and a per-project index that syncs incrementally and rebuilds itself when deleted.",
+        "Optional JEV evidence-scoring arm in Settings: score search candidates with the official OpenRouter endpoint or a custom deployment (including self-hosted Kev-4B), with connection testing and API keys included in the encrypted config backup.",
+        "Graceful degradation keeps search always available: unconfigured JEV falls back to pure BM25, an unreachable scorer skips just that arm, and a damaged FTS index disables only keyword search while vector and graph results stay intact.",
+        "Search result contracts are unchanged for existing clients; vector and one-hop graph arms keep their behavior.",
+      ],
+      zh: [
+        "全新关键词检索引擎：SQLite FTS5 BM25 排序取代全量扫文件，中文经 jieba 分词，标题权重 5 倍，文件名词干精确匹配置顶；项目索引增量同步，删除索引文件即可整体重建。",
+        "设置新增可选的 JEV 证据打分臂：支持 OpenRouter 官方端点或自定义部署（含快手内网 Kev-4B 自托管），提供测试连接，API Key 进入既有加密配置备份。",
+        "完善的降级链保证检索始终可用：未配置 JEV 时纯 BM25；打分服务不可达仅跳过证据臂；FTS 索引异常仅停用关键词臂，向量与图谱结果不受影响。",
+        "search_project 响应契约与前端调用方保持不变；向量臂与一跳图谱臂行为不变。",
+      ],
+    },
+  },
   {
     version: "0.8.3",
     date: "2026-10-29",

@@ -625,7 +625,6 @@
       "schemaUpgrade": "Schema Upgrade",
       "configBackup": "Config Backup",
       "githubBackup": "GitHub Backup",
-      "changelog": "Changelog",
       "about": "About"
     },
     "sections": {
@@ -1326,11 +1325,8 @@
         "account": "Account",
         "privacyNote": "Your content is pushed to GitHub. Always use a PRIVATE repo (the verify button creates one private). Anyone with repo access can read the backed-up files."
       },
-      "changelog": {
-        "title": "Changelog",
-        "description": "Notable user-visible changes in each released version, newest first."
-      },
       "about": {
+        "releaseHighlights": "What's new in v{{version}}",
         "title": "About",
         "description": "Build info and runtime status.",
         "version": "Version",

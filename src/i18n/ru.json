@@ -575,7 +575,6 @@
       "output": "Вывод",
       "interface": "Интерфейс",
       "maintenance": "Обслуживание",
-      "changelog": "История изменений",
       "about": "О приложении",
       "labs": "Labs (Experimental)",
       "scheduledRefresh": "Scheduled Web Refresh",
@@ -1081,11 +1080,8 @@
           "skipped": "Отмечено как не дубликаты"
         }
       },
-      "changelog": {
-        "title": "История изменений",
-        "description": "Заметные пользователю изменения в каждой выпущенной версии, от новых к старым."
-      },
       "about": {
+        "releaseHighlights": "Что нового в v{{version}}",
         "title": "О приложении",
         "description": "Информация о сборке и состоянии выполнения.",
         "version": "Версия",

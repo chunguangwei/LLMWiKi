@@ -575,7 +575,6 @@
       "output": "Output",
       "interface": "Interfaccia",
       "maintenance": "Manutenzione",
-      "changelog": "Changelog",
       "about": "Informazioni",
       "labs": "Labs (Experimental)",
       "scheduledRefresh": "Scheduled Web Refresh",
@@ -1081,11 +1080,8 @@
           "skipped": "Segnati come non duplicati"
         }
       },
-      "changelog": {
-        "title": "Changelog",
-        "description": "Le modifiche più rilevanti visibili all'utente in ogni versione rilasciata, dalla più recente."
-      },
       "about": {
+        "releaseHighlights": "Novità della v{{version}}",
         "title": "Informazioni",
         "description": "Informazioni sulla build e stato di esecuzione.",
         "version": "Versione",

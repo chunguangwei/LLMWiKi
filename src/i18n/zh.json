@@ -625,7 +625,6 @@
       "schemaUpgrade": "Schema 升级",
       "configBackup": "配置备份",
       "githubBackup": "GitHub 备份",
-      "changelog": "更新日志",
       "about": "关于"
     },
     "sections": {
@@ -1326,11 +1325,8 @@
         "account": "账户",
         "privacyNote": "你的内容会被推送到 GitHub。请务必使用私有仓库（校验按钮会创建私有仓库）。任何有仓库访问权限的人都能读取备份的文件。"
       },
-      "changelog": {
-        "title": "更新日志",
-        "description": "每个版本对用户可见的功能改动，最新版本在最前面。"
-      },
       "about": {
+        "releaseHighlights": "v{{version}} 更新要点",
         "title": "关于",
         "description": "构建信息和运行时状态。",
         "version": "版本",

@@ -9,7 +9,6 @@ import {
   Info,
   Image as ImageIcon,
   Network,
-  History,
   Wrench,
   Clock,
   FolderSync,
@@ -59,7 +58,6 @@ import { SourceWatchSection } from "./sections/source-watch-section"
 import { MineruSection } from "./sections/mineru-section"
 import { ApiServerSection } from "./sections/api-server-section"
 import { GeneralSection } from "./sections/general-section"
-import { ChangelogSection } from "./sections/changelog-section"
 import { MaintenanceSection } from "./sections/maintenance-section"
 import { AboutSection } from "./sections/about-section"
 import { ImportExportSection } from "./sections/import-export-section"
@@ -92,7 +90,6 @@ type CategoryId =
   | "schema-upgrade"
   | "config-backup"
   | "github-backup"
-  | "changelog"
   | "about"
 
 interface Category {
@@ -126,7 +123,6 @@ const CATEGORIES: Category[] = [
   { id: "schema-upgrade", labelKey: "settings.categories.schemaUpgrade", icon: Sparkles },
   { id: "config-backup", labelKey: "settings.categories.configBackup", icon: ShieldCheck },
   { id: "github-backup", labelKey: "settings.categories.githubBackup", icon: GitBranch },
-  { id: "changelog", labelKey: "settings.categories.changelog", icon: History },
   { id: "about", labelKey: "settings.categories.about", icon: Info },
 ]
 
@@ -786,8 +782,6 @@ export function SettingsView() {
         return <ConfigBackupSection />
       case "github-backup":
         return <GithubBackupSection />
-      case "changelog":
-        return <ChangelogSection />
       case "about":
         return <AboutSection />
     }

@@ -10,6 +10,7 @@ import { checkForUpdates, toLatestReleaseUrl } from "@/lib/update-check"
 import { saveUpdateCheckState } from "@/lib/project-store"
 import { APP_REPO, APP_REPO_URL } from "@/lib/app-repo"
 import { runInPlaceUpdate, relaunchApp, type UpdaterProgress } from "@/lib/updater"
+import { findReleaseHighlights, highlightsFor, resolveChangelogLang, CHANGELOG } from "@/lib/changelog"
 import { useAppDialog } from "@/stores/app-dialog-store"
 
 interface ApiHealth {
@@ -19,7 +20,7 @@ interface ApiHealth {
 }
 
 export function AboutSection() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [clipStatus, setClipStatus] = useState<string>("...")
   const [apiStatus, setApiStatus] = useState<string>("...")
   const [apiHealth, setApiHealth] = useState<ApiHealth | null>(null)
@@ -207,6 +208,38 @@ export function AboutSection() {
         </label>
       </div>
 
+      {/* ── Current version core points ───────────────────────────
+          Replaces the old full-history Changelog settings page: one
+          compact card showing the bundled release's key points. It
+          grows stale right after an in-place update (the bundle is
+          from the pre-update build) and self-heals on next launch. */}
+      {(() => {
+        const current = CHANGELOG[0]
+        const lines = highlightsFor(current, resolveChangelogLang(i18n.language))
+        if (lines.length === 0) return null
+        return (
+          <div className="rounded-md border p-4">
+            <div className="flex items-baseline gap-2">
+              <span className="text-sm font-medium">
+                {t("settings.sections.about.releaseHighlights", {
+                  version: current.version,
+                  defaultValue: "What's new",
+                })}
+              </span>
+              <span className="text-[10px] text-muted-foreground">{current.date}</span>
+            </div>
+            <ul className="mt-2.5 space-y-1.5 text-xs leading-relaxed text-foreground/85">
+              {lines.map((line, i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary/60" />
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })()}
+
       <div className="rounded-md border p-4 text-sm">
         <div className="font-medium">LLM Wiki</div>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -253,7 +286,7 @@ function UpdateAvailableBanner({
   releaseBody,
   onDismiss,
 }: UpdateAvailableBannerProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   // In-place update state. `phase`:
   //   idle      → show "Update now"
   //   working   → downloading/installing, show progress
@@ -339,6 +372,17 @@ function UpdateAvailableBanner({
     }
   }
 
+  // Notes for the pending version, newest source wins:
+  //   1. bundled CHANGELOG entry (only possible when the running app
+  //      already ships that version's notes, e.g. after a dev reload);
+  //   2. GitHub release body — our releases carry only a short stub, so
+  //      this is a fallback, not the primary channel.
+  // The curated summary for the version the user just updated TO shows
+  // in the About page's highlights card after the update installs.
+  const highlightEntry = findReleaseHighlights(remote)
+  const highlights = highlightEntry
+    ? highlightsFor(highlightEntry, resolveChangelogLang(i18n.language))
+    : []
   const preview = releaseBody.slice(0, 400)
   const truncated = releaseBody.length > preview.length
 
@@ -351,11 +395,22 @@ function UpdateAvailableBanner({
       {releaseName && releaseName !== `v${remote.replace(/^v/, "")}` && (
         <div className="mt-1 text-xs text-muted-foreground">{releaseName}</div>
       )}
-      {preview.trim().length > 0 && (
-        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1.5 text-[11px] leading-relaxed text-foreground/80">
-          {preview}
-          {truncated && " …"}
-        </pre>
+      {highlights.length > 0 ? (
+        <ul className="mt-2 max-h-40 space-y-1.5 overflow-auto rounded bg-background/60 px-3 py-2 text-[11px] leading-relaxed text-foreground/80">
+          {highlights.map((line, i) => (
+            <li key={i} className="flex gap-2">
+              <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-primary/60" />
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        preview.trim().length > 0 && (
+          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1.5 text-[11px] leading-relaxed text-foreground/80">
+            {preview}
+            {truncated && " …"}
+          </pre>
+        )
       )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {phase === "ready" ? (
