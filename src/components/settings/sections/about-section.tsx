@@ -383,7 +383,10 @@ function UpdateAvailableBanner({
   const highlights = highlightEntry
     ? highlightsFor(highlightEntry, resolveChangelogLang(i18n.language))
     : []
-  const preview = releaseBody.slice(0, 400)
+  // CI writes real highlights into the release body (scripts/release-notes.mjs);
+  // keep the cap generous enough to show a full entry without cutting
+  // mid-sentence — the box scrolls (max-h-40) for unusually long bodies.
+  const preview = releaseBody.slice(0, 2000)
   const truncated = releaseBody.length > preview.length
 
   return (
