@@ -56,6 +56,9 @@ grep -A1 'name = "llm-wiki"' src-tauri/Cargo.lock | head -2
 
 # 2. 在 src/lib/changelog.ts 顶部 prepend 一条该版本的 entry（version + date + en/zh highlights）
 #    只写用户可见的变化；纯重构 / CI / 测试不要写进来。
+#    ⚠️ 漏写不再是小问题：CI 的 prepare-release job 会用 scripts/release-notes.mjs
+#    按 tag 找该条目生成 release 正文，找不到就 exit 1 → 四个平台构建全部跳过
+#    （约 30 秒内变红，不是 403 故障复发，就是 changelog 条目没补）。
 npm run typecheck   # changelog.ts 是 TS，顺手确认没写崩
 
 # 3. 提交并推送（一次提交带上全部 5 个文件：上面 4 个版本文件 + changelog.ts）
@@ -70,7 +73,11 @@ git push origin v0.7.0
 > ⚠️ **版本号没同步 = 自动更新失效**：`latest.json` 取的是 `tauri.conf.json` 的 version；只要它没比已安装版本高，客户端就检测不到更新（见 §3.1）。`Cargo.lock` 不同步则会在 CI 构建时被改动、留下脏 diff。所以四处务必一致、且严格大于上一版。
 
 GitHub Actions（`.github/workflows/build.yml`）随后自动：
-跨平台构建（macOS arm64 / Windows x64 / Linux x64+arm64）→ 用 updater 私钥签名 → 生成 `latest.json` → 创建 GitHub Release 并上传所有产物（dmg / exe / msi / deb / AppImage / rpm + 各自 `.sig` + `latest.json` + Chrome 扩展 zip）。
+`prepare-release`（用 `scripts/release-notes.mjs` 从 changelog 生成正文，`gh release create --draft` 预建草稿）→
+跨平台构建（macOS arm64 / Windows x64 / Linux x64+arm64，tauri-action 只把产物附加到草稿）
+→ 用 updater 私钥签名 → 生成 `latest.json` → Chrome 扩展 zip →
+`publish-release` 在全平台变绿后把草稿转正（dmg / exe / msi / deb / AppImage / rpm + 各自 `.sig` + `latest.json` + 扩展 zip）。
+> release 创建特意走 `gh` 而非 tauri-action 内建路径：后者的 create-a-release 调用在本仓库会 403「Resource not accessible by integration」（2026-11-12 起），plain `gh api` 不受影响。
 
 各台已安装的 app 在下次启动（或手动「检查更新」）时发现新版，一键就地更新。
 
