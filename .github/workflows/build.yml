@@ -10,6 +10,35 @@ permissions:
   contents: write
 
 jobs:
+  # tauri-action's own create-a-release call started failing with 403
+  # "Resource not accessible by integration" on this repo (2026-11-12)
+  # while identical plain `gh api` calls from CI succeed — so stop
+  # relying on it: create the draft here (notes from the changelog,
+  # replacing the old static releaseBody), let tauri-action just
+  # attach assets to the existing release, and publish it once every
+  # platform job is green.
+  prepare-release:
+    name: Prepare draft release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create draft release with changelog notes
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          node scripts/release-notes.mjs "$TAG" > notes.md
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=true --notes-file notes.md
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+              --title "LLM Wiki $TAG" --notes-file notes.md
+          fi
+
   build:
     strategy:
       fail-fast: false
@@ -35,6 +64,10 @@ jobs:
             rust_target: ''
 
     runs-on: ${{ matrix.platform }}
+    needs: prepare-release
+    # push builds wait for the draft; workflow_dispatch builds skip the
+    # release path entirely (prepare-release is skipped, tagName is empty).
+    if: github.event_name == 'workflow_dispatch' || needs.prepare-release.result == 'success'
 
     steps:
       - name: Checkout
@@ -137,11 +170,15 @@ jobs:
           tagName: ${{ github.event_name == 'push' && github.ref_name || '' }}
           releaseName: ${{ github.event_name == 'push' && format('LLM Wiki {0}', github.ref_name) || '' }}
           releaseBody: 'See the assets below for download links.'
-          # Tag builds publish immediately (fork convention): our macOS build
-          # is ad-hoc signed (APPLE_SIGNING_IDENTITY "-" above), so upstream's
-          # notarization gate (verify-macos-release.sh + draft-until-verified)
-          # can never pass here and would leave the release stuck as a draft.
-          releaseDraft: false
+          # Reuse the draft created by prepare-release (gh creates it;
+          # tauri-action's own create-a-release call started getting
+          # 403 "Resource not accessible by integration" on this repo
+          # while plain gh API calls from CI work). With draft=true the
+          # action finds the existing draft in the release list, attaches
+          # assets to it, and never edits its changelog notes body.
+          # publish-release flips draft → published after all platforms
+          # go green, so latest.json is never half-populated.
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
 
@@ -201,26 +238,18 @@ jobs:
         run: |
           gh release upload "${{ github.ref_name }}" dist-extension/*.zip --clobber
 
-  release-notes:
-    name: Write release notes from changelog
+  publish-release:
+    name: Publish verified release
     needs: [build, package-extension]
-    # Tag builds only. tauri-action can't take dynamic YAML inputs, so
-    # it publishes the static releaseBody above; this job then replaces
-    # it with the version's real highlights from src/lib/changelog.ts.
-    # The in-app update banner previews this body for versions the
-    # installed bundle's changelog can't describe yet — with the static
-    # boilerplate it reads as "no update content".
+    # Flip the draft (created by prepare-release with changelog notes,
+    # assets attached by the build matrix) to published only after
+    # every platform job succeeds — clients never observe a half-
+    # populated release via latest.json.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Generate notes from CHANGELOG entry
-        run: node scripts/release-notes.mjs "${{ github.ref_name }}" > notes.md
-
-      - name: Apply notes to release
+      - name: Publish draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --notes-file notes.md
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false
 
