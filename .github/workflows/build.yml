@@ -173,14 +173,13 @@ jobs:
           # just produces bundle artifacts — useful for testing a
           # branch build without polluting the Releases page.
           tagName: ${{ github.event_name == 'push' && github.ref_name || '' }}
-          releaseName: ${{ github.event_name == 'push' && format('LLM Wiki {0}', github.ref_name) || '' }}
-          releaseBody: 'See the assets below for download links.'
-          # Reuse the draft created by prepare-release (gh creates it;
-          # tauri-action's own create-a-release call started getting
-          # 403 "Resource not accessible by integration" on this repo
-          # while plain gh API calls from CI work). With draft=true the
-          # action finds the existing draft in the release list, attaches
-          # assets to it, and never edits its changelog notes body.
+          # Reuse the draft created by prepare-release (gh creates it with
+          # changelog notes; tauri-action's own create-a-release call
+          # started getting 403 "Resource not accessible by integration"
+          # on this repo while plain gh API calls from CI work). With
+          # draft=true the action only finds the existing draft in the
+          # release list and attaches assets — it never rewrites the body
+          # (releaseBody is unused on that path) and never publishes.
           # publish-release flips draft → published after all platforms
           # go green, so latest.json is never half-populated.
           releaseDraft: true
