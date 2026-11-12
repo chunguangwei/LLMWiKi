@@ -32,8 +32,13 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           node scripts/release-notes.mjs "$TAG" > notes.md
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft | grep -q true; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=true --notes-file notes.md
+          elif gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Re-running a run whose release already published must not
+            # un-publish it mid-flight (clients would fall back to the
+            # previous release until publish-release flips it again).
+            echo "release $TAG already published; leaving notes as-is"
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
               --title "LLM Wiki $TAG" --notes-file notes.md
