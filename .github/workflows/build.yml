@@ -201,3 +201,26 @@ jobs:
         run: |
           gh release upload "${{ github.ref_name }}" dist-extension/*.zip --clobber
 
+  release-notes:
+    name: Write release notes from changelog
+    needs: [build, package-extension]
+    # Tag builds only. tauri-action can't take dynamic YAML inputs, so
+    # it publishes the static releaseBody above; this job then replaces
+    # it with the version's real highlights from src/lib/changelog.ts.
+    # The in-app update banner previews this body for versions the
+    # installed bundle's changelog can't describe yet — with the static
+    # boilerplate it reads as "no update content".
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate notes from CHANGELOG entry
+        run: node scripts/release-notes.mjs "${{ github.ref_name }}" > notes.md
+
+      - name: Apply notes to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --notes-file notes.md
+
