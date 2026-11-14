@@ -56,6 +56,18 @@ export function highlightsFor(entry: ChangelogEntry, lang: ChangelogLang): strin
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.9.2",
+    date: "2026-11-14",
+    highlights: {
+      en: [
+        "When JEV evidence scoring is unavailable, search now falls back to traditional LLM Wiki retrieval (BM25 + vector + graph) immediately: after repeated endpoint failures it pauses the scoring arm for 60s instead of re-paying request timeouts on every search, and recovers automatically once the service is reachable again.",
+      ],
+      zh: [
+        "JEV 证据打分不可用时搜索自动退回传统 LLM Wiki 检索（BM25 + 向量 + 图谱）：打分服务连续失败后暂停证据臂 60 秒，不再每次搜索都干等打分超时，服务恢复后自动接回；期间在设置中「测试连接」成功即刻恢复。",
+      ],
+    },
+  },
+  {
     version: "0.9.1",
     date: "2026-11-12",
     highlights: {

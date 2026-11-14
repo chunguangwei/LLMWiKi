@@ -12,8 +12,9 @@
 //! - scores are probabilities, not binary labels → callers fuse them via RRF,
 //!   never threshold-gate recall here.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::BTreeMap;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
@@ -21,6 +22,23 @@ use tokio::sync::Semaphore;
 /// Max characters of a chunk sent as `state` (~2000 CJK chars ≈ well under the
 /// 8192-token hard cap and the ~384-token accuracy sweet spot per question).
 const STATE_CHAR_CAP: usize = 2000;
+
+/// Consecutive fully-failed scoring batches (per provider+base_url) before the
+/// JEV arm is treated as unavailable and skipped without any network attempt —
+/// i.e. search drops to the traditional LLM Wiki retrieval (BM25 + vector +
+/// graph) for the whole cooldown instead of re-paying per-request timeouts.
+const CIRCUIT_OPEN_AFTER: u32 = 3;
+/// How long a failed JEV endpoint stays skipped before one probe batch may
+/// retry (a recovered server costs at most one slow search).
+const CIRCUIT_COOLDOWN: Duration = Duration::from_secs(60);
+
+static CIRCUITS: LazyLock<Mutex<BTreeMap<(String, String), Circuit>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+struct Circuit {
+    consecutive_failures: u32,
+    open_until: Option<Instant>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -159,15 +177,19 @@ async fn score_one(
     Err(format!("jev response missing evidence.noul (request-id {request_id})"))
 }
 
-/// Score `chunks` against `query`. Returns `None` when JEV is unusable or the
-/// whole batch failed (caller keeps BM25 order). Partial failures yield 0.0
-/// for the failed chunk.
+/// Score `chunks` against `query`. Returns `None` when JEV is unusable, the
+/// circuit is open (endpoint repeatedly failing → traditional retrieval for
+/// the cooldown), or the whole batch failed (caller keeps BM25 order).
+/// Partial failures yield 0.0 for the failed chunk.
 pub async fn score_candidates(
     cfg: &JevConfig,
     query: &str,
     chunks: &[String],
 ) -> Option<Vec<f32>> {
     if !cfg.is_usable() || chunks.is_empty() {
+        return None;
+    }
+    if circuit_is_open(cfg) {
         return None;
     }
     let endpoint = resolve_endpoint(&cfg.base_url);
@@ -181,28 +203,78 @@ pub async fn score_candidates(
         let permits = Arc::clone(&permits);
         handles.push(tokio::spawn(async move {
             let _permit = permits.acquire().await.expect("semaphore closed");
-            score_one(&cfg, &endpoint, &query, &chunk)
-                .await
-                .unwrap_or(0.0)
+            score_one(&cfg, &endpoint, &query, &chunk).await
         }));
     }
     let mut out = Vec::with_capacity(chunks.len());
-    let mut all_failed = true;
+    let mut answered = 0usize;
+    let mut evidence = false;
     for h in handles {
         match h.await {
-            Ok(score) => {
+            Ok(Ok(score)) => {
+                answered += 1;
                 if score > 0.0 {
-                    all_failed = false;
+                    evidence = true;
                 }
                 out.push(score);
             }
-            Err(_) => out.push(0.0),
+            // transport/HTTP/parse failure → neutral 0.0 for this chunk
+            Ok(Err(_)) | Err(_) => out.push(0.0),
         }
     }
-    if all_failed {
-        None
+    // The circuit tracks service availability only: every request erroring is
+    // "unreachable". A healthy server legitimately returning all-zero noul
+    // scores (no relevant evidence) must not open it.
+    if answered == 0 {
+        record_batch_failure(cfg);
     } else {
+        record_batch_success(cfg);
+    }
+    if evidence {
         Some(out)
+    } else {
+        None
+    }
+}
+
+fn circuit_key(cfg: &JevConfig) -> (String, String) {
+    (cfg.provider.clone(), cfg.base_url.trim().to_lowercase())
+}
+
+fn circuit_is_open(cfg: &JevConfig) -> bool {
+    let key = circuit_key(cfg);
+    let circuits = CIRCUITS.lock().unwrap_or_else(|p| p.into_inner());
+    circuits
+        .get(&key)
+        .and_then(|c| c.open_until)
+        .is_some_and(|until| Instant::now() < until)
+}
+
+fn record_batch_failure(cfg: &JevConfig) {
+    let key = circuit_key(cfg);
+    let mut circuits = CIRCUITS.lock().unwrap_or_else(|p| p.into_inner());
+    let circuit = circuits.entry(key).or_insert(Circuit {
+        consecutive_failures: 0,
+        open_until: None,
+    });
+    circuit.consecutive_failures += 1;
+    if circuit.consecutive_failures >= CIRCUIT_OPEN_AFTER {
+        circuit.open_until = Some(Instant::now() + CIRCUIT_COOLDOWN);
+        eprintln!(
+            "[JEV] scoring endpoint failing; skipping evidence arm for {}s (traditional retrieval)",
+            CIRCUIT_COOLDOWN.as_secs()
+        );
+    }
+}
+
+fn record_batch_success(cfg: &JevConfig) {
+    let key = circuit_key(cfg);
+    let mut circuits = CIRCUITS.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(circuit) = circuits.get_mut(&key) {
+        *circuit = Circuit {
+            consecutive_failures: 0,
+            open_until: None,
+        };
     }
 }
 
@@ -256,6 +328,9 @@ pub async fn jev_health_check(config: JevConfig) -> Result<String, String> {
                     .join(", ")
             })
             .unwrap_or_default();
+        // A successful probe proves the endpoint is back; let the next search
+        // try the evidence arm again instead of waiting out the cooldown.
+        record_batch_success(&config);
         return Ok(if models.is_empty() {
             format!("JEV reachable via GET {url} (request-id {request_id})")
         } else {
@@ -280,6 +355,7 @@ pub async fn jev_health_check(config: JevConfig) -> Result<String, String> {
         let snippet: String = text.chars().take(200).collect();
         return Err(format!("HTTP {status} (request-id {request_id}): {snippet}"));
     }
+    record_batch_success(&config);
     Ok(format!("JEV reachable via {endpoint} (request-id {request_id})"))
 }
 
@@ -381,8 +457,45 @@ mod tests {
             api_key: "k".into(),
             auth: "bearer".into(),
         };
+        record_batch_success(&cfg); // isolate from shared circuit state
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         assert!(rt.block_on(score_candidates(&cfg, "q", &[chunk("p")])).is_none());
+    }
+
+    fn unreachable_cfg(port: u16) -> JevConfig {
+        JevConfig {
+            enabled: true,
+            provider: "custom".into(),
+            base_url: format!("http://127.0.0.1:{port}"),
+            model: "m".into(),
+            api_key: "k".into(),
+            auth: "bearer".into(),
+        }
+    }
+
+    #[test]
+    fn repeated_unreachable_batches_open_the_circuit_skipping_the_arm() {
+        let cfg = unreachable_cfg(12); // discard port, instant refuse
+        record_batch_success(&cfg);
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        for _ in 0..CIRCUIT_OPEN_AFTER {
+            assert!(rt.block_on(score_candidates(&cfg, "q", &[chunk("p")])).is_none());
+        }
+        // Traditional retrieval mode from here: arm is skipped without network.
+        assert!(circuit_is_open(&cfg));
+        assert!(rt.block_on(score_candidates(&cfg, "q", &[chunk("p")])).is_none());
+        // A successful health probe (or batch) closes it again.
+        record_batch_success(&cfg);
+        assert!(!circuit_is_open(&cfg));
+    }
+
+    #[test]
+    fn single_failure_does_not_open_the_circuit() {
+        let cfg = unreachable_cfg(13);
+        record_batch_success(&cfg);
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        assert!(rt.block_on(score_candidates(&cfg, "q", &[chunk("p")])).is_none());
+        assert!(!circuit_is_open(&cfg));
     }
 
     fn chunk(s: &str) -> String {
