@@ -60,10 +60,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-14",
     highlights: {
       en: [
-        "When JEV evidence scoring is unavailable, search now falls back to traditional LLM Wiki retrieval (BM25 + vector + graph) immediately: after repeated endpoint failures it pauses the scoring arm for 60s instead of re-paying request timeouts on every search, and recovers automatically once the service is reachable again.",
+        "When JEV evidence scoring is unavailable, search now falls back to traditional LLM Wiki retrieval (BM25 + vector + graph): each scoring batch has a wall-clock budget (~6s on self-hosted servers instead of the previous ~20s worst case), and after repeated failures the scoring arm pauses for 60s with zero cost per search — one probe batch then tests recovery automatically, and a successful \"Test connection\" restores it instantly.",
       ],
       zh: [
-        "JEV 证据打分不可用时搜索自动退回传统 LLM Wiki 检索（BM25 + 向量 + 图谱）：打分服务连续失败后暂停证据臂 60 秒，不再每次搜索都干等打分超时，服务恢复后自动接回；期间在设置中「测试连接」成功即刻恢复。",
+        "JEV 证据打分不可用时搜索自动退回传统 LLM Wiki 检索（BM25 + 向量 + 图谱）：打分批次新增墙钟预算（自托管约 6 秒封顶，此前最坏约 20 秒干等）；连续失败后证据臂暂停 60 秒、期间搜索零打分开销，到期自动放行一次探测恢复，期间在设置中「测试连接」成功即刻恢复。",
       ],
     },
   },

@@ -487,7 +487,7 @@ pub async fn search_project_inner(
     // MAX_JEV_SCORED candidates go to the model (SAG2 seed budget). Failure
     // or missing config leaves this arm absent and ordering untouched.
     let jev_rank: Option<BTreeMap<String, usize>> = match jev_config.as_ref() {
-        Some(cfg) if cfg.is_usable() && !results.is_empty() => {
+        Some(cfg) if cfg.is_usable() && !results.is_empty() && !crate::commands::jev::arm_suspended(cfg) => {
             let candidates: Vec<&ProjectSearchResult> =
                 results.iter().take(MAX_JEV_SCORED).collect();
             let mut texts = Vec::with_capacity(candidates.len());

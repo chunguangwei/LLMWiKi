@@ -23,16 +23,17 @@ use tokio::sync::Semaphore;
 /// 8192-token hard cap and the ~384-token accuracy sweet spot per question).
 const STATE_CHAR_CAP: usize = 2000;
 
-/// Consecutive fully-failed scoring batches (per provider+base_url) before the
+/// Consecutive fully-failed scoring batches (per endpoint+model) before the
 /// JEV arm is treated as unavailable and skipped without any network attempt —
 /// i.e. search drops to the traditional LLM Wiki retrieval (BM25 + vector +
 /// graph) for the whole cooldown instead of re-paying per-request timeouts.
 const CIRCUIT_OPEN_AFTER: u32 = 3;
-/// How long a failed JEV endpoint stays skipped before one probe batch may
-/// retry (a recovered server costs at most one slow search).
+/// How long a failed JEV endpoint stays skipped before searches may probe
+/// again (half-open: the endpoint keeps its failure count, so the very next
+/// failed probe re-opens the circuit for another cooldown).
 const CIRCUIT_COOLDOWN: Duration = Duration::from_secs(60);
 
-static CIRCUITS: LazyLock<Mutex<BTreeMap<(String, String), Circuit>>> =
+static CIRCUITS: LazyLock<Mutex<BTreeMap<(String, String, String), Circuit>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 struct Circuit {
@@ -87,6 +88,23 @@ impl JevConfig {
     fn concurrency_permits(&self) -> usize {
         // Kev-style self-hosted deployments process one request at a time.
         if self.provider == "openrouter" { 8 } else { 1 }
+    }
+
+    /// Wall-clock budget for one scoring batch. A hung self-hosted endpoint
+    /// (accepts connections, never replies) would otherwise cost every
+    /// candidate its full request timeout in series (10 × 2s ≈ 20s); the
+    /// budget caps the damage so even the batches before the circuit opens
+    /// stay bounded. A healthy Kev-4B scores 10 chunks in ~1.7s (p95
+    /// ~170ms), so 3 serial round trips keep ~3.5x headroom; candidates
+    /// left unscored when the budget expires simply miss the evidence arm.
+    fn batch_budget(&self, chunks: usize) -> Duration {
+        let waves = chunks.div_ceil(self.concurrency_permits()).max(1) as u32;
+        let worst = self.request_timeout() * waves;
+        if self.provider == "openrouter" {
+            worst
+        } else {
+            (self.request_timeout() * 3).min(worst)
+        }
     }
 }
 
@@ -206,25 +224,39 @@ pub async fn score_candidates(
             score_one(&cfg, &endpoint, &query, &chunk).await
         }));
     }
-    let mut out = Vec::with_capacity(chunks.len());
+    let budget = cfg.batch_budget(chunks.len());
+    let mut out = vec![0.0f32; chunks.len()];
     let mut answered = 0usize;
     let mut evidence = false;
-    for h in handles {
-        match h.await {
-            Ok(Ok(score)) => {
-                answered += 1;
-                if score > 0.0 {
-                    evidence = true;
+    // One wall-clock budget over the whole batch: serial permits mean the
+    // queue itself can outlive per-request timeouts. On expiry the rest of
+    // the handles drop (tasks detach, each still bounded by its own request
+    // timeout) and their chunks simply miss the evidence arm.
+    let collect = async {
+        for (idx, h) in handles.into_iter().enumerate() {
+            match h.await {
+                Ok(Ok(score)) => {
+                    out[idx] = score;
+                    answered += 1;
+                    if score > 0.0 {
+                        evidence = true;
+                    }
                 }
-                out.push(score);
+                // transport/HTTP/parse failure → neutral 0.0 for this chunk
+                Ok(Err(_)) | Err(_) => {}
             }
-            // transport/HTTP/parse failure → neutral 0.0 for this chunk
-            Ok(Err(_)) | Err(_) => out.push(0.0),
         }
+    };
+    if tokio::time::timeout(budget, collect).await.is_err() {
+        eprintln!(
+            "[JEV] scoring batch exceeded {}s budget; unscored candidates keep BM25 order",
+            budget.as_secs()
+        );
     }
-    // The circuit tracks service availability only: every request erroring is
-    // "unreachable". A healthy server legitimately returning all-zero noul
-    // scores (no relevant evidence) must not open it.
+    // The circuit tracks service availability only: every request erroring
+    // (or never completing inside the budget) is "unreachable". A healthy
+    // server legitimately returning all-zero noul scores (no relevant
+    // evidence) must not open it.
     if answered == 0 {
         record_batch_failure(cfg);
     } else {
@@ -237,17 +269,54 @@ pub async fn score_candidates(
     }
 }
 
-fn circuit_key(cfg: &JevConfig) -> (String, String) {
-    (cfg.provider.clone(), cfg.base_url.trim().to_lowercase())
+fn circuit_key(cfg: &JevConfig) -> (String, String, String) {
+    // Includes the model: a mistyped model name (persistent 400/422) opens
+    // its own circuit, and fixing it in Settings takes effect immediately
+    // instead of waiting out a cooldown keyed only by the host.
+    (
+        cfg.provider.clone(),
+        cfg.base_url.trim().to_lowercase(),
+        cfg.model.trim().to_lowercase(),
+    )
 }
 
-fn circuit_is_open(cfg: &JevConfig) -> bool {
-    let key = circuit_key(cfg);
+/// Read-only circuit check for the search arm entry: while suspended, the
+/// caller skips reading candidate files entirely (no I/O, no network).
+/// The half-open probe transition happens inside `score_candidates`.
+pub fn arm_suspended(cfg: &JevConfig) -> bool {
     let circuits = CIRCUITS.lock().unwrap_or_else(|p| p.into_inner());
     circuits
-        .get(&key)
+        .get(&circuit_key(cfg))
         .and_then(|c| c.open_until)
         .is_some_and(|until| Instant::now() < until)
+}
+
+/// How long a half-open probe hides the circuit from concurrent searches
+/// (covers one budgeted batch; a crashed probe self-heals when the lease
+/// expires).
+const PROBE_LEASE: Duration = Duration::from_secs(15);
+
+/// Consume-side check with half-open semantics: while the cooldown runs,
+/// every caller skips; the first caller after expiry gets a short probe
+/// lease so concurrent searches don't pile probe batches onto a hung
+/// serial endpoint.
+fn circuit_is_open(cfg: &JevConfig) -> bool {
+    let key = circuit_key(cfg);
+    let mut circuits = CIRCUITS.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(circuit) = circuits.get_mut(&key) else {
+        return false;
+    };
+    let Some(until) = circuit.open_until else {
+        return false;
+    };
+    let now = Instant::now();
+    if now < until {
+        return true;
+    }
+    // Cooldown expired → grant this caller the probe; keep the failure
+    // count so one more failed batch immediately re-opens the circuit.
+    circuit.open_until = Some(now + PROBE_LEASE);
+    false
 }
 
 fn record_batch_failure(cfg: &JevConfig) {
@@ -369,8 +438,6 @@ fn request_id_of(resp: &reqwest::Response) -> String {
 
 #[cfg(test)]
 mod health_tests {
-    use super::*;
-
     #[test]
     fn models_url_derivation_covers_accepted_forms() {
         for base in [
@@ -496,6 +563,76 @@ mod tests {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         assert!(rt.block_on(score_candidates(&cfg, "q", &[chunk("p")])).is_none());
         assert!(!circuit_is_open(&cfg));
+    }
+
+    #[test]
+    fn cooldown_expiry_grants_exactly_one_half_open_probe() {
+        let cfg = unreachable_cfg(14);
+        record_batch_success(&cfg);
+        {
+            let mut circuits = CIRCUITS.lock().unwrap();
+            circuits.insert(
+                circuit_key(&cfg),
+                Circuit {
+                    consecutive_failures: CIRCUIT_OPEN_AFTER,
+                    open_until: Some(Instant::now() + Duration::from_millis(30)),
+                },
+            );
+        }
+        // Still cooling down → every caller skips.
+        assert!(arm_suspended(&cfg));
+        std::thread::sleep(Duration::from_millis(40));
+        // Cooldown expired → first consume gets the probe lease…
+        assert!(!circuit_is_open(&cfg));
+        // …and concurrent searches keep skipping until it resolves.
+        assert!(arm_suspended(&cfg));
+        record_batch_success(&cfg); // cleanup
+    }
+
+    #[test]
+    fn batch_budget_bounds_hung_self_hosted_batches() {
+        // Accept-but-never-respond endpoint: without a batch budget this
+        // would cost chunks × request_timeout in series (10 × 2s).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            // Hold every accepted stream open: requests connect fine but
+            // never get a response line back.
+            let mut held: Vec<std::net::TcpStream> = Vec::new();
+            for stream in listener.incoming().flatten() {
+                held.push(stream);
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let cfg = unreachable_cfg(port);
+        record_batch_success(&cfg);
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let started = Instant::now();
+        let chunks: Vec<String> = (0..10).map(|i| chunk(&format!("p{i}"))).collect();
+        let out = rt.block_on(score_candidates(&cfg, "q", &chunks));
+        let elapsed = started.elapsed();
+        assert!(out.is_none());
+        // Budget is 6s; without it this batch would cost 10 × 2s = 20s.
+        assert!(
+            elapsed < Duration::from_secs(9),
+            "budgeted batch must end near budget (6s), took {elapsed:?}"
+        );
+        record_batch_success(&cfg); // cleanup: never open the shared circuit here
+    }
+
+    #[test]
+    fn batch_budget_scales_with_provider_concurrency() {
+        let custom = unreachable_cfg(15);
+        // serial: min(3 × 2s, waves × 2s)
+        assert_eq!(custom.batch_budget(10), Duration::from_secs(6));
+        assert_eq!(custom.batch_budget(2), Duration::from_secs(4));
+        // openrouter (8 permits, 8s timeout): full worst case, no clamp
+        let hosted = JevConfig {
+            provider: "openrouter".into(),
+            base_url: "https://openrouter.ai/api/alpha/decisions".into(),
+            ..custom
+        };
+        assert_eq!(hosted.batch_budget(10), Duration::from_secs(16));
     }
 
     fn chunk(s: &str) -> String {
