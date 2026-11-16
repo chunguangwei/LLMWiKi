@@ -54,7 +54,7 @@
 
 ## v0.9.4：JEV 任务取消与发布可靠性
 
-JEV 超时或调用取消后停止排队/运行中的客户端任务，恢复探针覆盖完整预算；更新 MCP 网络依赖安全补丁。完整入口见[文档索引](docs/README.md)、[开发维护指南](docs/development.md)和[发布验证记录](docs/release-0.9.4.md)。
+修复 Windows 路径分隔符导致的文件历史缺失，保留已有快照和恢复 ID。JEV 超时或调用取消后停止排队/运行中的客户端任务，恢复探针覆盖完整预算；更新 MCP 网络依赖安全补丁。完整入口见[文档索引](docs/README.md)、[开发维护指南](docs/development.md)和[发布验证记录](docs/release-0.9.4.md)。
 
 ## v0.9.0：SAG2 检索 — FTS5 BM25 + 可选 JEV 证据打分
 

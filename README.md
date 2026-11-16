@@ -54,7 +54,7 @@
 
 ## v0.9.4: bounded JEV work and release reliability
 
-JEV batches cancel queued/active client tasks on timeout or caller cancellation; recovery leases cover the entire batch budget. MCP networking dependencies receive security patches. See the [documentation index](docs/README.md), [development guide](docs/development.md) and [release verification](docs/release-0.9.4.md).
+Windows file history now handles mixed path separators while preserving existing snapshots and restore IDs. JEV batches cancel queued/active client tasks on timeout or caller cancellation; recovery leases cover the entire batch budget. MCP networking dependencies receive security patches. See the [documentation index](docs/README.md), [development guide](docs/development.md) and [release verification](docs/release-0.9.4.md).
 
 ## v0.9.0: SAG2 retrieval — FTS5 BM25 + optional JEV evidence scoring
 
