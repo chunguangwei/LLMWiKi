@@ -52,9 +52,9 @@
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 - **Local HTTP API + MCP Server + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API and bundled MCP server for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/nashsu/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
 
-## v0.9.3: bounded JEV work and release reliability
+## v0.9.4: bounded JEV work and release reliability
 
-JEV batches cancel queued/active client tasks on timeout or caller cancellation; recovery leases cover the entire batch budget. MCP networking dependencies receive security patches. See the [documentation index](docs/README.md), [development guide](docs/development.md) and [release verification](docs/release-0.9.3.md).
+JEV batches cancel queued/active client tasks on timeout or caller cancellation; recovery leases cover the entire batch budget. MCP networking dependencies receive security patches. See the [documentation index](docs/README.md), [development guide](docs/development.md) and [release verification](docs/release-0.9.4.md).
 
 ## v0.9.0: SAG2 retrieval — FTS5 BM25 + optional JEV evidence scoring
 

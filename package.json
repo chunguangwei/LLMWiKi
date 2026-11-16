@@ -1,7 +1,7 @@
 {
   "name": "llm-wiki",
   "private": true,
-  "version": "0.9.3",
+  "version": "0.9.4",
   "engines": {
     "node": ">=22.13.0"
   },

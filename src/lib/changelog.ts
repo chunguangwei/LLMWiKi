@@ -56,6 +56,20 @@ export function highlightsFor(entry: ChangelogEntry, lang: ChangelogLang): strin
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.9.4",
+    date: "2026-11-16",
+    highlights: {
+      en: [
+        "Fixed Windows file history disappearing when writes and reads use different path separators; existing native-path snapshots remain accessible.",
+        "Includes JEV timeout/cancellation cleanup and recovery-probe fixes, MCP networking security patches, and refreshed documentation from the unpublished 0.9.3 draft.",
+      ],
+      zh: [
+        "修复 Windows 写入与读取使用不同路径分隔符时文件历史为空的问题，兼容已有原生路径历史快照。",
+        "包含未正式发布的 0.9.3 草稿中的 JEV 超时/取消清理、恢复探针修复、MCP 网络依赖安全补丁及完整文档更新。",
+      ],
+    },
+  },
+  {
     version: "0.9.3",
     date: "2026-11-16",
     highlights: {

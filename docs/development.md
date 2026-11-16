@@ -42,7 +42,7 @@ npm run tauri dev
 npm run test:mocks
 npm run mcp:test
 npm run build
-cargo test --manifest-path src-tauri/Cargo.toml --locked
+cargo test --manifest-path src-tauri/Cargo.toml --locked -- --test-threads=1
 npm audit
 npm --prefix mcp-server audit
 ```

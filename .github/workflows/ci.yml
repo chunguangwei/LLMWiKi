@@ -62,4 +62,6 @@ jobs:
 
       - name: Check Rust build
         working-directory: src-tauri
-        run: cargo test --locked
+        # Proxy tests mutate process-wide environment variables; serialize
+        # the suite so local HTTP fixtures cannot inherit another test's proxy.
+        run: cargo test --locked -- --test-threads=1

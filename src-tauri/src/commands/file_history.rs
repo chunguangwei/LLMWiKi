@@ -111,6 +111,14 @@ fn project_root_for(path: &Path) -> Option<PathBuf> {
 
 fn history_path(root: &Path, path: &Path) -> PathBuf {
     let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
+    // Windows accepts both separators, while canonicalize emits backslashes.
+    // Hash one spelling so writes and canonicalized reads address the same file.
+    #[cfg(windows)]
+    let relative = relative.replace('\\', "/");
+    history_path_for_relative(root, &relative)
+}
+
+fn history_path_for_relative(root: &Path, relative: &str) -> PathBuf {
     // Fixed FNV-1a keeps history addresses stable across Rust/toolchain upgrades.
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in relative.as_bytes() {
@@ -127,6 +135,48 @@ fn history_dir(root: &Path) -> PathBuf {
 
 fn checked_history_file(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let store_path = history_path(root, path);
+    // Old Windows callers could create both slash and native-backslash stores.
+    // All callers hold HISTORY_LOCK: merge both before exposing either store.
+    #[cfg(windows)]
+    {
+        let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
+        let legacy = history_path_for_relative(root, &relative.replace('/', "\\"));
+        validate_optional_regular_file(&store_path, "History file")?;
+        validate_optional_regular_file(&legacy, "Legacy history file")?;
+        if legacy != store_path && legacy.try_exists().map_err(|e| e.to_string())? {
+            if !store_path.try_exists().map_err(|e| e.to_string())? {
+                return Ok(legacy);
+            }
+            let mut entries: Vec<FileHistoryEntry> = serde_json::from_str(
+                &fs::read_to_string(&store_path).map_err(|e| e.to_string())?
+            ).map_err(|e| e.to_string())?;
+            let old: Vec<FileHistoryEntry> = serde_json::from_str(
+                &fs::read_to_string(&legacy).map_err(|e| e.to_string())?
+            ).map_err(|e| e.to_string())?;
+            entries.extend(old);
+            entries.sort_by_key(|entry| entry.timestamp);
+            let mut ids = std::collections::HashSet::new();
+            entries.retain(|entry| ids.insert(entry.id.clone()));
+            let raw = serde_json::to_string(&entries).map_err(|e| e.to_string())?;
+            // Replace atomically before removing the legacy store. A failed
+            // replacement leaves both originals intact; a failed removal is
+            // harmless because the next merge deduplicates the same IDs.
+            let temp = store_path.with_extension(format!("{}.tmp", Uuid::new_v4()));
+            let write = (|| -> Result<(), std::io::Error> {
+                use std::io::Write;
+                let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
+                file.write_all(raw.as_bytes())?;
+                file.sync_all()?;
+                drop(file);
+                fs::rename(&temp, &store_path)
+            })();
+            if let Err(error) = write {
+                let _ = fs::remove_file(&temp);
+                return Err(error.to_string());
+            }
+            let _ = fs::remove_file(legacy);
+        }
+    }
     validate_optional_regular_file(&store_path, "History file")?;
     Ok(store_path)
 }
@@ -485,6 +535,58 @@ mod tests {
             serde_json::to_string(&settings).unwrap(),
         )
         .unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn reads_legacy_backslash_history_after_separator_normalization() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-history-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join(".llm-wiki/history")).unwrap();
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        enable_history(&root, 10);
+        let file = root.join("wiki/page.md");
+        fs::write(&file, "current").unwrap();
+        let legacy = history_path_for_relative(&root, r"wiki\page.md");
+        let entry = FileHistoryEntry {
+            id: "legacy".into(), path: file.to_string_lossy().into_owned(),
+            timestamp: 1, author: "human".into(), tool: "test".into(), content: "before".into(),
+        };
+        fs::write(&legacy, serde_json::to_string(&vec![entry]).unwrap()).unwrap();
+        record_file_version(&file, "human", "test");
+        let entries = list_file_history(root.to_string_lossy().into_owned(), file.to_string_lossy().into_owned()).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].content, "current");
+        assert_eq!(entries[1].id, "legacy");
+        assert!(!history_path(&root, &file).exists(), "keep appending the existing legacy store");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn merges_both_legacy_separator_stores_without_losing_restore_ids() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-history-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join(".llm-wiki/history")).unwrap();
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        let file = root.join("wiki/page.md");
+        fs::write(&file, "current").unwrap();
+        for (relative, id, timestamp) in [("wiki/page.md", "slash", 2), (r"wiki\page.md", "native", 1)] {
+            let entry = FileHistoryEntry {
+                id: id.into(), path: file.to_string_lossy().into_owned(), timestamp,
+                author: "human".into(), tool: "test".into(), content: id.into(),
+            };
+            fs::write(history_path_for_relative(&root, relative), serde_json::to_string(&vec![entry]).unwrap()).unwrap();
+        }
+        let project = root.to_string_lossy().into_owned();
+        let path = file.to_string_lossy().into_owned();
+        let entries = list_file_history(project.clone(), path.clone()).await.unwrap();
+        assert_eq!(entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), vec!["slash", "native"]);
+        // A second read must not duplicate migrated entries.
+        assert_eq!(list_file_history(project.clone(), path.clone()).await.unwrap().len(), 2);
+        restore_file_history(project.clone(), path.clone(), "native".into()).await.unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "native");
+        restore_file_history(project, path, "slash".into()).await.unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "slash");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

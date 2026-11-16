@@ -6,7 +6,7 @@
 
 ## 当前发布记录
 
-本次待发布版本为 **v0.9.3**。发布状态、验证证据和限制统一记录在 [v0.9.3 发布记录](release-0.9.3.md)；成功发布前，线上正式版本仍为 v0.9.2。
+本次待发布版本为 **v0.9.4**。发布状态、验证证据和限制统一记录在 [v0.9.4 发布记录](release-0.9.4.md)；成功发布前，线上正式版本仍为 v0.9.2。
 
 ## 1. 下载最新版（终端用户视角）
 
@@ -108,7 +108,7 @@ npm run mcp:test
 npm run build
 npm audit
 npm --prefix mcp-server audit
-cargo test --manifest-path src-tauri/Cargo.toml --locked
+cargo test --manifest-path src-tauri/Cargo.toml --locked -- --test-threads=1
 node scripts/release-notes.mjs v<版本>
 ```
 
