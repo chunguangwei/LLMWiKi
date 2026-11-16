@@ -47,16 +47,19 @@ jobs:
           node-version: 22
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - name: Check frontend build
-        run: npx vite build
+        run: npm run build
+
+      - name: Frontend regression tests
+        run: npm run test:mocks
 
       - name: Prepare MCP server resources
         run: |
           npm --prefix mcp-server ci
-          npm run mcp:build
+          npm run mcp:test
 
       - name: Check Rust build
         working-directory: src-tauri
-        run: cargo build
+        run: cargo test --locked

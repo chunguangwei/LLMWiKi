@@ -1,5 +1,5 @@
 /**
- * Changelog shown in Settings → Changelog. Hardcoded rather than
+ * Release highlights shown in update reminders and Settings → About. Hardcoded rather than
  * pulled from GitHub Releases so it works offline and stays under
  * version control with the code that ships the changes.
  *
@@ -55,6 +55,22 @@ export function highlightsFor(entry: ChangelogEntry, lang: ChangelogLang): strin
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.9.3",
+    date: "2026-11-16",
+    highlights: {
+      en: [
+        "JEV scoring now cancels queued and active client requests when a batch times out or its caller is cancelled, preventing stale searches from continuing to load the scoring service.",
+        "Recovery probes remain exclusive for the full scoring budget, including slower hosted batches; completed evidence scores retain their original candidate positions.",
+        "Updated MCP server networking dependencies with security patches and refreshed search, troubleshooting and release documentation.",
+      ],
+      zh: [
+        "JEV 打分批次超时或调用取消后，取消仍在排队和运行的客户端请求，避免旧搜索继续占用打分服务。",
+        "恢复探针租约覆盖完整打分预算，避免较慢的托管批次提前放行第二个探针；已完成分数保留原候选位置。",
+        "更新 MCP 服务网络依赖安全补丁，补齐检索、排障和发布文档。",
+      ],
+    },
+  },
   {
     version: "0.9.2",
     date: "2026-11-14",

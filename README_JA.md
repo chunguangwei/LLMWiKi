@@ -52,6 +52,10 @@
 - **Chrome Web Clipper** — Web ページをワンクリックで取り込み、知識ベースへ自動インジェスト
 - **ローカル HTTP API + MCP Server + AI Agent Skill** — `127.0.0.1:19828` の JSON API と同梱 MCP Server でハイブリッド検索、ファイル読み取り、グラフ探索、ソース再スキャンを提供。専用の [agent skill](https://github.com/nashsu/llm_wiki_skill) はワンコマンドで Claude Code / Codex に追加可能（`npx skills add …`）
 
+## v0.9.3：JEV のキャンセルとリリースの信頼性
+
+JEV バッチのタイムアウトや呼び出しのキャンセル時に、待機中・実行中のクライアントタスクを中止します。復旧プローブの有効期間はバッチ全体をカバーします。MCP 通信依存関係のセキュリティ修正を含みます。[ドキュメント一覧](docs/README.md)・[開発ガイド](docs/development.md)・[リリース検証](docs/release-0.9.3.md)（中国語）。
+
 ## v0.8.0：新しいブランドと直感的な取り込み
 
 - **Linked Folio の新しいブランド** — 重ねたページと 3 ノードの知識パスを持つ SVG アイコンを採用し、デスクトップ／インストーラ／Clipper popup を統一

@@ -463,7 +463,7 @@ Review 研究优先读取 `affectedPages` 的实际 Markdown，再沿 wikilink �
 
 ## 10. v0.9.0 SAG2 检索：FTS5 BM25 + JEV 证据打分
 
-关键词检索从「全量扫文件 + 手写加分」换成 SQLite FTS5 BM25 倒排索引（SAG2 论文 arXiv:2610.22588 的词法臂），并可叠加 JEV 证据打分臂。参考实现：Zleap-AI/SAG-Benchmark、Zleap-AI/SAG-Wiki（MIT）。
+关键词评分从手写加分换成 SQLite FTS5 BM25 倒排索引（图谱构建与索引同步仍共用每次搜索的页面扫描）（SAG2 论文 arXiv:2610.22588 的词法臂），并可叠加 JEV 证据打分臂。参考实现：Zleap-AI/SAG-Benchmark、Zleap-AI/SAG-Wiki（MIT）。
 
 ### 10.1 BM25 关键词臂（默认开启，零配置）
 
@@ -521,3 +521,9 @@ xattr -dr com.apple.quarantine "/Applications/LLM Wiki.app"
 ### 重装后配置 / Key 没了
 - 正常情况自动备份（§6.4 B）会在重装后自动恢复。若没恢复：确认 `~/Documents/LLMWiki/config-backup.enc` 还在，且系统钥匙串里的密钥还在（换了机器就跨不过来——用 §6.4 A 的口令导入）。
 - 换新机器：在旧机用「设置 → 配置备份 → 导出」，新机「导入」+ 输口令。
+
+### 10.5 v0.9.3 任务生命周期修复
+
+打分任务由批次统一持有：超时或调用被取消时，取消仍在运行或等待信号量的任务，避免返回搜索结果后继续把旧请求送往服务。分数按完成顺序收集并映射回原始候选位置，已完成的结果不受较早候选阻塞。半开探针租约覆盖实际批次预算并留出调度余量，避免 OpenRouter 批次尚未结束就放行第二个探针。
+
+客户端取消不等于撤销已经到达远端的计算。并发限制目前作用于单批次，而非跨搜索共享的端点限流；这是后续性能优化边界。

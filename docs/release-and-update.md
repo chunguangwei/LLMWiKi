@@ -6,7 +6,7 @@
 
 ## 当前发布记录
 
-截至 2026-10-29，最新正式版本为 [v0.8.3](https://github.com/chunguangwei/LLMWiKi/releases/tag/v0.8.3)。四个平台构建及浏览器扩展打包均成功，21 个发布文件齐全，更新清单和签名文件一致性已核对。详见 [v0.8.3 发布记录](release-0.8.3.md)。
+本次待发布版本为 **v0.9.3**。发布状态、验证证据和限制统一记录在 [v0.9.3 发布记录](release-0.9.3.md)；成功发布前，线上正式版本仍为 v0.9.2。
 
 ## 1. 下载最新版（终端用户视角）
 
@@ -43,8 +43,9 @@
 ```bash
 cd app
 
-# 1. 提升版本号 —— 四处必须完全一致（下面以 0.7.0 为例，发版时替换成你的新版本号）
+# 1. 提升版本号 —— 版本文件必须完全一致（下面以 0.7.0 为例，发版时替换成你的新版本号）
 #    package.json:              "version": "0.7.0"
+#    package-lock.json:         顶层 version 和 packages[""].version 同步
 #    src-tauri/tauri.conf.json: "version": "0.7.0"
 #    src-tauri/Cargo.toml:      version = "0.7.0"   ← [package] 段顶部那一行
 #    src-tauri/Cargo.lock:      llm-wiki 包的 version —— 别手改，跑下面这条命令同步：
@@ -61,7 +62,7 @@ grep -A1 'name = "llm-wiki"' src-tauri/Cargo.lock | head -2
 #    （约 30 秒内变红，不是 403 故障复发，就是 changelog 条目没补）。
 npm run typecheck   # changelog.ts 是 TS，顺手确认没写崩
 
-# 3. 提交并推送（一次提交带上全部 5 个文件：上面 4 个版本文件 + changelog.ts）
+# 3. 提交并推送（一次提交带上全部 6 个文件：上面 5 个版本文件 + changelog.ts）
 git commit -am "release v0.7.0"
 git push origin main
 
@@ -70,7 +71,7 @@ git tag v0.7.0
 git push origin v0.7.0
 ```
 
-> ⚠️ **版本号没同步 = 自动更新失效**：`latest.json` 取的是 `tauri.conf.json` 的 version；只要它没比已安装版本高，客户端就检测不到更新（见 §3.1）。`Cargo.lock` 不同步则会在 CI 构建时被改动、留下脏 diff。所以四处务必一致、且严格大于上一版。
+> ⚠️ **版本号没同步 = 自动更新失效**：`latest.json` 取的是 `tauri.conf.json` 的 version；只要它没比已安装版本高，客户端就检测不到更新（见 §3.1）。`Cargo.lock` 不同步则会在 CI 构建时被改动、留下脏 diff。所以各处务必一致、且严格大于上一版。
 
 GitHub Actions（`.github/workflows/build.yml`）随后自动：
 `prepare-release`（用 `scripts/release-notes.mjs` 从 changelog 生成正文，`gh release create --draft` 预建草稿）→
@@ -86,16 +87,11 @@ GitHub Actions（`.github/workflows/build.yml`）随后自动：
 - 工作流：https://github.com/chunguangwei/LLMWiKi/actions
 - 命令行：`gh run watch <run-id> --repo chunguangwei/LLMWiKi --exit-status`
 
-### 2.2 重发同一个版本（CI 失败后修复重跑）
+### 2.2 构建失败与发布回退
 
-```bash
-# 删掉不完整的 release + tag
-gh release delete v0.6.3 --repo chunguangwei/LLMWiKi --yes --cleanup-tag
-git tag -d v0.6.3
-git push origin :refs/tags/v0.6.3   # 确保远程 tag 也删掉
-# 修完代码后重新打 tag
-git tag v0.6.3 && git push origin v0.6.3
-```
+尚未发布的草稿若因瞬时网络错误失败，可对同一 tag 重跑失败 job。若需要修改源码，提交修复并使用新的补丁版本与 tag；已正式发布的版本不移动 tag、不覆盖安装包，避免已安装客户端和缓存拿到不同内容。
+
+线上出现回归时，保留现场并发布更高补丁版本进行前向修复。紧急情况下可以从历史 Release 手动下载已知稳定安装包；自动更新按版本递增，不会自动降级。涉及数据格式时先备份项目与加密配置。
 
 ### 2.3 已知约束
 
@@ -103,22 +99,24 @@ git tag v0.6.3 && git push origin v0.6.3
 - **macOS 使用 ad-hoc 签名**：`build.yml` 设置 `APPLE_SIGNING_IDENTITY: "-"`，避免没有 Apple Developer 证书时生成无法启动的 arm64 二进制。它不是 Apple 公证，Gatekeeper 仍可能要求首次执行 `xattr -dr com.apple.quarantine "/Applications/LLM Wiki.app"`。自动更新产物另用 minisign 签名，不要把两种签名混为一谈。
 - **当前不提供 Intel Mac 包**：CI 仅构建 macOS arm64。Windows 仅 x64；Linux 提供 x64 与 arm64。不要把 arm64 安装包写成支持全部架构。
 
-### 2.4 0.7.0 发版检查
-
-本版包含编辑可靠性、内部 Wiki 研究、DeepSeek Search & Fetch、嵌入批量/超时和快照性能改动。发布前至少执行：
+### 2.4 每次发版检查
 
 ```bash
+npm ci
 npm run test:mocks
 npm run mcp:test
-npm run build:desktop
+npm run build
 npm audit
-(cd src-tauri && cargo check && cargo test)
+npm --prefix mcp-server audit
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+node scripts/release-notes.mjs v<版本>
 ```
 
-- 确认编辑保存、退出握手、内部研究 resolved/unresolved、DeepSeek mock、嵌入超时拆分和快照失败恢复测试通过。
-- `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 均为 **0.7.0**。
-- tag 后检查四个平台 job、扩展 zip、安装包、`.sig` 与 `latest.json`；只有 `gh release view v0.7.0` 中产物完整且非 draft 才算发版完成。
-- 真实 DeepSeek、Ollama、特定 PDF 和其他平台硬件没有覆盖到时，应在发布说明中明确，不要把 mock 验证写成真实服务或全平台验收。
+- 同步 package.json、package-lock.json（两处）、Tauri 配置、Cargo.toml/Cargo.lock 与 changelog。
+- `ci.yml` 执行类型检查、生产前端构建、前端/MCP/Rust 测试；构建使用锁文件安装。
+- tag 发布后检查四个平台 job、扩展 zip、安装包、`.sig` 与 `latest.json`。只有 Release 非 draft 且更新清单包含四个平台的有效 URL/签名才算完成。
+- 手动 workflow_dispatch 仅生成 Actions 安装包附件，不创建 Release；即使 prepare-release 被跳过，构建 job 仍应执行。
+- 真实 LLM、JEV 服务与各平台安装体验若未验证，需在发布记录中说明。Mock 或本机模拟服务不能替代这些验证。
 
 ---
 
@@ -134,7 +132,7 @@ npm audit
 ### 3.1 更新检测不到新版？
 
 - **0.8.3 及以前的检测限制**：提示更新依赖匿名 GitHub Releases API；共享代理/VPN 出口遇到 HTTP 403/429 限流时，后台检测会静默失败，即使安装所用的 `latest.json` 可以正常访问，也不会出现更新横幅。
-- **当前源码修复（尚未包含在 v0.8.3 安装包中）**：API 请求失败或响应不可用时回退读取同仓库的 `releases/latest/download/latest.json`；只用于发现版本，下载与签名验证仍由现有 Tauri updater 完成。
+- **v0.9.0 起已包含的修复**：API 请求失败或响应不可用时回退读取同仓库的 `releases/latest/download/latest.json`；只用于发现版本，下载与签名验证仍由现有 Tauri updater 完成。
 - **旧客户端临时处理**：限流解除后在「设置 → 关于 → 检查更新」手动重试，或从 [正式发布页](https://github.com/chunguangwei/LLMWiKi/releases/latest) 下载对应平台安装包更新。不要为更新检查写入个人 GitHub Token。
 - 自动检测目前在启动时执行一次；保持打开的旧会话不会定时重新检测。手动检查可立即重新请求，但不能绕过旧客户端的 API 限流问题。
 

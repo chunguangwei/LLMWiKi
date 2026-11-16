@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 /// Max characters of a chunk sent as `state` (~2000 CJK chars ≈ well under the
 /// 8192-token hard cap and the ~384-token accuracy sweet spot per question).
@@ -207,49 +208,43 @@ pub async fn score_candidates(
     if !cfg.is_usable() || chunks.is_empty() {
         return None;
     }
-    if circuit_is_open(cfg) {
+    let budget = cfg.batch_budget(chunks.len());
+    if circuit_is_open(cfg, budget) {
         return None;
     }
     let endpoint = resolve_endpoint(&cfg.base_url);
     let permits = Arc::new(Semaphore::new(cfg.concurrency_permits()));
-    let mut handles = Vec::with_capacity(chunks.len());
-    for chunk in chunks.iter() {
+    let mut tasks = JoinSet::new();
+    for (idx, chunk) in chunks.iter().enumerate() {
         let cfg = cfg.clone();
         let endpoint = endpoint.clone();
         let query = query.to_string();
         let chunk = chunk.clone();
         let permits = Arc::clone(&permits);
-        handles.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             let _permit = permits.acquire().await.expect("semaphore closed");
-            score_one(&cfg, &endpoint, &query, &chunk).await
-        }));
+            (idx, score_one(&cfg, &endpoint, &query, &chunk).await)
+        });
     }
-    let budget = cfg.batch_budget(chunks.len());
     let mut out = vec![0.0f32; chunks.len()];
     let mut answered = 0usize;
     let mut evidence = false;
-    // One wall-clock budget over the whole batch: serial permits mean the
-    // queue itself can outlive per-request timeouts. On expiry the rest of
-    // the handles drop (tasks detach, each still bounded by its own request
-    // timeout) and their chunks simply miss the evidence arm.
+    // JoinSet owns every worker: timeout and caller cancellation abort queued
+    // and active requests instead of detaching them. Collect completion order
+    // so a slow early candidate cannot hide later successful responses.
     let collect = async {
-        for (idx, h) in handles.into_iter().enumerate() {
-            match h.await {
-                Ok(Ok(score)) => {
-                    out[idx] = score;
-                    answered += 1;
-                    if score > 0.0 {
-                        evidence = true;
-                    }
-                }
-                // transport/HTTP/parse failure → neutral 0.0 for this chunk
-                Ok(Err(_)) | Err(_) => {}
+        while let Some(result) = tasks.join_next().await {
+            if let Ok((idx, Ok(score))) = result {
+                out[idx] = score;
+                answered += 1;
+                evidence |= score > 0.0;
             }
         }
     };
     if tokio::time::timeout(budget, collect).await.is_err() {
+        tasks.shutdown().await;
         eprintln!(
-            "[JEV] scoring batch exceeded {}s budget; unscored candidates keep BM25 order",
+            "[JEV] scoring batch exceeded {}s budget; remaining requests cancelled",
             budget.as_secs()
         );
     }
@@ -294,13 +289,13 @@ pub fn arm_suspended(cfg: &JevConfig) -> bool {
 /// How long a half-open probe hides the circuit from concurrent searches
 /// (covers one budgeted batch; a crashed probe self-heals when the lease
 /// expires).
-const PROBE_LEASE: Duration = Duration::from_secs(15);
+const PROBE_LEASE_MARGIN: Duration = Duration::from_secs(1);
 
 /// Consume-side check with half-open semantics: while the cooldown runs,
 /// every caller skips; the first caller after expiry gets a short probe
 /// lease so concurrent searches don't pile probe batches onto a hung
 /// serial endpoint.
-fn circuit_is_open(cfg: &JevConfig) -> bool {
+fn circuit_is_open(cfg: &JevConfig, budget: Duration) -> bool {
     let key = circuit_key(cfg);
     let mut circuits = CIRCUITS.lock().unwrap_or_else(|p| p.into_inner());
     let Some(circuit) = circuits.get_mut(&key) else {
@@ -315,7 +310,7 @@ fn circuit_is_open(cfg: &JevConfig) -> bool {
     }
     // Cooldown expired → grant this caller the probe; keep the failure
     // count so one more failed batch immediately re-opens the circuit.
-    circuit.open_until = Some(now + PROBE_LEASE);
+    circuit.open_until = Some(now + budget + PROBE_LEASE_MARGIN);
     false
 }
 
@@ -549,11 +544,11 @@ mod tests {
             assert!(rt.block_on(score_candidates(&cfg, "q", &[chunk("p")])).is_none());
         }
         // Traditional retrieval mode from here: arm is skipped without network.
-        assert!(circuit_is_open(&cfg));
+        assert!(circuit_is_open(&cfg, cfg.batch_budget(10)));
         assert!(rt.block_on(score_candidates(&cfg, "q", &[chunk("p")])).is_none());
         // A successful health probe (or batch) closes it again.
         record_batch_success(&cfg);
-        assert!(!circuit_is_open(&cfg));
+        assert!(!circuit_is_open(&cfg, cfg.batch_budget(10)));
     }
 
     #[test]
@@ -562,7 +557,7 @@ mod tests {
         record_batch_success(&cfg);
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         assert!(rt.block_on(score_candidates(&cfg, "q", &[chunk("p")])).is_none());
-        assert!(!circuit_is_open(&cfg));
+        assert!(!circuit_is_open(&cfg, cfg.batch_budget(10)));
     }
 
     #[test]
@@ -583,7 +578,7 @@ mod tests {
         assert!(arm_suspended(&cfg));
         std::thread::sleep(Duration::from_millis(40));
         // Cooldown expired → first consume gets the probe lease…
-        assert!(!circuit_is_open(&cfg));
+        assert!(!circuit_is_open(&cfg, cfg.batch_budget(10)));
         // …and concurrent searches keep skipping until it resolves.
         assert!(arm_suspended(&cfg));
         record_batch_success(&cfg); // cleanup
@@ -618,6 +613,113 @@ mod tests {
             "budgeted batch must end near budget (6s), took {elapsed:?}"
         );
         record_batch_success(&cfg); // cleanup: never open the shared circuit here
+    }
+
+    // A live runtime after return exposes detached scoring requests that the
+    // old runtime-dropping timeout test could not observe.
+    #[tokio::test]
+    async fn budget_expiry_cancels_queued_requests() {
+        assert_no_requests_after_scoring_stops(false).await;
+    }
+
+    #[tokio::test]
+    async fn caller_cancellation_cancels_queued_requests() {
+        assert_no_requests_after_scoring_stops(true).await;
+    }
+
+    async fn assert_no_requests_after_scoring_stops(cancel: bool) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let cfg = unreachable_cfg(listener.local_addr().unwrap().port());
+        let requests = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&requests);
+        let server = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                held.push(stream);
+                seen.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let scoring = tokio::spawn(async move {
+            score_candidates(&cfg, "q", &vec!["passage".to_string(); 10]).await
+        });
+        if cancel {
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while requests.load(Ordering::SeqCst) == 0 {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }).await.unwrap();
+            scoring.abort();
+            let _ = scoring.await;
+        } else {
+            assert!(scoring.await.unwrap().is_none());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let at_stop = requests.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(2300)).await;
+        let after_stop = requests.load(Ordering::SeqCst);
+        server.abort();
+        let _ = server.await;
+        assert!(at_stop > 0, "test must exercise an active scoring request");
+        assert_eq!(after_stop, at_stop, "queued requests must stop with their batch");
+    }
+
+    #[tokio::test]
+    async fn later_success_keeps_candidate_index_when_first_request_hangs() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let cfg = JevConfig {
+            provider: "openrouter".into(),
+            ..unreachable_cfg(listener.local_addr().unwrap().port())
+        };
+        let server = tokio::spawn(async move {
+            let mut workers = JoinSet::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                workers.spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        let n = stream.read(&mut buf).await.unwrap();
+                        if n == 0 { return; }
+                        request.extend_from_slice(&buf[..n]);
+                        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let headers = String::from_utf8_lossy(&request[..end]).to_lowercase();
+                            let len: usize = headers.lines().find_map(|line| line.strip_prefix("content-length:"))
+                                .unwrap().trim().parse().unwrap();
+                            if request.len() >= end + 4 + len { break; }
+                        }
+                    }
+                    if String::from_utf8_lossy(&request).contains("Passage: fast") {
+                        let body = r#"{"evidence":{"noul":0.75}}"#;
+                        let reply = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                        stream.write_all(reply.as_bytes()).await.unwrap();
+                    } else {
+                        // Keep this request open through the batch deadline.
+                        let _ = stream.read(&mut buf).await;
+                    }
+                });
+            }
+            while workers.join_next().await.is_some() {}
+        });
+        let scores = score_candidates(&cfg, "q", &[chunk("slow"), chunk("fast")]).await;
+        server.abort();
+        let _ = server.await;
+        assert_eq!(scores, Some(vec![0.0, 0.75]));
+    }
+
+    #[test]
+    fn half_open_lease_covers_hosted_batch_budget() {
+        let cfg = JevConfig { provider: "openrouter".into(), ..unreachable_cfg(16) };
+        CIRCUITS.lock().unwrap().insert(circuit_key(&cfg), Circuit {
+            consecutive_failures: CIRCUIT_OPEN_AFTER,
+            open_until: Some(Instant::now() - Duration::from_secs(1)),
+        });
+        assert!(!circuit_is_open(&cfg, cfg.batch_budget(10)));
+        let remaining = CIRCUITS.lock().unwrap().get(&circuit_key(&cfg))
+            .unwrap().open_until.unwrap().saturating_duration_since(Instant::now());
+        record_batch_success(&cfg);
+        assert!(remaining >= Duration::from_secs(16), "probe lease must cover the hosted batch: {remaining:?}");
     }
 
     #[test]

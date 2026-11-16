@@ -240,7 +240,7 @@ git merge upstream/main
 - `src/i18n/{en,zh}.json` — 在 `knowledgeTree.types` 子树补 finding/thesis/methodology（我方用 labelKey，上游只加在 `graph.nodeTypeLabels`）。
 - `src/lib/ingest-source-path-collision.test.ts`（上游新测试）— 其 mock 用上游 prompt 措辞抓取摘要路径；放宽正则使其也能识别我方 prompt 的 fallback 行（`fall back to: \`wiki/sources/…\``），断言不变。
 
-## 当前验证状态
+## 历史验证状态（2026-05-25）
 
 | 检查 | 命令 | 结果（2026-05-25，0.4.16） |
 |---|---|---|
@@ -250,7 +250,7 @@ git merge upstream/main
 | Rust 编译检查 | `cd app/src-tauri && cargo check` | ✅ 新代码零警告（8 处遗留 upstream warning 不变） |
 | Rust 单元测试 | `cd app/src-tauri && cargo test --lib` | ✅ 103 / 103 通过（含 config_crypto 4 例）|
 
-Windows / Linux 构建未在本机验证；可通过 upstream 的 `.github/workflows/release.yml` 在 GitHub Actions 跑。
+以上为历史记录。当前验证与发布流程见 [运维手册](docs/release-and-update.md) 和 [本次审查记录](docs/code-review-2026-11-16.md)。本 fork 跨平台发布使用 `.github/workflows/build.yml`。
 
 ## 致谢
 

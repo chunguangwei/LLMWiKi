@@ -227,14 +227,14 @@ rm -rf node_modules dist         # 前端依赖与产物
 
 ```bash
 cd app
-# 1. 提升版本号（两处保持一致）
-#    package.json: "version": "0.6.4"
-#    src-tauri/tauri.conf.json: "version": "0.6.4"
-git commit -am "release v0.6.4"
-git push origin main
-# 2. 打 tag 触发 CI
-git tag v0.6.4
-git push origin v0.6.4
+# 版本准备与验证见 docs/release-and-update.md。
+# 同步 package.json、package-lock.json（顶层与根包）、tauri.conf.json、
+# Cargo.toml 与 Cargo.lock 的应用版本，并增加 changelog 条目。
+npm run test:mocks
+npm run mcp:test
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+# 全部通过后提交 main，再推送 v<版本> tag 触发草稿构建与发布。
 ```
 
 CI 自动：跨平台构建 → 用 updater 私钥签名 → 生成 `latest.json` → 创建 GitHub Release，附 dmg / msi / exe / deb / AppImage + `latest.json` + `.sig`。各台已安装的 app 下次启动即可一键就地更新（详见 [features.md §6](features.md#6-自己-github-自动更新就地更新--加密配置备份)）。

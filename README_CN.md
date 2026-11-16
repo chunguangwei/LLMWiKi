@@ -52,6 +52,10 @@
 - **Chrome 网页剪藏** — 一键捕获网页内容，自动摄入知识库
 - **本地 HTTP API + MCP Server + AI Agent Skill** — 内置 `127.0.0.1:19828` JSON API 和随包提供的 MCP Server，支持 Hybrid 检索、文件读取、知识图谱遍历、源资料重新扫描；配套 [agent skill](https://github.com/nashsu/llm_wiki_skill) 一行命令接入 Claude Code / Codex（`npx skills add …`）
 
+## v0.9.3：JEV 任务取消与发布可靠性
+
+JEV 超时或调用取消后停止排队/运行中的客户端任务，恢复探针覆盖完整预算；更新 MCP 网络依赖安全补丁。完整入口见[文档索引](docs/README.md)、[开发维护指南](docs/development.md)和[发布验证记录](docs/release-0.9.3.md)。
+
 ## v0.9.0：SAG2 检索 — FTS5 BM25 + 可选 JEV 证据打分
 
 - **BM25 关键词检索（默认开启）** — 关键词臂换成 SQLite FTS5 倒排索引 + jieba 中文分词（SAG2 论文 arXiv:2610.22588），替换全量扫文件 + 手写加分；标题加权 BM25 排序，文件名词干精确匹配仍置顶；索引在 `.llm-wiki/fts.db`，按 sha256 增量同步

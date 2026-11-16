@@ -72,7 +72,7 @@ jobs:
     needs: prepare-release
     # push builds wait for the draft; workflow_dispatch builds skip the
     # release path entirely (prepare-release is skipped, tagName is empty).
-    if: github.event_name == 'workflow_dispatch' || needs.prepare-release.result == 'success'
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.prepare-release.result == 'success') }}
 
     steps:
       - name: Checkout
@@ -125,7 +125,7 @@ jobs:
           node-version: 22
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - name: Prepare MCP server resources
         run: |
